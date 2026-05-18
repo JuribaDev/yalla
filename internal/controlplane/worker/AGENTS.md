@@ -127,6 +127,12 @@ Background provisioning/metering workers for the control plane.
   service domain with per-domain `dokploy_refs`. Persist the service ref before
   variable/domain calls so retries after a partial upstream success fetch the
   existing service instead of creating a duplicate.
+- Dokploy import jobs (`import_dokploy_resource`) are organization-scoped only:
+  validate the typed payload, reload the Yalla organization and desired version
+  before scanning, then run `migrateimport.Importer` with a store-backed
+  repository adapter. Insert each imported row and its `dokploy_refs` mapping
+  in the same transaction; replay must classify existing refs as already
+  imported and only fill missing descendants.
 - Backup run jobs (`run_backup`) use the scoped payload
   `(organization_id, project_id, environment_id, service_id, backup_id)`, reload
   both the service and `service_backups` row through tenant-scoped repositories,

@@ -10,6 +10,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/migrateimport"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/variables"
@@ -142,6 +143,10 @@ const JobTypeCreatePreviewEnvironment = "create_preview_environment"
 // JobTypeDeletePreviewEnvironment is the durable provisioning job that removes
 // a preview_environments clone from Dokploy and cleans up its Yalla wrapper.
 const JobTypeDeletePreviewEnvironment = "delete_preview_environment"
+
+// JobTypeImportDokployResource is the durable provisioning job that imports an
+// explicitly assigned Dokploy organization snapshot into Yalla source-of-truth.
+const JobTypeImportDokployResource = "import_dokploy_resource"
 
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
@@ -423,6 +428,15 @@ type DeletePreviewEnvironmentPayload struct {
 	PreviewID      string
 }
 
+// ImportDokployResourcePayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeImportDokployResource.
+type ImportDokployResourcePayload struct {
+	OrganizationID         string
+	YallaOrganizationID    string
+	DokployOrganizationID  string
+	AssignmentDokployOrgID string
+}
+
 // SyncDomainsPayload is the typed schema carried by provisioning_jobs.payload
 // for JobTypeSyncDomains.
 type SyncDomainsPayload struct {
@@ -537,6 +551,57 @@ func ParseDeletePreviewEnvironmentPayload(job store.ProvisioningJob) (DeletePrev
 		ProjectID:      payloadProjectID,
 		EnvironmentID:  payloadEnvironmentID,
 		PreviewID:      payloadPreviewID,
+	}, nil
+}
+
+// ParseImportDokployResourcePayload validates an import_dokploy_resource job
+// payload and returns a terminal error for malformed or cross-tenant shapes.
+func ParseImportDokployResourcePayload(job store.ProvisioningJob) (ImportDokployResourcePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeImportDokployResource {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be import_dokploy_resource"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID != "" || job.EnvironmentID != "" || job.ServiceID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "scope", Reason: "must be organization scoped"})
+	}
+
+	payloadOrgID := strings.TrimSpace(job.Payload["organization_id"])
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadYallaOrgID := strings.TrimSpace(job.Payload["yalla_organization_id"])
+	if payloadYallaOrgID == "" {
+		payloadYallaOrgID = payloadOrgID
+	}
+	if payloadYallaOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.yalla_organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadYallaOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.yalla_organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadDokployOrgID := strings.TrimSpace(job.Payload["dokploy_organization_id"])
+	if payloadDokployOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.dokploy_organization_id", Reason: "is required"})
+	}
+	assignmentDokployOrgID := strings.TrimSpace(job.Payload["assignment_dokploy_org_id"])
+	if assignmentDokployOrgID == "" {
+		assignmentDokployOrgID = payloadDokployOrgID
+	}
+	if assignmentDokployOrgID != "" && payloadDokployOrgID != "" && assignmentDokployOrgID != payloadDokployOrgID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.assignment_dokploy_org_id", Reason: "must match the payload dokploy_organization_id"})
+	}
+	if len(violations) > 0 {
+		return ImportDokployResourcePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return ImportDokployResourcePayload{
+		OrganizationID:         payloadOrgID,
+		YallaOrganizationID:    payloadYallaOrgID,
+		DokployOrganizationID:  payloadDokployOrgID,
+		AssignmentDokployOrgID: assignmentDokployOrgID,
 	}, nil
 }
 
@@ -1488,6 +1553,7 @@ type ProvisionerConfig struct {
 	Mapper        *dokploy.Mapper
 	Secrets       secrets.Provider
 	Client        DokployClient
+	ImportScanner migrateimport.Scanner
 }
 
 // Provisioner executes typed durable provisioning jobs.
@@ -1509,6 +1575,7 @@ type Provisioner struct {
 	mapper        *dokploy.Mapper
 	resolver      *variables.Resolver
 	client        DokployClient
+	importScanner migrateimport.Scanner
 }
 
 // NewProvisioner validates cfg and returns a durable job runner.
@@ -1605,6 +1672,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		mapper:        mapper,
 		resolver:      resolver,
 		client:        cfg.Client,
+		importScanner: cfg.ImportScanner,
 	}, nil
 }
 
@@ -1657,6 +1725,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runCreatePreviewEnvironment(ctx, job)
 	case JobTypeDeletePreviewEnvironment:
 		return p.runDeletePreviewEnvironment(ctx, job)
+	case JobTypeImportDokployResource:
+		return p.runImportDokployResource(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",

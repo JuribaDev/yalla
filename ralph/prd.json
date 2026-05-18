@@ -10447,8 +10447,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: import_dokploy_resource."
+      "passes": true,
+      "notes": "Implemented import_dokploy_resource durable worker execution with organization-scoped typed payload validation, desired-version/cross-tenant refusal before scanning, import planner integration, store-backed source-of-truth writes plus dokploy_refs in single transactions, idempotent replay through existing ref classification, cancellation handling, retryable scanner failure handling, and focused worker coverage."
     },
     {
       "id": "BE-0503",

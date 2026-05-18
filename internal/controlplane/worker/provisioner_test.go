@@ -12,6 +12,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy/dokployfake"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/migrateimport"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
@@ -81,6 +82,262 @@ func TestEnsureDokployOrganizationPayloadValidation(t *testing.T) {
 				t.Fatalf("ParseEnsureDokployOrganizationPayload returned %v, want nil", err)
 			}
 		})
+	}
+}
+
+func TestImportDokployResourcePayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				JobType:        worker.JobTypeImportDokployResource,
+				Payload: map[string]string{
+					"organization_id":           "org_valid",
+					"yalla_organization_id":     "org_valid",
+					"dokploy_organization_id":   "dokploy_org_valid",
+					"assignment_dokploy_org_id": "dokploy_org_valid",
+				},
+			},
+		},
+		{
+			name: "missing dokploy organization",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				JobType:        worker.JobTypeImportDokployResource,
+				Payload: map[string]string{
+					"organization_id":       "org_valid",
+					"yalla_organization_id": "org_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				JobType:        worker.JobTypeImportDokployResource,
+				Payload: map[string]string{
+					"organization_id":         "org_other",
+					"yalla_organization_id":   "org_valid",
+					"dokploy_organization_id": "dokploy_org_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross yalla owner",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				JobType:        worker.JobTypeImportDokployResource,
+				Payload: map[string]string{
+					"organization_id":         "org_valid",
+					"yalla_organization_id":   "org_other",
+					"dokploy_organization_id": "dokploy_org_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "resource scoped job",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_forbidden",
+				JobType:        worker.JobTypeImportDokployResource,
+				Payload: map[string]string{
+					"organization_id":         "org_valid",
+					"yalla_organization_id":   "org_valid",
+					"dokploy_organization_id": "dokploy_org_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseImportDokployResourcePayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseImportDokployResourcePayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseImportDokployResourcePayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestProvisionerImportDokployResourceImportsHierarchyAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "import owner")
+	scanner := &fakeImportScanner{snapshot: importSnapshot("dokploy_org_import")}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:         dataStore,
+		Client:        canceledClient{},
+		ImportScanner: scanner,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := importDokployResourceJob(org, "dokploy_org_import")
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run import: %v", err)
+	}
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run import replay: %v", err)
+	}
+	if scanner.calls != 2 {
+		t.Fatalf("scanner calls = %d, want 2", scanner.calls)
+	}
+	projects := listWorkerProjects(ctx, t, dataStore, org.ID)
+	if len(projects) != 1 {
+		t.Fatalf("imported projects = %d, want 1", len(projects))
+	}
+	envs := listWorkerEnvironments(ctx, t, dataStore, org.ID, projects[0].ID)
+	if len(envs) != 1 {
+		t.Fatalf("imported environments = %d, want 1", len(envs))
+	}
+	services := listWorkerServices(ctx, t, dataStore, org.ID, envs[0].ID)
+	if len(services) != 1 {
+		t.Fatalf("imported services = %d, want 1", len(services))
+	}
+	if got := len(listProjectRefs(ctx, t, dataStore, org.ID, projects[0].ID)); got != 1 {
+		t.Fatalf("project refs = %d, want 1", got)
+	}
+	if got := len(listEnvironmentRefs(ctx, t, dataStore, org.ID, envs[0].ID)); got != 1 {
+		t.Fatalf("environment refs = %d, want 1", got)
+	}
+	if got := len(listServiceRefs(ctx, t, dataStore, org.ID, services[0].ID)); got != 1 {
+		t.Fatalf("service refs = %d, want 1", got)
+	}
+}
+
+func TestProvisionerImportDokployResourceRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "import stale")
+	scanner := &fakeImportScanner{snapshot: importSnapshot("dokploy_org_stale")}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:         dataStore,
+		Client:        canceledClient{},
+		ImportScanner: scanner,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	job := importDokployResourceJob(org, "dokploy_org_stale")
+	job.DesiredVersion = org.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want stale desired-state error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("stale desired-state error is not terminal: %v", err)
+	}
+	if scanner.calls != 0 {
+		t.Fatalf("stale job called scanner %d times, want 0", scanner.calls)
+	}
+	if projects := listWorkerProjects(ctx, t, dataStore, org.ID); len(projects) != 0 {
+		t.Fatalf("projects after stale import = %d, want 0", len(projects))
+	}
+}
+
+func TestProvisionerImportDokployResourceRetryableScannerFailureDoesNotPersist(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "import retry")
+	scanner := &fakeImportScanner{err: apierr.DokployUnavailable(errors.New("upstream token dkp_secret_0123456789abcdef unavailable"))}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:         dataStore,
+		Client:        canceledClient{},
+		ImportScanner: scanner,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, importDokployResourceJob(org, "dokploy_org_retry"))
+	if err == nil {
+		t.Fatal("Run returned nil, want retryable scanner error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("scanner failure is terminal: %v", err)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatalf("scanner failure is not retryable: %v", err)
+	}
+	if strings.Contains(err.Error(), "dkp_secret_0123456789abcdef") {
+		t.Fatalf("scanner error leaked secret: %v", err)
+	}
+	if projects := listWorkerProjects(ctx, t, dataStore, org.ID); len(projects) != 0 {
+		t.Fatalf("projects after failed import = %d, want 0", len(projects))
+	}
+}
+
+func TestProvisionerImportDokployResourceCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:         dataStore,
+		Client:        canceledClient{},
+		ImportScanner: &fakeImportScanner{},
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, store.ProvisioningJob{
+		OrganizationID: "org_valid",
+		JobType:        worker.JobTypeImportDokployResource,
+		Payload: map[string]string{
+			"organization_id":         "org_valid",
+			"yalla_organization_id":   "org_valid",
+			"dokploy_organization_id": "dokploy_org_valid",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("cancellation error is terminal: %v", err)
 	}
 }
 
@@ -8607,6 +8864,76 @@ func deleteProjectJob(project store.Project) store.ProvisioningJob {
 	}
 }
 
+func importDokployResourceJob(org store.Organization, dokployOrgID string) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_import_dokploy_resource_test",
+		OrganizationID: org.ID,
+		JobType:        worker.JobTypeImportDokployResource,
+		DesiredVersion: org.Version,
+		IdempotencyKey: "import-dokploy-resource-" + org.ID,
+		Payload: map[string]string{
+			"organization_id":           org.ID,
+			"yalla_organization_id":     org.ID,
+			"dokploy_organization_id":   dokployOrgID,
+			"assignment_dokploy_org_id": dokployOrgID,
+		},
+		RequestID:     "req_import_dokploy_resource_test",
+		CorrelationID: "corr_import_dokploy_resource_test",
+	}
+}
+
+type fakeImportScanner struct {
+	snapshot migrateimport.Snapshot
+	err      error
+	calls    int
+}
+
+func (f *fakeImportScanner) Scan(ctx context.Context, dokployOrganizationID string) (migrateimport.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return migrateimport.Snapshot{}, err
+	}
+	f.calls++
+	if f.err != nil {
+		return migrateimport.Snapshot{}, f.err
+	}
+	out := f.snapshot
+	if out.Organization.DokployID == "" {
+		out.Organization.DokployID = dokployOrganizationID
+	}
+	return out, nil
+}
+
+func importSnapshot(dokployOrgID string) migrateimport.Snapshot {
+	return migrateimport.Snapshot{
+		Organization: migrateimport.SnapshotOrganization{
+			DokployID: dokployOrgID,
+			Name:      "Imported Organization",
+		},
+		Projects: []migrateimport.SnapshotProject{
+			{
+				DokployID:             "dokploy_project_import",
+				DokployOrganizationID: dokployOrgID,
+				Name:                  "Imported Project",
+			},
+		},
+		Environments: []migrateimport.SnapshotEnvironment{
+			{
+				DokployID:        "dokploy_environment_import",
+				DokployProjectID: "dokploy_project_import",
+				Name:             "Imported Environment",
+			},
+		},
+		Services: []migrateimport.SnapshotService{
+			{
+				DokployID:            "dokploy_service_import",
+				DokployEnvironmentID: "dokploy_environment_import",
+				Name:                 "Imported API",
+				Type:                 string(dokploy.ServiceApplication),
+			},
+		},
+	}
+}
+
 func pRunEnsureOrg(ctx context.Context, t *testing.T, s *store.Store, client *dokploy.Client, org store.Organization) error {
 	t.Helper()
 	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
@@ -8689,6 +9016,20 @@ func insertWorkerProject(ctx context.Context, t *testing.T, s *store.Store, org 
 	return project
 }
 
+func listWorkerProjects(ctx context.Context, t *testing.T, s *store.Store, organizationID string) []store.Project {
+	t.Helper()
+	repo := store.NewProjectRepository()
+	var projects []store.Project
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		projects, err = repo.ListByOrganization(ctx, q, organizationID)
+		return err
+	}); err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	return projects
+}
+
 func insertWorkerEnvironment(ctx context.Context, t *testing.T, s *store.Store, project store.Project, label string) store.Environment {
 	t.Helper()
 	f := testutil.NewFactory(t)
@@ -8710,6 +9051,20 @@ func insertWorkerEnvironment(ctx context.Context, t *testing.T, s *store.Store, 
 		t.Fatalf("insert environment: %v", err)
 	}
 	return env
+}
+
+func listWorkerEnvironments(ctx context.Context, t *testing.T, s *store.Store, organizationID, projectID string) []store.Environment {
+	t.Helper()
+	repo := store.NewEnvironmentRepository()
+	var envs []store.Environment
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		envs, err = repo.ListByProject(ctx, q, organizationID, projectID)
+		return err
+	}); err != nil {
+		t.Fatalf("list environments: %v", err)
+	}
+	return envs
 }
 
 func insertWorkerPreviewEnvironment(ctx context.Context, t *testing.T, s *store.Store, project store.Project, source store.Environment, label string) store.PreviewEnvironment {
@@ -8811,6 +9166,20 @@ func insertWorkerService(ctx context.Context, t *testing.T, s *store.Store, env 
 		t.Fatalf("insert service: %v", err)
 	}
 	return svc
+}
+
+func listWorkerServices(ctx context.Context, t *testing.T, s *store.Store, organizationID, environmentID string) []store.Service {
+	t.Helper()
+	repo := store.NewServiceRepository()
+	var services []store.Service
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		services, err = repo.ListByEnvironment(ctx, q, organizationID, environmentID)
+		return err
+	}); err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	return services
 }
 
 func insertWorkerDeployment(ctx context.Context, t *testing.T, s *store.Store, svc store.Service) store.Deployment {
