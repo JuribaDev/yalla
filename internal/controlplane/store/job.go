@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -179,6 +180,19 @@ type JobTransition struct {
 	// it is persisted. Honoured for retrying, failed, dead_letter, and
 	// cancelled; an empty value leaves the stored summary unchanged.
 	ErrorSummary string
+	// ActorID and ActorKind identify the worker, user, or system actor that
+	// caused the transition. When omitted, Transition derives a conservative
+	// actor from the lease owner, then falls back to "system".
+	ActorID   string
+	ActorKind string
+	// RequestID and CorrelationID are written to the immutable job event. When
+	// omitted, the parent job's originating request/correlation IDs are used.
+	RequestID     string
+	CorrelationID string
+	// Reason is the redacted, human-readable transition reason recorded in the
+	// immutable event. ErrorSummary is used as a fallback for failure-like
+	// transitions.
+	Reason string
 	// Now overrides the transition clock; tests set it for determinism. A zero
 	// value defaults to time.Now().UTC().
 	Now time.Time
@@ -208,7 +222,9 @@ func (t JobTransition) now() time.Time {
 //
 // On top of that pattern it owns the provisioning-job state machine: Transition
 // validates every status change against JobStatus.CanTransitionTo, so an
-// illegal transition is rejected before it reaches the database.
+// illegal transition is rejected before it reaches the database, and every
+// accepted transition appends an immutable provisioning_job_events row in the
+// same transaction.
 //
 // The repository is stateless; the constructor exists so call sites depend on
 // a value rather than a bare struct literal.
@@ -392,9 +408,9 @@ func (r *JobRepository) ListByOrganization(ctx context.Context, q Querier, organ
 // transition the same job concurrently, and validates the move against
 // JobStatus.CanTransitionTo before touching any column — an illegal transition
 // (a no-op, a move out of a terminal status, or any edge not in the state
-// machine) is rejected as a Conflict and the row is left untouched. A job id
-// from another organization, or one that does not exist, is reported as
-// NotFound.
+// machine) is rejected as E_INVALID_STATE_TRANSITION and the row is left
+// untouched. A job id from another organization, or one that does not exist,
+// is reported as NotFound.
 //
 // The per-status bookkeeping:
 //
@@ -432,8 +448,7 @@ func (r *JobRepository) Transition(ctx context.Context, tx *Tx, organizationID, 
 	}
 
 	if !current.Status.CanTransitionTo(to) {
-		return ProvisioningJob{}, apierr.Conflict(
-			fmt.Sprintf("provisioning job cannot transition from %s to %s", current.Status, to))
+		return ProvisioningJob{}, apierr.InvalidStateTransition("provisioning_job", current.Status.String(), to.String())
 	}
 
 	// Derive the post-transition shape of the mutable columns from the target
@@ -503,7 +518,65 @@ func (r *JobRepository) Transition(ctx context.Context, tx *Tx, organizationID, 
 	if err != nil {
 		return ProvisioningJob{}, mapWriteError(err, "the provisioning job transition conflicts with the current job state")
 	}
+	if _, err := NewJobEventRepository().Append(ctx, tx, jobEventForTransition(current, updated, mut)); err != nil {
+		return ProvisioningJob{}, err
+	}
 	return updated, nil
+}
+
+func jobEventForTransition(previous, next ProvisioningJob, mut JobTransition) JobEvent {
+	reason := strings.TrimSpace(mut.Reason)
+	if reason == "" {
+		reason = strings.TrimSpace(mut.ErrorSummary)
+	}
+	reason = redactJobError(reason)
+
+	requestID := strings.TrimSpace(mut.RequestID)
+	if requestID == "" {
+		requestID = previous.RequestID
+	}
+	correlationID := strings.TrimSpace(mut.CorrelationID)
+	if correlationID == "" {
+		correlationID = previous.CorrelationID
+	}
+
+	actorID := strings.TrimSpace(mut.ActorID)
+	actorKind := strings.TrimSpace(mut.ActorKind)
+	if actorID == "" && mut.LeaseOwner != "" {
+		actorID = strings.TrimSpace(mut.LeaseOwner)
+		if actorKind == "" {
+			actorKind = "worker"
+		}
+	}
+	if actorID == "" && previous.LeaseOwner != "" {
+		actorID = strings.TrimSpace(previous.LeaseOwner)
+		if actorKind == "" {
+			actorKind = "worker"
+		}
+	}
+	if actorID == "" {
+		actorID = "system"
+	}
+	if actorKind == "" {
+		actorKind = "system"
+	}
+
+	return JobEvent{
+		OrganizationID: next.OrganizationID,
+		JobID:          next.ID,
+		EventType:      next.Status.jobEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       actorID,
+			"actor_kind":     actorKind,
+			"previous_state": previous.Status.String(),
+			"next_state":     next.Status.String(),
+			"reason":         reason,
+		},
+		RequestID:     requestID,
+		CorrelationID: correlationID,
+		OccurredAt:    mut.now(),
+	}
 }
 
 // ClaimNext leases the next eligible provisioning job to owner for

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Provisioning job state-machine stories use a pure `JobStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped job row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, derive lease/attempt/timestamp bookkeeping from the target status, and append the matching `provisioning_job_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Deployment state-machine stories use a pure `DeploymentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped deployment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update lifecycle timestamps/error fields, and append the matching `deployment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Worker Dokploy import jobs (BE-0502 pattern for `import_dokploy_resource`) are organization-scoped only and use a typed payload `(organization_id, yalla_organization_id, dokploy_organization_id[, assignment_dokploy_org_id])`. The worker reloads the Yalla organization from Postgres, rejects stale desired versions before scanning Dokploy, then delegates classification/apply to `migrateimport.Importer` through a store-backed repository adapter. Each imported project/environment/service row and its `dokploy_refs` mapping are inserted in the same transaction, so replay after partial success classifies existing refs as `skip_already_imported` and creates only missing descendants. Scanner/Dokploy failures stay retryable unless cancellation interrupted the context; malformed/cross-tenant/stale desired state is `worker.Terminal`.
 - Worker service reconciliation jobs (BE-0501 pattern for `reconcile_service`) use one service-scoped payload `(organization_id, project_id, environment_id, service_id[, engine])`, reload the service and all dependent desired state through tenant-scoped repositories, verify payload scope plus `DesiredVersion`, reject deletion-scheduled services, resolve the parent environment `dokploy_refs` row, call typed Dokploy `EnsureService`, persist the service ref idempotently, render effective variables through the variables resolver, call typed `SyncVariables`, then ensure each desired `service_domain` with idempotent per-domain refs. A job already marked `succeeded` is a no-op; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
@@ -34508,4 +34509,50 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Preview GET contract coverage follows the existing project variable/environment pattern: keep implementation-story baseline tests in *_get_test.go and add only missing public-contract assertions in a sibling *_get_contract_test.go.
   - GET /v1/projects/{project_id}/previews has no body/query syntactic validation surface; invalid-input wire coverage is best driven by a typed reader/service rejection for the opaque project id.
+---
+## 2026-05-18 21:08 +03 - BE-0504
+- What was implemented
+  - Added the `provisioning_job_events` migration and store repository as an append-only, tenant-scoped lifecycle timeline for `provisioning_jobs`.
+  - Updated `JobRepository.Transition` to return `E_INVALID_STATE_TRANSITION` for invalid lifecycle edges before mutation and to append a redacted event row atomically for every accepted transition.
+  - Extended `JobTransition` with actor, request/correlation, and reason fields while preserving worker fallback behavior from lease/job metadata.
+  - Added focused state-machine tests for event persistence and denied-transition no-mutation behavior; updated existing invalid-transition expectations.
+  - Updated `internal/controlplane/store/AGENTS.md` and the top Codebase Patterns section with the reusable provisioning-job transition pattern.
+- Files changed
+  - `internal/controlplane/store/migrate/migrations/0040_provisioning_job_events.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0040_provisioning_job_events.down.sql`
+  - `internal/controlplane/store/job_event.go`
+  - `internal/controlplane/store/job.go`
+  - `internal/controlplane/store/job_state_machine_test.go`
+  - `internal/controlplane/store/job_test.go`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - RED: `go test ./internal/controlplane/store -run 'TestJobRepositoryTransition(RecordsEvent|RejectsInvalidWithStateCodeAndNoEvent)'` failed because `JobEventRepository` and transition metadata fields did not exist yet.
+  - `gofmt -w .`
+  - `goimports -w .` attempted; `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/store ./internal/controlplane/store/migrate ./internal/controlplane/worker`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; `staticcheck` is not installed.
+  - `govulncheck ./...` attempted; `govulncheck` is not installed.
+- Results
+  - All required Go checks passed.
+  - `golangci-lint run ./...` passed with 0 issues after adding exported comments to the new job event API.
+- Remaining risks or follow-ups
+  - `goimports`, `staticcheck`, and `govulncheck` are unavailable in this environment.
+  - Future job-list/detail endpoints can expose `provisioning_job_events` alongside `job_attempts` when those API stories land.
+- **Learnings for future iterations:**
+  - `provisioning_jobs` now has two timelines: `provisioning_job_events` for every lifecycle transition and `job_attempts` for finished worker attempts only.
+  - Invalid provisioning-job lifecycle edges should use `apierr.InvalidStateTransition("provisioning_job", from, to)`, not generic `apierr.Conflict`.
+  - Transition callers may omit actor/request metadata; the repository derives a stable worker/system fallback from the lease/job row, but customer/admin paths should pass explicit actor metadata.
 ---

@@ -10485,8 +10485,8 @@
       ],
       "type": "state-machine",
       "priority": 1,
-      "passes": false,
-      "notes": "Lifecycle state: provisioning_job."
+      "passes": true,
+      "notes": "Implemented documented JobStatus transition table enforcement with E_INVALID_STATE_TRANSITION for invalid edges, atomic provisioning_jobs updates plus provisioning_job_events timeline appends carrying actor/request/previous/next/reason metadata, and focused tests for event persistence plus denied-transition no-mutation behavior."
     },
     {
       "id": "BE-0505",

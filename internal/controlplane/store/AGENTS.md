@@ -579,8 +579,10 @@ Postgres persistence for control-plane source-of-truth state.
   and per-status invariants ("terminal iff `finished_at` set", "lease held iff
   `status='running'`"). The mutating method (`Transition`) locks the row
   `FOR UPDATE`, validates the edge **before** any write (illegal edge =
-  `apierr.Conflict`), and derives every dependent column (lease, attempts,
-  timestamps) from the target status — a caller passes an options struct
+  `E_INVALID_STATE_TRANSITION`), derives every dependent column (lease,
+  attempts, timestamps) from the target status, and appends the matching
+  `provisioning_job_events` row in the same transaction with actor/request/
+  previous/next/reason metadata. A caller passes an options struct
   (`JobTransition`), never a full row, so it cannot produce a CHECK-violating
   shape.
 - Deployment lifecycle transitions follow the same pure-table pattern via

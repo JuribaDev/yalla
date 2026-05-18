@@ -464,7 +464,7 @@ func TestJobRepositoryTransitionCancellation(t *testing.T) {
 
 // TestJobRepositoryTransitionInvalid proves the state machine is enforced:
 // skipping running on the way to succeeded, and any move out of a terminal
-// status, are rejected as Conflicts.
+// status, are rejected with the stable state-machine error code.
 func TestJobRepositoryTransitionInvalid(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
@@ -481,8 +481,8 @@ func TestJobRepositoryTransitionInvalid(t *testing.T) {
 		_, transErr := repo.Transition(ctx, tx, org.ID, job.ID, store.JobStatusSucceeded, store.JobTransition{})
 		return transErr
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeConflict {
-		t.Fatalf("queued->succeeded error code = %v, want %s", err, yerr.CodeConflict)
+	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidStateTransition {
+		t.Fatalf("queued->succeeded error code = %v, want %s", err, yerr.CodeInvalidStateTransition)
 	}
 
 	// Drive the job to a terminal status, then prove it cannot leave it.
@@ -494,8 +494,8 @@ func TestJobRepositoryTransitionInvalid(t *testing.T) {
 		})
 		return transErr
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeConflict {
-		t.Fatalf("cancelled->running error code = %v, want %s", err, yerr.CodeConflict)
+	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidStateTransition {
+		t.Fatalf("cancelled->running error code = %v, want %s", err, yerr.CodeInvalidStateTransition)
 	}
 }
 
