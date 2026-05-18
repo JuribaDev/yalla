@@ -340,7 +340,7 @@ func TestUpdateProjectNotFoundIsTyped404(t *testing.T) {
 }
 
 // TestUpdateProjectMissingCredentialsIs401 proves the route requires
-// authentication: a request with no bearer is a deterministic 401 E_AUTH
+// authentication: a request with no bearer is a deterministic 401 E_AUTHENTICATION_REQUIRED
 // at the RequireAuth boundary, never reaching the updater.
 func TestUpdateProjectMissingCredentialsIs401(t *testing.T) {
 	t.Parallel()
@@ -354,7 +354,7 @@ func TestUpdateProjectMissingCredentialsIs401(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 }
 
 // TestUpdateProjectInvalidIfMatchHeader proves a weak ETag, a "*", a

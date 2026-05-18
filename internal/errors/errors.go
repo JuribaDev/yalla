@@ -33,10 +33,14 @@ const (
 	CodeInvalidInput Code = "E_INVALID_INPUT"
 	CodeConfig       Code = "E_CONFIG"
 	CodeOrphan       Code = "E_ORPHAN"
-	CodeAuth         Code = "E_AUTH"
-	CodeForbidden    Code = "E_FORBIDDEN"
-	CodeNotFound     Code = "E_NOT_FOUND"
-	CodeConflict     Code = "E_CONFLICT"
+	// CodeAuthenticationRequired marks a request that did not provide any
+	// usable authentication material. It is distinct from CodeAuth so agents
+	// can tell "send credentials" apart from "supplied credentials failed".
+	CodeAuthenticationRequired Code = "E_AUTHENTICATION_REQUIRED"
+	CodeAuth                   Code = "E_AUTH"
+	CodeForbidden              Code = "E_FORBIDDEN"
+	CodeNotFound               Code = "E_NOT_FOUND"
+	CodeConflict               Code = "E_CONFLICT"
 	// CodeInvalidStateTransition marks a lifecycle transition that is not
 	// allowed by the resource's documented state machine. It is distinct from
 	// CodeConflict so agents can tell "retry with a fresh version" apart from
@@ -88,7 +92,8 @@ var codeDescriptions = map[Code]string{
 	CodeInvalidInput:           "request payload, flag value, or registry filter rejected",
 	CodeConfig:                 "configuration is missing, malformed, or incomplete",
 	CodeOrphan:                 "operation left Dokploy or Docker resources behind",
-	CodeAuth:                   "authentication failed or no credentials supplied",
+	CodeAuthenticationRequired: "authentication credentials are required for this request",
+	CodeAuth:                   "supplied authentication credentials are invalid",
 	CodeForbidden:              "credentials are valid but not authorised for the action",
 	CodeNotFound:               "resource, operationId, or schema does not exist",
 	CodeConflict:               "request rejected because of a precondition or state conflict",
@@ -115,7 +120,7 @@ var codeDescriptions = map[Code]string{
 func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
-		CodeConfig, CodeOrphan, CodeAuth, CodeForbidden, CodeNotFound,
+		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuth, CodeForbidden, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeUpstreamBug,
 		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
@@ -155,7 +160,7 @@ func (c Code) ExitCode() int {
 		return 2
 	case CodeConfig, CodeOrphan:
 		return 3
-	case CodeAuth, CodeForbidden:
+	case CodeAuthenticationRequired, CodeAuth, CodeForbidden:
 		return 4
 	case CodeNotFound:
 		return 5

@@ -243,7 +243,7 @@ func TestDeleteOrgVariableRequiresAuthentication(t *testing.T) {
 	var got store.DeleteOrganizationVariableInput
 	deleter := fakeOrgVariableDeleter{got: &got}
 
-	handler := deleteOrgVariableHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), deleter)
+	handler := deleteOrgVariableHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), deleter)
 	rec := deleteOrgVariable(handler, orgID, "DATABASE_URL", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

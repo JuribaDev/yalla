@@ -250,13 +250,13 @@ func TestUpdateLimitsUnauthenticatedReturns401(t *testing.T) {
 
 	var got store.UpdateLimitsInput
 	updater := fakeLimitsUpdater{got: &got}
-	handler := updateLimitsHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), updater)
+	handler := updateLimitsHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), updater)
 
 	rec := patchLimits(handler, "org_acme", "", `{"limits":[{"resource":"projects","limit_value":10}]}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if got.OrganizationID != "" {
 		t.Errorf("updater was reached for an unauthenticated request: %+v", got)
 	}

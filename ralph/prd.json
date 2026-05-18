@@ -10656,8 +10656,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_AUTHENTICATION_REQUIRED."
+      "passes": true,
+      "notes": "Implemented stable E_AUTHENTICATION_REQUIRED missing-credential contract: typed yerr code, apierr.AuthenticationRequired constructor, 401 status mapping, docs link rendering, RequireAuth/RequireInternalWorker missing-credential branch, and HTTP contract coverage distinct from E_AUTH invalid credentials."
     },
     {
       "id": "BE-0514",

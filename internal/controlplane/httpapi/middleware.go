@@ -24,8 +24,8 @@ import (
 //
 // The wire contract is deterministic:
 //
-//   - A request with no usable credential is 401 E_AUTH ("authentication is
-//     required").
+//   - A request with no usable credential is 401 E_AUTHENTICATION_REQUIRED
+//     ("authentication is required").
 //   - A request with a credential that does not authenticate is 401 E_AUTH
 //     ("the supplied credentials are invalid") — uniform across every cause, so
 //     the response never reveals whether an API key prefix exists.
@@ -198,15 +198,15 @@ func bearerToken(r *http.Request) (string, error) {
 }
 
 // writeAuthError renders an authentication failure as a stable yalla.error.v1
-// envelope. The two sentinel failures map to 401 E_AUTH with fixed, generic
-// messages — identical for every invalid-credential cause, so the response
+// envelope. Missing credentials map to 401 E_AUTHENTICATION_REQUIRED; invalid
+// credentials map to 401 E_AUTH with a fixed generic message, so the response
 // never reveals which check failed or whether a key prefix exists. Anything
 // else is a genuine dependency failure surfaced from the credential store and
 // is rendered with its own typed status.
 func writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, auth.ErrNoCredentials):
-		apienvelope.WriteError(w, requestID(r), apierr.Unauthenticated("authentication is required"))
+		apienvelope.WriteError(w, requestID(r), apierr.AuthenticationRequired())
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		apienvelope.WriteError(w, requestID(r), apierr.Unauthenticated("the supplied credentials are invalid"))
 	default:

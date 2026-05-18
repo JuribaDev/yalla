@@ -149,7 +149,7 @@ func TestCSRFUnauthenticatedRequestIssuesNoSetCookie(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if env.SchemaVersion != "yalla.error.v1" {
 		t.Errorf("schema_version = %q, want yalla.error.v1", env.SchemaVersion)
 	}
@@ -219,7 +219,7 @@ func TestCSRFCookieHeaderDoesNotAuthenticate(t *testing.T) {
 				t.Fatalf("status = %d, want 401 (cookie credentials must not authenticate); body %s",
 					rec.Code, rec.Body.String())
 			}
-			decodeError(t, rec, "E_AUTH")
+			decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 			assertNoSetCookie(t, rec)
 		})
 	}

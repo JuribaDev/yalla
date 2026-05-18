@@ -217,7 +217,7 @@ func TestListAdminDokployDriftAuthFailures(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if reader.calls != 0 {
 		t.Fatalf("reader calls = %d, want 0 when auth fails", reader.calls)
 	}

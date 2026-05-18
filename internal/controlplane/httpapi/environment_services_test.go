@@ -363,7 +363,7 @@ func TestListEnvironmentServicesUnauthenticated(t *testing.T) {
 	// authErr from the authenticator is surfaced as a typed 401 by
 	// RequireAuth. The reader must NOT be called because the request
 	// never reaches the handler.
-	handler := listEnvironmentServicesHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+	handler := listEnvironmentServicesHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	rec := getEnvironmentServices(handler, env, "")
 	if rec.Code != http.StatusUnauthorized {
@@ -372,7 +372,7 @@ func TestListEnvironmentServicesUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("reader call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestListEnvironmentServicesAuthorizationDenied proves that a

@@ -420,7 +420,7 @@ func TestListProjectVariablesUnauthenticated(t *testing.T) {
 	}
 
 	handler := listProjectVariablesHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+		auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	rec := getProjectVariables(handler, proj, "")
 	if rec.Code != http.StatusUnauthorized {

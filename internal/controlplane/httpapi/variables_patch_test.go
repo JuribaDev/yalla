@@ -378,7 +378,7 @@ func TestPatchOrgVariableRequiresAuthentication(t *testing.T) {
 	var got store.PatchOrganizationVariableInput
 	patcher := fakeOrgVariablePatcher{got: &got}
 
-	handler := patchOrgVariableHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), patcher)
+	handler := patchOrgVariableHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), patcher)
 	rec := patchOrgVariable(handler, orgID, "DATABASE_URL", "", `{"value":"x"}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

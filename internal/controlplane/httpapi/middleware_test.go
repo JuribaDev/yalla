@@ -41,8 +41,10 @@ type errorEnvelope struct {
 	OK            bool   `json:"ok"`
 	RequestID     string `json:"request_id"`
 	Error         struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code             string `json:"code"`
+		Message          string `json:"message"`
+		Hint             string `json:"hint,omitempty"`
+		DocumentationURL string `json:"documentation_url,omitempty"`
 	} `json:"error"`
 }
 
@@ -107,9 +109,18 @@ func TestRequireAuthMissingCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if env.Error.Message != "authentication is required" {
 		t.Errorf("message = %q, want %q", env.Error.Message, "authentication is required")
+	}
+	if env.Error.Hint != "" {
+		t.Errorf("hint = %q, want empty hint for the missing-credential contract", env.Error.Hint)
+	}
+	if env.Error.DocumentationURL != "https://docs.yalla.dev/api/errors/E_AUTHENTICATION_REQUIRED" {
+		t.Errorf("documentation_url = %q, want E_AUTHENTICATION_REQUIRED docs link", env.Error.DocumentationURL)
+	}
+	if strings.Contains(rec.Body.String(), "yk_secret") || strings.Contains(rec.Body.String(), "Bearer") {
+		t.Errorf("missing-credential envelope leaked secret material: %s", rec.Body.String())
 	}
 	if next.ran {
 		t.Error("next handler ran for an unauthenticated request")
@@ -316,7 +327,7 @@ func TestRequireInternalWorker(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 		}
-		decodeError(t, rec, "E_AUTH")
+		decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 		if next.ran {
 			t.Error("next handler ran for a missing credential")
 		}

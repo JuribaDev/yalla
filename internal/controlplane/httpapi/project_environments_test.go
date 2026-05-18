@@ -349,7 +349,7 @@ func TestListProjectEnvironmentsUnauthenticated(t *testing.T) {
 	}
 
 	handler := listProjectEnvironmentsHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+		auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	rec := getProjectEnvironments(handler, proj, "")
 	if rec.Code != http.StatusUnauthorized {

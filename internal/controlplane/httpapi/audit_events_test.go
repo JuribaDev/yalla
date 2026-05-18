@@ -374,7 +374,7 @@ func TestListAuditEventsRequiresAuthentication(t *testing.T) {
 	var gotOrg string
 	reader := fakeAuditEventReader{gotOrgID: &gotOrg}
 
-	handler := listAuditEventsHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+	handler := listAuditEventsHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), reader)
 	rec := getAuditEvents(handler, orgID, "", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

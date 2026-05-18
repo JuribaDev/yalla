@@ -327,7 +327,7 @@ func TestRunServiceBackupUnauthenticated(t *testing.T) {
 	runner := fakeServiceBackupRunner{callCount: &callCount}
 
 	handler := runServiceBackupHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), runner)
+		auth.Identity{}, apierr.AuthenticationRequired(), runner)
 
 	rec := postRunServiceBackup(handler, "svc_api", "sbkp_nightly", "", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -336,7 +336,7 @@ func TestRunServiceBackupUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("runner call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestRunServiceBackupAuthorizationDenied proves a principal whose

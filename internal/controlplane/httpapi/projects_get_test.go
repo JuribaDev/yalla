@@ -264,8 +264,8 @@ func TestGetProjectRequiresBearerToken(t *testing.T) {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeGetProjectError(t, rec)
-	if env.Error.Code != "E_AUTH" {
-		t.Errorf("error.code = %q, want E_AUTH", env.Error.Code)
+	if env.Error.Code != "E_AUTHENTICATION_REQUIRED" {
+		t.Errorf("error.code = %q, want E_AUTHENTICATION_REQUIRED", env.Error.Code)
 	}
 	if gotOrg != "sentinel-untouched" {
 		t.Errorf("reader was called with organizationID = %q, want it never reached", gotOrg)

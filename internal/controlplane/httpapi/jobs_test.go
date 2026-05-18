@@ -225,7 +225,7 @@ func TestListJobsUnauthenticated(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("reader call count = %d, want 0", calls)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 func TestListJobsProjectScopedGrantCannotReadOrgLevelList(t *testing.T) {
@@ -564,7 +564,7 @@ func TestGetJobUnauthenticatedSkipsReader(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("GetJob calls = %d, want 0", calls)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 func TestGetJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {
@@ -792,7 +792,7 @@ func TestRetryJobUnauthenticatedSkipsResolverAndRetrier(t *testing.T) {
 	if getCalls != 0 || retryCalls != 0 {
 		t.Fatalf("calls = (get=%d retry=%d), want none", getCalls, retryCalls)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 func TestRetryJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {
@@ -1025,7 +1025,7 @@ func TestCancelJobUnauthenticatedSkipsResolverAndCanceler(t *testing.T) {
 	if getCalls != 0 || cancelCalls != 0 {
 		t.Fatalf("calls = (get=%d cancel=%d), want none", getCalls, cancelCalls)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 func TestCancelJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {

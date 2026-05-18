@@ -249,7 +249,7 @@ func TestListUsageRequiresAuthentication(t *testing.T) {
 	var got string
 	reader := fakeUsageReader{got: &got}
 
-	handler := listUsageHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+	handler := listUsageHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), reader)
 	rec := getUsage(handler, orgID, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

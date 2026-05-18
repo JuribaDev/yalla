@@ -290,7 +290,7 @@ func TestReplaceOrgVariablesRequiresAuthentication(t *testing.T) {
 	var got store.ReplaceOrganizationVariablesInput
 	replacer := fakeOrgVariableReplacer{got: &got}
 
-	handler := replaceOrgVariablesHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), replacer)
+	handler := replaceOrgVariablesHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), replacer)
 	rec := putOrgVariables(handler, orgID, "", `{"variables":[]}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

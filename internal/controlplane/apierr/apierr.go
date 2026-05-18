@@ -9,7 +9,7 @@
 // emits are the codes catalogued here, and the catalogue is the documented
 // source of truth:
 //
-//   - Auth / policy:        Unauthenticated, Forbidden
+//   - Auth / policy:        AuthenticationRequired, Unauthenticated, Forbidden
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
@@ -124,7 +124,8 @@ var taxonomy = map[yerr.Code]struct {
 	description string
 }{
 	yerr.CodeInvalidInput:           {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
-	yerr.CodeAuth:                   {false, MessageSpecific, "authentication failed or no credentials were supplied"},
+	yerr.CodeAuthenticationRequired: {false, MessageSpecific, "no usable authentication credentials were supplied"},
+	yerr.CodeAuth:                   {false, MessageSpecific, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
 	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
@@ -262,11 +263,20 @@ func DependencyOf(err error) (Dependency, bool) {
 	return "", false
 }
 
-// Unauthenticated builds an E_AUTH error (HTTP 401). message may describe the
-// authentication problem; it must never contain the supplied credential.
+// AuthenticationRequired builds an E_AUTHENTICATION_REQUIRED error (HTTP 401)
+// for requests that supplied no usable credential. It has a fixed public
+// message and no hint because recovery is structurally obvious: authenticate
+// the request.
+func AuthenticationRequired() *yerr.Error {
+	return yerr.New(yerr.CodeAuthenticationRequired, "authentication is required")
+}
+
+// Unauthenticated builds an E_AUTH error (HTTP 401) for supplied credentials
+// that failed to authenticate. message may describe the authentication
+// problem; it must never contain the supplied credential.
 func Unauthenticated(message string) *yerr.Error {
 	if strings.TrimSpace(message) == "" {
-		message = "authentication is required"
+		message = "the supplied credentials are invalid"
 	}
 	return yerr.New(yerr.CodeAuth, message)
 }

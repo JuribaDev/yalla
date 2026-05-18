@@ -374,7 +374,7 @@ func TestListEnvironmentVariablesUnauthenticated(t *testing.T) {
 	}
 
 	handler := listEnvironmentVariablesHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+		auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	rec := getEnvironmentVariables(handler, env, "")
 	if rec.Code != http.StatusUnauthorized {

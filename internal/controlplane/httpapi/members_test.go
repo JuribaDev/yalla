@@ -358,7 +358,7 @@ func TestListMembersRequiresAuthentication(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if env.Error.Message != "authentication is required" {
 		t.Errorf("message = %q, want %q", env.Error.Message, "authentication is required")
 	}
@@ -730,7 +730,7 @@ func TestGetMemberRequiresAuthentication(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if env.Error.Message != "authentication is required" {
 		t.Errorf("message = %q, want %q", env.Error.Message, "authentication is required")
 	}

@@ -233,7 +233,7 @@ func TestCreateEnvironmentServiceUnauthenticated(t *testing.T) {
 	creator := fakeEnvironmentServiceCreator{callCount: &callCount}
 
 	handler := createEnvironmentServiceHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), creator)
+		auth.Identity{}, apierr.AuthenticationRequired(), creator)
 
 	body := `{"service_id":"svc_api","slug":"api","display_name":"API","kind":"application"}`
 	rec := postEnvironmentService(handler, "env_prod", body, "")
@@ -243,7 +243,7 @@ func TestCreateEnvironmentServiceUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("creator call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestCreateEnvironmentServiceAuthorizationDenied proves a principal

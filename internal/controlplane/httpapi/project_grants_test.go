@@ -280,7 +280,7 @@ func TestListProjectGrantsEmptyProject(t *testing.T) {
 }
 
 // TestListProjectGrantsRejectsUnauthenticated proves a request with no
-// bearer token is rejected by RequireAuth as 401 E_AUTH before reaching
+// bearer token is rejected by RequireAuth as 401 E_AUTHENTICATION_REQUIRED before reaching
 // the reader.
 func TestListProjectGrantsRejectsUnauthenticated(t *testing.T) {
 	t.Parallel()
@@ -294,7 +294,7 @@ func TestListProjectGrantsRejectsUnauthenticated(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, "E_AUTH")
+	_ = decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 	if callCount != 0 {
 		t.Errorf("reader call count = %d, want 0 (RequireAuth should reject before the handler)", callCount)
 	}

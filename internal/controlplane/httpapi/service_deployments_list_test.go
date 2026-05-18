@@ -439,7 +439,7 @@ func TestListServiceDeploymentsUnauthenticated(t *testing.T) {
 	}
 
 	handler := listServiceDeploymentsHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), lister)
+		auth.Identity{}, apierr.AuthenticationRequired(), lister)
 
 	rec := getServiceDeployments(handler, svc, "")
 	if rec.Code != http.StatusUnauthorized {

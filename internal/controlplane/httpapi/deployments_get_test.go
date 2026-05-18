@@ -424,7 +424,7 @@ func TestGetServiceDeploymentUnauthenticated(t *testing.T) {
 	}
 
 	handler := getServiceDeploymentHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), getter)
+		auth.Identity{}, apierr.AuthenticationRequired(), getter)
 
 	rec := getServiceDeployment(handler, depID, "")
 	if rec.Code != http.StatusUnauthorized {

@@ -276,7 +276,7 @@ func TestListLimitsUnauthenticatedReturns401(t *testing.T) {
 
 	var seen string
 	reader := fakeLimitsReader{got: &seen}
-	handler := listLimitsHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+	handler := listLimitsHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/org_001/limits", nil)
 	rec := httptest.NewRecorder()
@@ -286,7 +286,7 @@ func TestListLimitsUnauthenticatedReturns401(t *testing.T) {
 		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
 	}
 	code, _, _ := decodeErrorEnvelope(t, rec.Body.Bytes())
-	if code != "E_AUTH" {
+	if code != "E_AUTHENTICATION_REQUIRED" {
 		t.Errorf("error code = %q, want E_AUTH", code)
 	}
 	if seen != "" {

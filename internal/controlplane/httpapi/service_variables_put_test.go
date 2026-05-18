@@ -393,7 +393,7 @@ func TestReplaceServiceVariablesRequiresAuthentication(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, string(yerr.CodeAuth))
+	_ = decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 	if callCount != 0 {
 		t.Errorf("replacer call count = %d, want 0 (RequireAuth must reject before the handler runs)", callCount)
 	}

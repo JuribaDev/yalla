@@ -348,7 +348,7 @@ func TestCreateServiceDeploymentUnauthenticated(t *testing.T) {
 	creator := fakeDeploymentCreator{callCount: &callCount}
 
 	handler := createServiceDeploymentHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), creator)
+		auth.Identity{}, apierr.AuthenticationRequired(), creator)
 
 	body := `{"source":"git","source_ref":"main","idempotency_key":"k1"}`
 	rec := postServiceDeployment(handler, "svc_api", body, "")
@@ -358,7 +358,7 @@ func TestCreateServiceDeploymentUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("creator call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestCreateServiceDeploymentAuthorizationDenied proves a principal

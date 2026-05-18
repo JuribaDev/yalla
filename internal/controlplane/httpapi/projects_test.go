@@ -243,7 +243,7 @@ func TestListProjectsRequiresAuthentication(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
 }
 
 // TestListProjectsRejectsInvalidCredentials proves a credential the

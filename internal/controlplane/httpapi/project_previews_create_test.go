@@ -235,7 +235,7 @@ func TestCreatePreviewRequiresAuthentication(t *testing.T) {
 
 	var calls int
 	creator := fakePreviewCreator{err: stderrors.New("creator must not be called"), callCount: &calls}
-	handler := createPreviewHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing bearer token"), creator)
+	handler := createPreviewHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), creator)
 
 	rec := postProjectPreviews(handler, "proj_acme_web", "",
 		`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)
@@ -244,7 +244,7 @@ func TestCreatePreviewRequiresAuthentication(t *testing.T) {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeCreatePreviewError(t, rec)
-	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_AUTH" || env.RequestID == "" {
+	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_AUTHENTICATION_REQUIRED" || env.RequestID == "" {
 		t.Errorf("error envelope = %+v, want E_AUTH with request_id", env)
 	}
 	if calls != 0 {

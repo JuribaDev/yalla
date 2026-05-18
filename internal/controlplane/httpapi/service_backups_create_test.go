@@ -410,7 +410,7 @@ func TestCreateServiceBackupUnauthenticated(t *testing.T) {
 	creator := fakeServiceBackupCreator{callCount: &callCount}
 
 	handler := createServiceBackupHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), creator)
+		auth.Identity{}, apierr.AuthenticationRequired(), creator)
 
 	body := `{"id":"sbkp_xyz","display_name":"nightly","schedule":"0 2 * * *","retention_count":7}`
 	rec := postServiceBackup(handler, "svc_api", body, "")
@@ -420,7 +420,7 @@ func TestCreateServiceBackupUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("creator call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestCreateServiceBackupAuthorizationDenied proves a principal

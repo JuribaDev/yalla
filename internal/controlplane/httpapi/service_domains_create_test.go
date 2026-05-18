@@ -341,7 +341,7 @@ func TestCreateServiceDomainUnauthenticated(t *testing.T) {
 	creator := fakeServiceDomainCreator{callCount: &callCount}
 
 	handler := createServiceDomainHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), creator)
+		auth.Identity{}, apierr.AuthenticationRequired(), creator)
 
 	body := `{"id":"sdom_xyz","hostname":"api.example.com","port":443,"certificate_type":"lets-encrypt"}`
 	rec := postServiceDomain(handler, "svc_api", body, "")
@@ -351,7 +351,7 @@ func TestCreateServiceDomainUnauthenticated(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("creator call count = %d, want 0 (auth rejected before handler)", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestCreateServiceDomainAuthorizationDenied proves a principal

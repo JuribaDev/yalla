@@ -363,7 +363,7 @@ func TestListServiceVariablesUnauthenticated(t *testing.T) {
 	}
 
 	handler := listServiceVariablesHandlerFor(
-		auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+		auth.Identity{}, apierr.AuthenticationRequired(), reader)
 
 	rec := getServiceVariables(handler, svc, "")
 	if rec.Code != http.StatusUnauthorized {

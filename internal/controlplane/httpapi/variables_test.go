@@ -372,7 +372,7 @@ func TestListOrgVariablesRequiresAuthentication(t *testing.T) {
 	var gotOrg string
 	reader := fakeOrgVariableReader{gotOrgID: &gotOrg}
 
-	handler := listOrgVariablesHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing token"), reader)
+	handler := listOrgVariablesHandlerFor(auth.Identity{}, apierr.AuthenticationRequired(), reader)
 	rec := getOrgVariables(handler, orgID, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())

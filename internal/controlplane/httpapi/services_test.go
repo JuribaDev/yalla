@@ -256,7 +256,7 @@ func TestGetServiceUnauthenticated(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("reader was called %d times for an unauthenticated request; want 0", calls)
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthenticationRequired))
 }
 
 // TestGetServiceInvalidCredentials proves a request with a bearer

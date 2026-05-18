@@ -256,8 +256,8 @@ func TestPostBreakGlassUnauthenticated(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_AUTH" {
-		t.Errorf("error code = %q, want E_AUTH", code)
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_AUTHENTICATION_REQUIRED" {
+		t.Errorf("error code = %q, want E_AUTHENTICATION_REQUIRED", code)
 	}
 }
 
