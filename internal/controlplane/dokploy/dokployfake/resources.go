@@ -30,6 +30,9 @@ const (
 // StatusRunning is the default runtime status of a freshly created service.
 const StatusRunning = "running"
 
+// StatusStopped is the runtime status of a stopped service.
+const StatusStopped = "stopped"
+
 // Organization is the top of the Dokploy hierarchy the fake models.
 type Organization struct {
 	ID   string `json:"id"`
@@ -137,6 +140,7 @@ func (s *Server) newMux() *http.ServeMux {
 
 	mux.HandleFunc("GET /api/services/{id}/status", s.getServiceStatus)
 	mux.HandleFunc("POST /api/services/{id}/restart", s.restartService)
+	mux.HandleFunc("POST /api/services/{id}/stop", s.stopService)
 	mux.HandleFunc("DELETE /api/services/{id}", s.deleteService)
 
 	mux.HandleFunc("POST /api/domains", s.createDomain)
@@ -435,6 +439,22 @@ func (s *Server) restartService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svc.Status = StatusRunning
+	writeJSON(w, http.StatusOK, serviceStatusResponse{
+		ServiceID: svc.ID,
+		Status:    svc.Status,
+	})
+}
+
+func (s *Server) stopService(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	svc, ok := s.resources.services[r.PathValue("id")]
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such service")
+		return
+	}
+	svc.Status = StatusStopped
 	writeJSON(w, http.StatusOK, serviceStatusResponse{
 		ServiceID: svc.ID,
 		Status:    svc.Status,

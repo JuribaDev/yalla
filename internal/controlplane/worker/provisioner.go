@@ -53,6 +53,15 @@ const JobTypeRestartService = "service.restart"
 // JobTypeRestartService.
 const JobTypeRestartServiceAlias = "restart_service"
 
+// JobTypeStopService is the durable provisioning job enqueued by the public
+// service stop endpoint. JobTypeStopServiceAlias accepts the PRD's stop_service
+// spelling for forward compatibility with manually seeded jobs.
+const JobTypeStopService = "service.stop"
+
+// JobTypeStopServiceAlias is accepted by the worker as an alias for
+// JobTypeStopService.
+const JobTypeStopServiceAlias = "stop_service"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -62,6 +71,7 @@ type DokployClient interface {
 	EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error)
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
+	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -245,6 +255,15 @@ type DeployServicePayload struct {
 // provisioning_jobs.payload for JobTypeRestartService /
 // JobTypeRestartServiceAlias.
 type RestartServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+}
+
+// StopServicePayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeStopService / JobTypeStopServiceAlias.
+type StopServicePayload struct {
 	OrganizationID string
 	ProjectID      string
 	EnvironmentID  string
@@ -536,6 +555,61 @@ func ParseRestartServicePayload(job store.ProvisioningJob) (RestartServicePayloa
 	}, nil
 }
 
+// ParseStopServicePayload validates a stop-service job payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseStopServicePayload(job store.ProvisioningJob) (StopServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeStopService && job.JobType != JobTypeStopServiceAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be service.stop or stop_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return StopServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return StopServicePayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+	}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -647,6 +721,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runDeployService(ctx, job)
 	case JobTypeRestartService, JobTypeRestartServiceAlias:
 		return p.runRestartService(ctx, job)
+	case JobTypeStopService, JobTypeStopServiceAlias:
+		return p.runStopService(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1063,6 +1139,36 @@ func (p *Provisioner) runRestartService(ctx context.Context, job store.Provision
 	return nil
 }
 
+func (p *Provisioner) runStopService(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseStopServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	dokployServiceID, err := p.loadStopServiceTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	status, stopErr := p.client.StopService(ctx, dokploy.StopServiceInput{ServiceID: dokployServiceID})
+	if stopErr != nil {
+		if interrupted(ctx, stopErr) {
+			return stopErr
+		}
+		if apierr.Retryable(stopErr) {
+			return stopErr
+		}
+		return Terminal(stopErr)
+	}
+	if status.ServiceID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: stop_service resolved an empty Dokploy service id")))
+	}
+	return nil
+}
+
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
 	var (
 		org        store.Organization
@@ -1463,6 +1569,63 @@ func (p *Provisioner) loadRestartServiceTarget(ctx context.Context, job store.Pr
 		}
 		if dokployServiceID == "" {
 			return Terminal(apierr.Conflict("service Dokploy mapping is required before restarting a service"))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return dokployServiceID, nil
+}
+
+func (p *Provisioner) loadStopServiceTarget(ctx context.Context, job store.ProvisioningJob, payload StopServicePayload) (string, error) {
+	var dokployServiceID string
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be stopped"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "stop_service")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				dokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if dokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before stopping a service"))
 		}
 		return nil
 	})

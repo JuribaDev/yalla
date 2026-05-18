@@ -171,6 +171,12 @@ type RestartServiceInput struct {
 	ServiceID string
 }
 
+// StopServiceInput names the service to stop.
+type StopServiceInput struct {
+	// ServiceID is the service to stop; required.
+	ServiceID string
+}
+
 // RemoveServiceInput names the service to remove.
 type RemoveServiceInput struct {
 	// ServiceID is the service to remove; required.

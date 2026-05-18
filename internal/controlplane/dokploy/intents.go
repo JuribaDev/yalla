@@ -198,6 +198,19 @@ func (c *Client) RestartService(ctx context.Context, in RestartServiceInput) (Se
 	return st, nil
 }
 
+// StopService stops a service and returns its post-command runtime status as
+// reported by Dokploy.
+func (c *Client) StopService(ctx context.Context, in StopServiceInput) (ServiceStatus, error) {
+	if v := requireFields(field{"service_id", in.ServiceID}); v != nil {
+		return ServiceStatus{}, v
+	}
+	var st ServiceStatus
+	if err := c.post(ctx, "/api/services/"+url.PathEscape(strings.TrimSpace(in.ServiceID))+"/stop", nil, &st); err != nil {
+		return ServiceStatus{}, err
+	}
+	return st, nil
+}
+
 // GetDeployment fetches a deployment by ID so a caller can poll its status.
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string) (Deployment, error) {
 	id := strings.TrimSpace(deploymentID)

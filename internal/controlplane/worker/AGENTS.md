@@ -55,6 +55,14 @@ Background provisioning/metering workers for the control plane.
   The current `services` row stores only the broad `database` kind, so the
   worker loads and verifies the service row for tenant/kind/version while using
   the persisted job payload as the concrete database-engine intent.
+- Runtime-control jobs such as `service.restart`/`restart_service` and
+  `service.stop`/`stop_service` should parse the same scoped payload
+  `(organization_id, project_id, environment_id, service_id)`, reload the
+  service through the tenant-scoped repository, reject stale desired versions
+  and deletion-scheduled services before any Dokploy call, resolve the
+  service-kind-specific `dokploy_refs` row, then call the matching typed
+  Dokploy intent. A job already marked `succeeded` is a replay no-op and must
+  not issue another upstream POST.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's
