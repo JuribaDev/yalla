@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 )
 
 // PreviewEnvironment is the project-scoped lifecycle record for an
@@ -35,8 +37,16 @@ const previewEnvironmentColumns = `id, organization_id, project_id, environment_
 
 const previewEnvironmentListMaxRows = 500
 
-// PreviewEnvironment* status constants enumerate the closed taxonomy
-// enforced by the preview_environments.status CHECK constraint.
+// PreviewEnvironmentStatus is the closed-set lifecycle the
+// preview_environments table permits. The preview state machine tracks the
+// Yalla-owned lifecycle of the preview wrapper; Dokploy runtime state remains a
+// private upstream concern.
+type PreviewEnvironmentStatus string
+
+func (s PreviewEnvironmentStatus) String() string { return string(s) }
+
+// PreviewEnvironment* status constants enumerate the closed taxonomy enforced
+// by the preview_environments.status CHECK constraint.
 const (
 	PreviewEnvironmentStatusPending      = "pending"
 	PreviewEnvironmentStatusProvisioning = "provisioning"
@@ -45,6 +55,84 @@ const (
 	PreviewEnvironmentStatusDeleted      = "deleted"
 	PreviewEnvironmentStatusFailed       = "failed"
 )
+
+// previewEnvironmentTransitions is the documented preview environment
+// lifecycle table. Pending is the accepted create intent, provisioning means
+// the worker has begun creating upstream state, ready is the normal live state,
+// deleting is accepted teardown intent, failed is a retryable/teardown-capable
+// failure state, and deleted is terminal.
+var previewEnvironmentTransitions = map[PreviewEnvironmentStatus]map[PreviewEnvironmentStatus]struct{}{
+	PreviewEnvironmentStatusPending: {
+		PreviewEnvironmentStatusProvisioning: {},
+		PreviewEnvironmentStatusDeleting:     {},
+		PreviewEnvironmentStatusFailed:       {},
+	},
+	PreviewEnvironmentStatusProvisioning: {
+		PreviewEnvironmentStatusReady:    {},
+		PreviewEnvironmentStatusDeleting: {},
+		PreviewEnvironmentStatusFailed:   {},
+	},
+	PreviewEnvironmentStatusReady: {
+		PreviewEnvironmentStatusDeleting: {},
+		PreviewEnvironmentStatusFailed:   {},
+	},
+	PreviewEnvironmentStatusDeleting: {
+		PreviewEnvironmentStatusDeleted: {},
+		PreviewEnvironmentStatusFailed:  {},
+	},
+	PreviewEnvironmentStatusFailed: {
+		PreviewEnvironmentStatusProvisioning: {},
+		PreviewEnvironmentStatusDeleting:     {},
+	},
+	PreviewEnvironmentStatusDeleted: {},
+}
+
+// CanTransitionTo reports whether the preview environment state machine
+// permits a status change from s to next. Repository mutations call this before
+// touching the preview_environments row.
+func (s PreviewEnvironmentStatus) CanTransitionTo(next PreviewEnvironmentStatus) bool {
+	allowed, ok := previewEnvironmentTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s PreviewEnvironmentStatus) previewEnvironmentEventType() PreviewEnvironmentEventType {
+	switch s {
+	case PreviewEnvironmentStatusPending:
+		return PreviewEnvironmentEventTypePending
+	case PreviewEnvironmentStatusProvisioning:
+		return PreviewEnvironmentEventTypeProvisioning
+	case PreviewEnvironmentStatusReady:
+		return PreviewEnvironmentEventTypeReady
+	case PreviewEnvironmentStatusDeleting:
+		return PreviewEnvironmentEventTypeDeleting
+	case PreviewEnvironmentStatusDeleted:
+		return PreviewEnvironmentEventTypeDeleted
+	case PreviewEnvironmentStatusFailed:
+		return PreviewEnvironmentEventTypeFailed
+	default:
+		return ""
+	}
+}
+
+// PreviewEnvironmentTransition is the audited state-machine mutation input for
+// a preview_environments row. Actor and request fields are persisted into the
+// preview environment event emitted atomically with the status update.
+type PreviewEnvironmentTransition struct {
+	OrganizationID  string
+	ProjectID       string
+	PreviewID       string
+	NextStatus      PreviewEnvironmentStatus
+	ExpectedVersion *int64
+	ActorID         string
+	ActorKind       string
+	RequestID       string
+	CorrelationID   string
+	Reason          string
+}
 
 // PreviewEnvironmentRepository is the persistence half of the preview
 // environment surface. Every read and write predicates on
@@ -177,35 +265,87 @@ func (r *PreviewEnvironmentRepository) ScheduleDeletion(ctx context.Context, tx 
 	if tx == nil {
 		return PreviewEnvironment{}, apierr.Internal(errors.New("store: PreviewEnvironmentRepository.ScheduleDeletion called with a nil transaction"))
 	}
-	var row pgx.Row
-	if ifMatchVersion == nil {
-		row = tx.QueryRow(ctx,
-			`UPDATE preview_environments
-			    SET status = $4,
-			        deletion_scheduled_at = COALESCE(deletion_scheduled_at, now())
-			  WHERE organization_id = $1 AND project_id = $2 AND id = $3
-			 RETURNING `+previewEnvironmentColumns,
-			organizationID, projectID, previewID, PreviewEnvironmentStatusDeleting)
-	} else {
-		row = tx.QueryRow(ctx,
-			`UPDATE preview_environments
-			    SET status = $4,
-			        deletion_scheduled_at = COALESCE(deletion_scheduled_at, now())
-			  WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND version = $5
-			 RETURNING `+previewEnvironmentColumns,
-			organizationID, projectID, previewID, PreviewEnvironmentStatusDeleting, *ifMatchVersion)
+	scheduled, _, err := r.Transition(ctx, tx, PreviewEnvironmentTransition{
+		OrganizationID:  organizationID,
+		ProjectID:       projectID,
+		PreviewID:       previewID,
+		NextStatus:      PreviewEnvironmentStatusDeleting,
+		ExpectedVersion: ifMatchVersion,
+		Reason:          "preview deletion scheduled",
+	})
+	return scheduled, err
+}
+
+// Transition moves a preview environment through the documented state machine
+// and appends the matching preview_environment_events row in the same
+// transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the preview row and timeline remain unchanged.
+func (r *PreviewEnvironmentRepository) Transition(ctx context.Context, tx *Tx, in PreviewEnvironmentTransition) (PreviewEnvironment, PreviewEnvironmentEvent, error) {
+	if tx == nil {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.Internal(errors.New("store: PreviewEnvironmentRepository.Transition called with a nil transaction"))
 	}
-	scheduled, err := scanPreviewEnvironment(row)
+	orgID := strings.TrimSpace(in.OrganizationID)
+	projectID := strings.TrimSpace(in.ProjectID)
+	previewID := strings.TrimSpace(in.PreviewID)
+	next := in.NextStatus
+	if next.previewEnvironmentEventType() == "" {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.InvalidStateTransition("preview_environment", "", next.String())
+	}
+
+	current, err := scanPreviewEnvironment(tx.QueryRow(ctx,
+		`SELECT `+previewEnvironmentColumns+`
+		   FROM preview_environments
+		  WHERE organization_id = $1 AND project_id = $2 AND id = $3
+		  FOR UPDATE`,
+		orgID, projectID, previewID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		if ifMatchVersion == nil {
-			return PreviewEnvironment{}, apierr.NotFound("preview environment", previewID)
-		}
-		return PreviewEnvironment{}, classifyPreviewEnvironmentConcurrencyMiss(ctx, tx, organizationID, projectID, previewID, *ifMatchVersion)
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.NotFound("preview environment", previewID)
 	}
 	if err != nil {
-		return PreviewEnvironment{}, apierr.StoreUnavailable(err)
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.StoreUnavailable(err)
 	}
-	return scheduled, nil
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.ConflictStale(current.Version)
+	}
+	currentStatus := PreviewEnvironmentStatus(current.Status)
+	if !currentStatus.CanTransitionTo(next) {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.InvalidStateTransition("preview_environment", currentStatus.String(), next.String())
+	}
+
+	updated, err := scanPreviewEnvironment(tx.QueryRow(ctx,
+		`UPDATE preview_environments
+		    SET status = $4,
+		        deletion_scheduled_at = CASE
+		            WHEN $4 = 'deleting' THEN COALESCE(deletion_scheduled_at, now())
+		            ELSE deletion_scheduled_at
+		        END
+		  WHERE organization_id = $1 AND project_id = $2 AND id = $3
+		  RETURNING `+previewEnvironmentColumns,
+		orgID, projectID, previewID, next.String()))
+	if err != nil {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewPreviewEnvironmentEventRepository().Append(ctx, tx, PreviewEnvironmentEvent{
+		OrganizationID: orgID,
+		PreviewID:      previewID,
+		EventType:      next.previewEnvironmentEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": currentStatus.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return PreviewEnvironment{}, PreviewEnvironmentEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // DeleteByID hard-deletes a preview row. The customer-facing delete

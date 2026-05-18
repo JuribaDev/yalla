@@ -1,0 +1,5 @@
+DROP TRIGGER IF EXISTS preview_environment_events_no_update ON preview_environment_events;
+DROP FUNCTION IF EXISTS preview_environment_events_reject_update();
+DROP INDEX IF EXISTS preview_environment_events_org_occurred_idx;
+DROP INDEX IF EXISTS preview_environment_events_preview_occurred_idx;
+DROP TABLE IF EXISTS preview_environment_events;

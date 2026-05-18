@@ -247,7 +247,18 @@ func (svc *PreviewEnvironmentService) ScheduleDeletion(ctx context.Context, in D
 		if current.DeletionScheduledAt != nil || current.Status == PreviewEnvironmentStatusDeleting {
 			return apierr.Conflict("preview environment deletion is already scheduled")
 		}
-		row, err := svc.previews.ScheduleDeletion(ctx, tx, validated.OrganizationID, validated.ProjectID, validated.PreviewID, in.IfMatchVersion)
+		row, _, err := svc.previews.Transition(ctx, tx, PreviewEnvironmentTransition{
+			OrganizationID:  validated.OrganizationID,
+			ProjectID:       validated.ProjectID,
+			PreviewID:       validated.PreviewID,
+			NextStatus:      PreviewEnvironmentStatusDeleting,
+			ExpectedVersion: in.IfMatchVersion,
+			ActorID:         strings.TrimSpace(in.ActorID),
+			ActorKind:       strings.TrimSpace(in.ActorKind),
+			RequestID:       strings.TrimSpace(in.RequestID),
+			CorrelationID:   strings.TrimSpace(in.CorrelationID),
+			Reason:          "preview deletion scheduled",
+		})
 		if err != nil {
 			return err
 		}

@@ -70,6 +70,20 @@ Postgres persistence for control-plane source-of-truth state.
   same transaction. The legacy `MarkResolved` helper also writes that event;
   do not add another resolution path that updates the row without the timeline.
 
+## Preview environments (`0038_preview_environments`, `0048_preview_environment_state_machine`)
+
+- `preview_environments.status` is the explicit lifecycle state machine:
+  `pending -> provisioning/deleting/failed`, `provisioning -> ready/deleting/failed`,
+  `ready -> deleting/failed`, `deleting -> deleted/failed`,
+  `failed -> provisioning/deleting`, with `deleted` terminal. Lifecycle changes
+  should go through `PreviewEnvironmentRepository.Transition`: it locks the
+  tenant-scoped `(organization_id, project_id, id)` row, rejects invalid edges
+  with `E_INVALID_STATE_TRANSITION` before any write, stamps
+  `deletion_scheduled_at` when entering `deleting`, and appends a
+  tenant-scoped `preview_environment_events` row in the same transaction.
+  `ScheduleDeletion` routes through this transition path; do not add a status
+  mutation that bypasses the timeline.
+
 ## API keys (`0003_api_keys`, `apikey.go`)
 
 - `api_keys` stores **only a hash** of the secret (`secret_hash`) plus the
