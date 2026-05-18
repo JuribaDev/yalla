@@ -306,8 +306,10 @@ func (c *Client) statusError(method, path string, status int, payload []byte) er
 	switch status {
 	case http.StatusBadRequest:
 		return apierr.Invalid("the Dokploy provisioning request was rejected").Wrap(detail)
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return apierr.DokployAuth(detail)
+	case http.StatusForbidden:
+		return apierr.DokployForbidden(detail)
 	case http.StatusNotFound:
 		return apierr.NotFound("dokploy resource", "").Wrap(detail)
 	case http.StatusConflict:

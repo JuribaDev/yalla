@@ -82,6 +82,11 @@ const (
 	// outages: retrying the same request will not help until operators fix
 	// the upstream credential or permission configuration.
 	CodeDokployAuth Code = "E_DOKPLOY_AUTH"
+	// CodeDokployForbidden marks a private Dokploy provisioning backend
+	// response that authenticated Yalla's upstream credential but denied the
+	// specific provisioning operation. It is distinct from customer-facing
+	// E_FORBIDDEN because customers never call Dokploy directly.
+	CodeDokployForbidden Code = "E_DOKPLOY_FORBIDDEN"
 	// CodeDokployUnavailable marks a transient outage or unusable response from
 	// the private Dokploy provisioning backend. It is distinct from
 	// CodeUnavailable, which is reserved for Yalla-owned dependencies.
@@ -134,6 +139,7 @@ var codeDescriptions = map[Code]string{
 	CodeQuotaExceeded:          "request rejected because an organization quota or plan limit is exhausted",
 	CodeServer:                 "upstream Dokploy server returned an error",
 	CodeDokployAuth:            "upstream Dokploy provisioning backend rejected Yalla credentials",
+	CodeDokployForbidden:       "upstream Dokploy provisioning backend denied the requested operation",
 	CodeDokployUnavailable:     "upstream Dokploy provisioning backend is temporarily unavailable",
 	CodeUpstreamBug:            "known upstream Dokploy bug encountered; use the documented workaround",
 	CodeNetwork:                "transport-level network failure reaching Dokploy",
@@ -155,7 +161,7 @@ func AllCodes() []CodeDoc {
 		CodeUnknown, CodeInternal, CodeUsage, CodeValidation, CodeInvalidInput,
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
-		CodeServer, CodeDokployAuth, CodeDokployUnavailable, CodeUpstreamBug,
+		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployUnavailable, CodeUpstreamBug,
 		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
 	out := make([]CodeDoc, 0, len(codes))
@@ -201,7 +207,7 @@ func (c Code) ExitCode() int {
 		return 6
 	case CodeRateLimited, CodeQuotaExceeded:
 		return 7
-	case CodeNetwork, CodeTimeout, CodeServer, CodeDokployAuth, CodeDokployUnavailable, CodeUpstreamBug, CodeUnavailable:
+	case CodeNetwork, CodeTimeout, CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployUnavailable, CodeUpstreamBug, CodeUnavailable:
 		return 8
 	case CodeNoInput:
 		return 9

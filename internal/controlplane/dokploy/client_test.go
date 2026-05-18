@@ -212,6 +212,24 @@ func TestClientAuthorizationFailure(t *testing.T) {
 	}
 }
 
+// TestClientForbiddenFailure maps an upstream Dokploy 403 onto the dedicated
+// non-retryable forbidden code, distinct from a 401 credential rejection.
+func TestClientForbiddenFailure(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	c := newTestClient(t, fake)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusForbidden))
+
+	_, err := c.EnsureOrganization(context.Background(), dokploy.EnsureOrganizationInput{Name: "acme"})
+	if code := codeOf(t, err); code != yerr.CodeDokployForbidden {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployForbidden)
+	}
+	if apierr.Retryable(err) {
+		t.Fatal("a Dokploy forbidden error must not be retryable")
+	}
+}
+
 // TestClientConflict maps a Dokploy 409 onto E_CONFLICT.
 func TestClientConflict(t *testing.T) {
 	t.Parallel()

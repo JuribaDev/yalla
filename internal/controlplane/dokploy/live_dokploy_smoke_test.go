@@ -229,10 +229,11 @@ func TestLiveDokploySmokeExercisesLiveEndpoint(t *testing.T) {
 			t.Errorf("smoke leaked bearer token %q in error message %q; the Dokploy client redactor MUST strip it before the wire", sentinelToken, msg)
 		}
 		// The error MUST be a typed yerr.Error. The Dokploy client classifies
-		// a 401/403 from the upstream as `CodeDokployAuth` because Yalla's own
+		// a 401 from the upstream as `CodeDokployAuth` because Yalla's own
 		// credentials were rejected — that is an internal misconfiguration
-		// the customer cannot act on. The smoke pins that contract: if a
-		// regression ever surfaced a 401 as a customer-actionable
+		// the customer cannot act on. A 403 has its own
+		// `CodeDokployForbidden` contract. The smoke pins the 401 contract: if
+		// a regression ever surfaced it as a customer-actionable
 		// `CodeAuth`/`CodeForbidden`, the wire envelope would mislead the
 		// caller into thinking THEIR credentials were wrong.
 		var ye *yerr.Error

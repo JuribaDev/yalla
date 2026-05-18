@@ -34,10 +34,11 @@ client.
   catalogued **retryable** errors (`apierr.Retryable`).
 - Every failure maps onto the `apierr` taxonomy: transport/5xx/429 ->
   `DokployUnavailable` (retryable), timeouts -> `Timeout(DependencyDokploy, …)`,
-  400 -> `Invalid`, 401/403 -> `DokployAuth` (Yalla's upstream credentials or
-  permissions were rejected, non-retryable), 404 -> `NotFound`, 409 ->
-  `Conflict`. The redacted upstream body is wrapped as the log-only cause,
-  never placed in a client-facing `Message`.
+  400 -> `Invalid`, 401 -> `DokployAuth`, 403 -> `DokployForbidden`, 404 ->
+  `NotFound`, 409 -> `Conflict`. Upstream auth/permission errors are
+  non-retryable Yalla operator issues, not customer credential failures. The
+  redacted upstream body is wrapped as the log-only cause, never placed in a
+  client-facing `Message`.
 - `RemoveEnvironment` and `RemoveService` treat a Dokploy 404 as success —
   teardown is idempotent.
 - The `Client` carries an `output.Redactor` seeded with the token; any error
