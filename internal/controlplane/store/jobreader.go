@@ -77,3 +77,22 @@ func (r *JobReader) ListJobs(ctx context.Context, in ListProvisioningJobsInput) 
 	}
 	return out, nil
 }
+
+// GetJob returns one provisioning job visible inside organizationID. The
+// repository lookup is tenant-scoped, so an unknown id and a cross-tenant id
+// collapse to the same NotFound shape.
+func (r *JobReader) GetJob(ctx context.Context, organizationID, jobID string) (ProvisioningJob, error) {
+	var out ProvisioningJob
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		job, err := r.jobs.Get(ctx, q, organizationID, jobID)
+		if err != nil {
+			return err
+		}
+		out = job
+		return nil
+	})
+	if err != nil {
+		return ProvisioningJob{}, err
+	}
+	return out, nil
+}

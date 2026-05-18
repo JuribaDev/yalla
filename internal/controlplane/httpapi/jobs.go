@@ -24,10 +24,15 @@ const (
 // JobReader is the narrow read port GET /v1/jobs depends on.
 type JobReader interface {
 	ListJobs(ctx context.Context, in store.ListProvisioningJobsInput) ([]store.ProvisioningJob, error)
+	GetJob(ctx context.Context, organizationID, jobID string) (store.ProvisioningJob, error)
 }
 
 type listJobsPayload struct {
 	Jobs []jobResource `json:"jobs"`
+}
+
+type getJobPayload struct {
+	Job jobResource `json:"job"`
 }
 
 type jobResource struct {
@@ -113,6 +118,32 @@ func jobListResolver(r *http.Request) policy.Resource {
 	return policy.Resource{Kind: domain.KindJob, Scope: scope}
 }
 
+func jobIDResolver(reader JobReader) ResourceResolver {
+	return func(r *http.Request) policy.Resource {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok {
+			return policy.Resource{Kind: domain.KindJob}
+		}
+		res := policy.Resource{Kind: domain.KindJob, Scope: policy.Scope{OrganizationID: p.OrganizationID}}
+		if reader == nil {
+			return res
+		}
+		jobID := r.PathValue("job_id")
+		id, err := domain.ParseID(jobID)
+		if err != nil || id.Kind() != domain.KindJob {
+			return res
+		}
+		job, err := reader.GetJob(r.Context(), p.OrganizationID, jobID)
+		if err != nil {
+			return res
+		}
+		res.Scope.ProjectID = job.ProjectID
+		res.Scope.EnvironmentID = job.EnvironmentID
+		res.Scope.ServiceID = job.ServiceID
+		return res
+	}
+}
+
 func listJobsHandler(reader JobReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := policy.PrincipalFromContext(r.Context())
@@ -139,6 +170,35 @@ func listJobsHandler(reader JobReader) http.HandlerFunc {
 			out = append(out, jobResourceOf(j))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listJobsPayload{Jobs: out})
+	}
+}
+
+func getJobHandler(reader JobReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoJobReader))
+			return
+		}
+		jobID := r.PathValue("job_id")
+		id, err := domain.ParseID(jobID)
+		if err != nil || id.Kind() != domain.KindJob {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "job_id",
+				Reason: "must be a valid job id",
+			}))
+			return
+		}
+		job, err := reader.GetJob(r.Context(), p.OrganizationID, jobID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getJobPayload{Job: jobResourceOf(job)})
 	}
 }
 

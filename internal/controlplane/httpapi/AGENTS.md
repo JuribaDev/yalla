@@ -244,6 +244,14 @@ port, render. When the endpoint has no path/query parameter, the tenant
 boundary is **structural** — the handler only ever passes `principal.OrganizationID`,
 so there is no caller input that could point the read at another tenant.
 
+Bare-id job reads are the exception to org-root authorization: `GET
+/v1/jobs/{job_id}` must authorize against the persisted job row's owning scope.
+Use the narrow `JobReader.GetJob` port in the resolver, mirror the row's
+`project_id`, `environment_id`, and `service_id` into `policy.Scope`, then keep
+the handler as a normal tenant-scoped `GetJob` read. That shape lets scoped
+grants read covered jobs while sibling grants are denied before the response
+handler runs.
+
 Mutating endpoints (e.g. `POST /v1/organizations`, `PATCH /v1/organizations/{org_id}`)
 use the same idea with a **narrow writer port** (`OrganizationCreator`,
 `OrganizationUpdater`), satisfied in production by a `store` **unit-of-work

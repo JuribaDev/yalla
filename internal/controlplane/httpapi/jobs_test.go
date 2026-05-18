@@ -23,9 +23,13 @@ import (
 
 type fakeJobReader struct {
 	jobs      []store.ProvisioningJob
+	job       store.ProvisioningJob
 	err       error
 	callCount *int
 	got       *store.ListProvisioningJobsInput
+	getCalls  *int
+	getOrgID  *string
+	getJobID  *string
 }
 
 func (f fakeJobReader) ListJobs(_ context.Context, in store.ListProvisioningJobsInput) ([]store.ProvisioningJob, error) {
@@ -39,6 +43,22 @@ func (f fakeJobReader) ListJobs(_ context.Context, in store.ListProvisioningJobs
 		return nil, f.err
 	}
 	return f.jobs, nil
+}
+
+func (f fakeJobReader) GetJob(_ context.Context, organizationID, jobID string) (store.ProvisioningJob, error) {
+	if f.getCalls != nil {
+		*f.getCalls = *f.getCalls + 1
+	}
+	if f.getOrgID != nil {
+		*f.getOrgID = organizationID
+	}
+	if f.getJobID != nil {
+		*f.getJobID = jobID
+	}
+	if f.err != nil {
+		return store.ProvisioningJob{}, f.err
+	}
+	return f.job, nil
 }
 
 func newJobsTestHandler(a Authenticator, reader JobReader) http.Handler {
@@ -73,7 +93,7 @@ func TestListJobsSuccessFiltersByPrincipalOrganizationAndQueryScope(t *testing.T
 	reader := fakeJobReader{
 		got: &got,
 		jobs: []store.ProvisioningJob{{
-			ID:             "job_alpha",
+			ID:             "job_0123456789abcdefghjkmnpqrs",
 			OrganizationID: "org_jobs",
 			JobType:        "ensure_project",
 			ProjectID:      "proj_jobs",
@@ -126,7 +146,7 @@ func TestListJobsSuccessFiltersByPrincipalOrganizationAndQueryScope(t *testing.T
 	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_jobs_list" {
 		t.Fatalf("envelope = %+v", env)
 	}
-	if len(env.Data.Jobs) != 1 || env.Data.Jobs[0].ID != "job_alpha" || env.Data.Jobs[0].Payload["project_id"] != "proj_jobs" {
+	if len(env.Data.Jobs) != 1 || env.Data.Jobs[0].ID != "job_0123456789abcdefghjkmnpqrs" || env.Data.Jobs[0].Payload["project_id"] != "proj_jobs" {
 		t.Fatalf("jobs payload = %+v", env.Data.Jobs)
 	}
 }
@@ -384,5 +404,213 @@ func TestListJobsErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
 		if strings.Contains(rec.Body.String(), needle) {
 			t.Errorf("error envelope leaked %q: %s", needle, rec.Body.String())
 		}
+	}
+}
+
+func TestGetJobSuccessAuthorizesAgainstResolvedJobScope(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC)
+	var calls int
+	var orgID, jobID string
+	reader := fakeJobReader{
+		getCalls: &calls,
+		getOrgID: &orgID,
+		getJobID: &jobID,
+		job: store.ProvisioningJob{
+			ID:             "job_0123456789abcdefghjkmnpqrs",
+			OrganizationID: "org_jobs",
+			JobType:        "ensure_application_service",
+			ProjectID:      "proj_jobs",
+			EnvironmentID:  "env_jobs",
+			ServiceID:      "svc_jobs",
+			DesiredVersion: 7,
+			Status:         store.JobStatusQueued,
+			MaxAttempts:    20,
+			NextRunAt:      now,
+			Payload:        map[string]string{"service_id": "svc_jobs"},
+			RequestID:      "req_seeded_job",
+			CorrelationID:  "corr_seeded_job",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{
+			Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_jobs", EnvironmentID: "env_jobs", ServiceID: "svc_jobs"},
+			Role:  policy.RoleViewer,
+		}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/job_0123456789abcdefghjkmnpqrs", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("X-Request-Id", "req_jobs_get")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("GetJob calls = %d, want 2 (resolver plus handler)", calls)
+	}
+	if orgID != "org_jobs" || jobID != "job_0123456789abcdefghjkmnpqrs" {
+		t.Fatalf("GetJob input = (%q, %q), want principal org and path job id", orgID, jobID)
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		RequestID     string `json:"request_id"`
+		Data          struct {
+			Job struct {
+				ID             string            `json:"id"`
+				OrganizationID string            `json:"organization_id"`
+				JobType        string            `json:"job_type"`
+				ProjectID      string            `json:"project_id"`
+				EnvironmentID  string            `json:"environment_id"`
+				ServiceID      string            `json:"service_id"`
+				DesiredVersion int64             `json:"desired_version"`
+				Status         string            `json:"status"`
+				Payload        map[string]string `json:"payload"`
+				RequestID      string            `json:"request_id"`
+			} `json:"job"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_jobs_get" {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if env.Data.Job.ID != "job_0123456789abcdefghjkmnpqrs" || env.Data.Job.ProjectID != "proj_jobs" || env.Data.Job.Payload["service_id"] != "svc_jobs" {
+		t.Fatalf("job payload = %+v", env.Data.Job)
+	}
+}
+
+func TestGetJobInvalidIDRejectedBeforeReader(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleViewer,
+	}}}, fakeJobReader{getCalls: &calls})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/not-a-job-id", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if calls != 0 {
+		t.Fatalf("GetJob calls = %d, want 0", calls)
+	}
+	decodeError(t, rec, string(yerr.CodeInvalidInput))
+}
+
+func TestGetJobUnauthenticatedSkipsReader(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	h := newJobsTestHandler(fakeAuthenticator{err: auth.ErrNoCredentials}, fakeJobReader{getCalls: &calls})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/jobs/job_0123456789abcdefghjkmnpqrs", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	if calls != 0 {
+		t.Fatalf("GetJob calls = %d, want 0", calls)
+	}
+	decodeError(t, rec, string(yerr.CodeAuth))
+}
+
+func TestGetJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	reader := fakeJobReader{getCalls: &calls, job: store.ProvisioningJob{
+		ID:             "job_0123456789abcdefghjkmnpqrs",
+		OrganizationID: "org_jobs",
+		ProjectID:      "proj_jobs",
+		Status:         store.JobStatusQueued,
+	}}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_sibling"}, Role: policy.RoleViewer}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/job_0123456789abcdefghjkmnpqrs", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("GetJob calls = %d, want resolver lookup only", calls)
+	}
+	decodeError(t, rec, string(yerr.CodeForbidden))
+}
+
+func TestGetJobNotFoundPropagatesEnvelope(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleViewer,
+	}}}, fakeJobReader{err: apierr.NotFound("provisioning job", "job_0123456789abcdefghjkmnpqrt")})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/job_0123456789abcdefghjkmnpqrt", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, string(yerr.CodeNotFound))
+}
+
+func TestGetJobDocumentsRouteInOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{}, fakeJobReader{})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi.json status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID    string                  `json:"operationId"`
+			RequiredAction string                  `json:"x-required-action"`
+			PathParams     []struct{ Name string } `json:"parameters"`
+			Responses      map[string]struct{}     `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi.json: %v; body %s", err, rec.Body.String())
+	}
+	get, ok := doc.Paths["/v1/jobs/{job_id}"]["get"]
+	if !ok {
+		t.Fatalf("GET /v1/jobs/{job_id} missing from openapi.json: %s", rec.Body.String())
+	}
+	if get.OperationID != "getJob" {
+		t.Errorf("operationId = %q, want getJob", get.OperationID)
+	}
+	if get.RequiredAction != string(policy.ActionJobRead) {
+		t.Errorf("x-required-action = %q, want %q", get.RequiredAction, policy.ActionJobRead)
+	}
+	if _, ok := get.Responses["200"]; !ok {
+		t.Error("responses[200] missing")
 	}
 }

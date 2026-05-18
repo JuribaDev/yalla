@@ -1333,6 +1333,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		{
 			endpoint: openapi.Endpoint{
 				Method:         http.MethodGet,
+				Path:           "/v1/jobs/{job_id}",
+				OperationID:    "getJob",
+				Summary:        "Get a provisioning job",
+				Description:    "Returns the durable provisioning job named by the {job_id} path parameter. The authorization resolver first resolves the job row inside the authenticated principal's tenant and evaluates action job.read against the row's owning scope (organization, project, environment, or service) so scoped grants can read jobs they actually cover while sibling grants are denied before the response handler runs. A cross-tenant or unknown job id reaches the tenant-scoped repository lookup as the principal's home organization and surfaces as a deterministic 404, never another tenant's job. The response carries source-of-truth job metadata only: structural resource ids, closed-set status, retry/lease bookkeeping, redacted error_summary, non-secret payload references, and request/correlation ids.",
+				Tags:           []string{tagJobs},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionJobRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "job_id",
+					Description: "The id of the provisioning job to fetch.",
+				}},
+				SuccessDescription: "The provisioning job visible at the requested scope.",
+			},
+			resolver: jobIDResolver(jobReader),
+			handler:  getJobHandler(jobReader),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
 				Path:           "/v1/services/{service_id}/deployments",
 				OperationID:    "listServiceDeployments",
 				Summary:        "List service deployments",

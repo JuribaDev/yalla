@@ -6115,7 +6115,7 @@
       ],
       "type": "endpoint-jobs",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the jobs backend surface."
     },
     {
