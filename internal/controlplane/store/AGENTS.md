@@ -98,6 +98,17 @@ Postgres persistence for control-plane source-of-truth state.
 - `MembershipRepository.Get` is a tenant-scoped read (`organization_id` before
   `user_id`) returning `apierr.NotFound` for a non-member — a cross-tenant
   user id can never reveal another org's membership.
+- `UserRepository` (`user.go`) is the CRUD surface for the **global identity
+  table** users. It has **no version column** and no `If-Match` path —
+  optimistic concurrency for organization-scoped session-token revocation
+  lives on `memberships.role_version` instead. The plain `Get(userID)` /
+  `GetByEmail(email)` reads target the global row; tenant-scoped reads must
+  go through `GetInOrganization(organizationID, userID)`, which JOINs against
+  memberships so a non-member surfaces as the same `apierr.NotFound` an
+  unknown id would produce. `Delete` cascades into memberships via the
+  `memberships(user_id) ON DELETE CASCADE` FK and reports `NotFound` when
+  `RowsAffected() == 0` — the same idempotent-tag pattern `api_keys.Revoke`
+  uses.
 - `CredentialReader` is the **production adapter** that satisfies the
   `auth.CredentialStore` port — the BE-0020 "store wiring" for the auth
   middleware. The dependency direction is deliberate: `auth` defines the port
