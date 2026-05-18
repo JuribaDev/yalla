@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Worker domain sync jobs (BE-0495 pattern for `sync_domains`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope and `DesiredVersion`, resolve the service-kind-specific Dokploy service ref, list desired `service_domains`, and call the typed Dokploy `EnsureDomain` intent once per desired row. Persist mappings as `dokploy_refs` rows with `yalla_kind='service_domain'`, `yalla_id=service_domains.id`, and `dokploy_resource='domain'`; replays pass `ExistingID` to `EnsureDomain` and must not insert duplicate domain mappings. Retryable upstream errors stay plain for the durable queue to persist redacted `error_summary`; malformed/stale/cross-tenant desired state is `worker.Terminal`.
 - Worker project teardown jobs (BE-0494 pattern for `project.delete` / PRD alias `delete_project`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id)`, load the project through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `project` `dokploy_refs` row, and call the typed Dokploy `RemoveProject` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like environment/service delete jobs, project delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
 - Worker environment teardown jobs (BE-0493 pattern for `environment.delete` / PRD alias `delete_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id)`, load the environment through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `environment` `dokploy_refs` row, and call the typed Dokploy `RemoveEnvironment` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like service delete jobs, environment delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
 - Worker teardown jobs (BE-0492 pattern for `service.delete` / PRD alias `delete_service`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the service-kind-specific `dokploy_refs` row, and call the typed Dokploy `RemoveService` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is also idempotent because the typed Dokploy client treats remove 404 as success. Unlike runtime-control jobs, delete jobs do not reject `deletion_scheduled_at`; scheduled deletion is the normal lifecycle path.
@@ -810,8 +811,6 @@
     Edit. Process the JSON with ctx_execute_file when you only need to query it.
   - internal/errors exposes yerr.Error implementing Unwrap, so stderrors.As works through wrapped errors.
   - slog.GroupValue needs []any; slog.Group inside it also needs variadic any — wrote an anyAttrs adapter.
----
-
 ## 2026-05-14 - BE-0003
 - What was implemented: Service lifecycle and graceful shutdown for the API and worker.
   - internal/controlplane/runtime/lifecycle.go (new): Readiness type — concurrency-safe named
@@ -34156,4 +34155,44 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Project teardown mirrors environment teardown with one fewer scope leg: parse `(organization_id, project_id)`, reload through `ProjectRepository.Get`, verify `DesiredVersion`, resolve `store.YallaKindProject` + `store.DokployResourceProject`, then call typed `RemoveProject`.
   - The Dokploy fake should expose a real DELETE route and still return 404 for missing resources so the typed client owns idempotent 404-to-success behavior.
+---
+## 2026-05-18 19:30 +03 - BE-0495
+- What was implemented
+  - Implemented durable worker execution for `sync_domains`.
+  - Added typed payload validation, service-domain repository wiring in `Provisioner`, tenant-scoped service/domain desired-state loading, stale-version and scheduled-deletion rejection, idempotent Dokploy domain ensure/replay, and per-domain `dokploy_refs` mappings.
+  - Added migration `0039_dokploy_refs_service_domain_kind` and `store.YallaKindServiceDomain` so domain mappings key to `service_domains.id`.
+  - Added fake Dokploy worker coverage for success/replay, retryable upstream failure, stale terminal validation, cancellation, and queue-persisted redacted error summaries.
+- Files changed
+  - internal/controlplane/worker/provisioner.go
+  - internal/controlplane/worker/provisioner_test.go
+  - internal/controlplane/worker/AGENTS.md
+  - internal/controlplane/store/dokploy_ref.go
+  - internal/controlplane/store/AGENTS.md
+  - internal/controlplane/store/migrate/migrations/0039_dokploy_refs_service_domain_kind.up.sql
+  - internal/controlplane/store/migrate/migrations/0039_dokploy_refs_service_domain_kind.down.sql
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/worker -run 'TestProvisionerSyncDomains|TestSyncDomains' -count=1`
+  - `go test ./internal/controlplane/store/migrate -run TestMigrations -count=1`
+  - `go test ./internal/controlplane/worker -count=1`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All executed checks passed.
+  - `golangci-lint run ./...` reported `0 issues`.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed locally.
+- Remaining risks or follow-ups
+  - `sync_domains` ensures desired domain bindings but does not remove stale upstream domain bindings no longer present in `service_domains`; that cleanup should be handled by a future reconciliation/delete-domain story if required.
+- **Learnings for future iterations:**
+  - `dokploy_refs.yalla_kind` needed a new `service_domain` member because a single service can own multiple domain mappings; keying domain refs to the parent service would not support per-domain idempotent replay.
+  - The fake Dokploy server already supports `POST /api/domains` and `GET /api/domains/{id}`, so worker tests can cover domain provisioning without adding fake-server behavior.
+  - Queue redaction tests should claim a real persisted job through `StoreClaimer` to verify `error_summary` storage, not only call `Provisioner.Run` directly.
 ---

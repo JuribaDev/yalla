@@ -10314,8 +10314,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: sync_domains."
+      "passes": true,
+      "notes": "Implemented sync_domains durable worker job: typed payload validation, tenant-scoped desired-state load, stale-version rejection, idempotent Dokploy domain ensure/replay, per-domain dokploy_refs mappings, fake-Dokploy retry/cancellation/terminal tests, and redacted queue error-summary coverage."
     },
     {
       "id": "BE-0496",

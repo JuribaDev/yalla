@@ -53,6 +53,9 @@ Postgres persistence for control-plane source-of-truth state.
 - `dokploy_refs` is the polymorphic Yalla-resource -> Dokploy-object mapping.
   It cannot use a single FK (the target table varies), so tenant scoping is the
   `organization_id` FK; `(dokploy_resource, dokploy_id)` is globally unique.
+  Domain mappings use `yalla_kind = 'service_domain'` and `yalla_id =
+  service_domains.id`, not the parent service id, so domain sync jobs can
+  replay idempotently per desired hostname.
 - The schema does **not** pin resource-ID prefix formats with CHECK
   constraints — `internal/controlplane/domain` owns ID well-formedness, and
   `testutil` fixtures deliberately use independent prefixes.

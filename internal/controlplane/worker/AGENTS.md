@@ -83,6 +83,14 @@ Background provisioning/metering workers for the control plane.
   resolve the `project` `dokploy_refs` row, and call the typed Dokploy
   `RemoveProject` intent. A job already marked `succeeded` is a replay no-op,
   and an upstream 404 is idempotent success in the typed client.
+- Domain sync jobs (`sync_domains`) use the scoped payload
+  `(organization_id, project_id, environment_id, service_id)`, reload the
+  service through `ServiceRepository.GetByID`, verify payload scope and
+  `DesiredVersion`, resolve the service-kind-specific Dokploy service ref,
+  list desired `service_domains`, then create or verify one `domain`
+  `dokploy_refs` row per `service_domain` row using
+  `YallaKindServiceDomain`. Replays should call `EnsureDomain` with
+  `ExistingID` and must not insert duplicate mapping rows.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

@@ -108,6 +108,10 @@ const JobTypeDeleteProject = "project.delete"
 // JobTypeDeleteProject.
 const JobTypeDeleteProjectAlias = "delete_project"
 
+// JobTypeSyncDomains is the durable provisioning job that reconciles
+// service_domains desired state into Dokploy domain bindings.
+const JobTypeSyncDomains = "sync_domains"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -115,6 +119,7 @@ type DokployClient interface {
 	EnsureProject(context.Context, dokploy.EnsureProjectInput) (dokploy.Project, error)
 	EnsureEnvironment(context.Context, dokploy.EnsureEnvironmentInput) (dokploy.Environment, error)
 	EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error)
+	EnsureDomain(context.Context, dokploy.EnsureDomainInput) (dokploy.Domain, error)
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 	RollbackService(context.Context, dokploy.RollbackServiceInput) (dokploy.ServiceStatus, error)
@@ -364,6 +369,15 @@ type DeleteEnvironmentPayload struct {
 type DeleteProjectPayload struct {
 	OrganizationID string
 	ProjectID      string
+}
+
+// SyncDomainsPayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeSyncDomains.
+type SyncDomainsPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
 }
 
 // ParseEnsureApplicationServicePayload validates job's typed payload and
@@ -871,6 +885,61 @@ func ParseDeleteServicePayload(job store.ProvisioningJob) (DeleteServicePayload,
 	}, nil
 }
 
+// ParseSyncDomainsPayload validates a sync-domains job payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseSyncDomainsPayload(job store.ProvisioningJob) (SyncDomainsPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeSyncDomains {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be sync_domains"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return SyncDomainsPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return SyncDomainsPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+	}, nil
+}
+
 // ParseDeleteEnvironmentPayload validates a delete-environment job payload and
 // returns a terminal error for payload shapes retrying cannot repair.
 func ParseDeleteEnvironmentPayload(job store.ProvisioningJob) (DeleteEnvironmentPayload, error) {
@@ -973,6 +1042,7 @@ type ProvisionerConfig struct {
 	Projects      *store.ProjectRepository
 	Environments  *store.EnvironmentRepository
 	Services      *store.ServiceRepository
+	Domains       *store.ServiceDomainRepository
 	Deployments   *store.DeploymentRepository
 	Refs          *store.DokployRefRepository
 	Mapper        *dokploy.Mapper
@@ -986,6 +1056,7 @@ type Provisioner struct {
 	projects      *store.ProjectRepository
 	environments  *store.EnvironmentRepository
 	services      *store.ServiceRepository
+	domains       *store.ServiceDomainRepository
 	deployments   *store.DeploymentRepository
 	refs          *store.DokployRefRepository
 	mapper        *dokploy.Mapper
@@ -1020,6 +1091,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if services == nil {
 		services = store.NewServiceRepository()
 	}
+	domains := cfg.Domains
+	if domains == nil {
+		domains = store.NewServiceDomainRepository()
+	}
 	deployments := cfg.Deployments
 	if deployments == nil {
 		deployments = store.NewDeploymentRepository()
@@ -1038,6 +1113,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		projects:      projects,
 		environments:  environments,
 		services:      services,
+		domains:       domains,
 		deployments:   deployments,
 		refs:          refs,
 		mapper:        mapper,
@@ -1080,6 +1156,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runDeleteEnvironment(ctx, job)
 	case JobTypeDeleteProject, JobTypeDeleteProjectAlias:
 		return p.runDeleteProject(ctx, job)
+	case JobTypeSyncDomains:
+		return p.runSyncDomains(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1665,6 +1743,51 @@ func (p *Provisioner) runDeleteProject(ctx context.Context, job store.Provisioni
 		return Terminal(removeErr)
 	}
 	return nil
+}
+
+func (p *Provisioner) runSyncDomains(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseSyncDomainsPayload(job)
+	if err != nil {
+		return err
+	}
+
+	targets, err := p.loadSyncDomainsTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		ensured, ensureErr := p.client.EnsureDomain(ctx, dokploy.EnsureDomainInput{
+			ExistingID: target.ExistingDokployID,
+			ServiceID:  target.DokployServiceID,
+			Host:       target.Domain.Hostname,
+			HTTPS:      target.Domain.HTTPS,
+		})
+		if ensureErr != nil {
+			if interrupted(ctx, ensureErr) {
+				return ensureErr
+			}
+			if apierr.Retryable(ensureErr) {
+				return ensureErr
+			}
+			return Terminal(ensureErr)
+		}
+		if ensured.ID == "" {
+			return Terminal(apierr.Internal(errors.New("worker: sync_domains resolved an empty Dokploy domain id")))
+		}
+		if err := p.persistServiceDomainRef(ctx, job, payload, target.Domain.ID, ensured.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type syncDomainTarget struct {
+	Domain            store.ServiceDomain
+	DokployServiceID  string
+	ExistingDokployID string
 }
 
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
@@ -2383,6 +2506,88 @@ func (p *Provisioner) loadDeleteProjectTarget(ctx context.Context, job store.Pro
 	return dokployProjectID, nil
 }
 
+func (p *Provisioner) loadSyncDomainsTarget(ctx context.Context, job store.ProvisioningJob, payload SyncDomainsPayload) ([]syncDomainTarget, error) {
+	var targets []syncDomainTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync domains"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "sync_domains")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		var dokployServiceID string
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				dokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if dokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before syncing domains"))
+		}
+
+		domains, listErr := p.domains.ListByService(ctx, q, job.OrganizationID, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		targets = make([]syncDomainTarget, 0, len(domains))
+		for _, domainRow := range domains {
+			domainRefs, refsErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindServiceDomain, domainRow.ID)
+			if refsErr != nil {
+				return refsErr
+			}
+			var existingDokployID string
+			for _, ref := range domainRefs {
+				if ref.DokployResource == store.DokployResourceDomain {
+					existingDokployID = ref.DokployID
+					break
+				}
+			}
+			targets = append(targets, syncDomainTarget{
+				Domain:            domainRow,
+				DokployServiceID:  dokployServiceID,
+				ExistingDokployID: existingDokployID,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return targets, nil
+}
+
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {
 	var (
 		deployment       store.Deployment
@@ -2753,6 +2958,70 @@ func (p *Provisioner) persistProjectRef(ctx context.Context, job store.Provision
 			YallaKind:       store.YallaKindProject,
 			YallaID:         payload.ProjectID,
 			DokployResource: store.DokployResourceProject,
+			DokployID:       dokployID,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) persistServiceDomainRef(ctx context.Context, job store.ProvisioningJob, payload SyncDomainsPayload, domainID, dokployID string) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		svc, err := p.services.GetByID(ctx, tx, payload.OrganizationID, payload.ServiceID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync domains"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+		domainRow, err := p.domains.GetByID(ctx, tx, payload.OrganizationID, payload.ServiceID, domainID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if domainRow.OrganizationID != job.OrganizationID || domainRow.ServiceID != payload.ServiceID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.service_id",
+				Reason: "must match the service domain parent",
+			}))
+		}
+
+		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindServiceDomain, domainID)
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.DokployResource == store.DokployResourceDomain {
+				return nil
+			}
+		}
+		_, err = p.refs.Insert(ctx, tx, store.DokployRef{
+			OrganizationID:  job.OrganizationID,
+			YallaKind:       store.YallaKindServiceDomain,
+			YallaID:         domainID,
+			DokployResource: store.DokployResourceDomain,
 			DokployID:       dokployID,
 		})
 		if err != nil {

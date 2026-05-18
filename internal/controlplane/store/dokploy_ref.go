@@ -29,6 +29,10 @@ const (
 	// every customer-facing application/database/compose unit ultimately
 	// resolves to a Dokploy application or database.
 	YallaKindService YallaKind = "service"
+	// YallaKindServiceDomain names a service_domains row. Domain mappings are
+	// keyed to the domain row, not only the parent service, so sync jobs can
+	// replay idempotently per hostname.
+	YallaKindServiceDomain YallaKind = "service_domain"
 )
 
 // String returns the kind's stable string value, matching the database
