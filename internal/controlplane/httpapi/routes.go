@@ -690,6 +690,29 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		},
 		{
 			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/projects/{project_id}/previews/{preview_id}",
+				OperationID:    "deletePreview",
+				Summary:        "Delete preview environment",
+				Description:    "Schedules the preview environment named by {preview_id} under the project named by {project_id} for worker-driven teardown. The handler derives organization scope from the authenticated principal, authorizes action preview.delete against the parent project resource, then asks the store service to verify the tenant-scoped project and preview row, stamp deletion_scheduled_at, enqueue the delete_preview_environment provisioning job, and append the immutable audit event in one transaction. A cross-tenant or unknown project_id/preview_id reaches the tenant-scoped store with the principal's home organization id and surfaces as a deterministic 404. The response carries the scheduled preview lifecycle row in the stable yalla.output.v1 envelope.",
+				Tags:           []string{tagProjects, tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionPreviewDelete),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project that owns the preview environment.",
+				}, {
+					Name:        "preview_id",
+					Description: "The id of the preview environment to schedule for deletion.",
+				}},
+				SuccessDescription: "The preview environment was scheduled for deletion.",
+			},
+			resolver: projectIDResolver,
+			handler:  deletePreviewHandler(previewCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
 				Method:         http.MethodGet,
 				Path:           "/v1/environments/{environment_id}",
 				OperationID:    "getEnvironment",

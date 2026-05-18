@@ -453,13 +453,17 @@ func TestCreatePreviewRouteIsDocumented(t *testing.T) {
 type fakePreviewCreator struct {
 	preview          store.PreviewEnvironment
 	previews         []store.PreviewEnvironment
+	deleted          store.PreviewEnvironment
 	err              error
 	listErr          error
+	deleteErr        error
 	gotInput         *store.CreatePreviewEnvironmentInput
+	gotDeleteInput   *store.DeletePreviewEnvironmentInput
 	gotListOrgID     *string
 	gotListProjectID *string
 	callCount        *int
 	listCallCount    *int
+	deleteCallCount  *int
 }
 
 func (f fakePreviewCreator) Create(ctx context.Context, in store.CreatePreviewEnvironmentInput) (store.PreviewEnvironment, error) {

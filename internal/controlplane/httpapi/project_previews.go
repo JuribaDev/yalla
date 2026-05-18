@@ -16,6 +16,7 @@ import (
 
 var errNoPreviewCreator = errors.New("httpapi: no preview creator configured")
 var errNoPreviewReader = errors.New("httpapi: no preview reader configured")
+var errNoPreviewDeleter = errors.New("httpapi: no preview deleter configured")
 
 // PreviewCreator is the narrow store port the project preview endpoints depend
 // on. *store.PreviewEnvironmentService satisfies it in production; tests supply
@@ -25,6 +26,7 @@ var errNoPreviewReader = errors.New("httpapi: no preview reader configured")
 type PreviewCreator interface {
 	Create(ctx context.Context, in store.CreatePreviewEnvironmentInput) (store.PreviewEnvironment, error)
 	ListProjectPreviews(ctx context.Context, organizationID, projectID string) ([]store.PreviewEnvironment, error)
+	ScheduleDeletion(ctx context.Context, in store.DeletePreviewEnvironmentInput) (store.PreviewEnvironment, error)
 }
 
 type createPreviewRequest struct {
@@ -43,6 +45,10 @@ type createPreviewPayload struct {
 
 type listProjectPreviewsPayload struct {
 	Previews []previewEnvironment `json:"previews"`
+}
+
+type deletePreviewPayload struct {
+	Preview previewEnvironment `json:"preview"`
 }
 
 type previewEnvironment struct {
@@ -154,5 +160,47 @@ func listProjectPreviewsHandler(reader PreviewCreator) http.HandlerFunc {
 			out = append(out, previewEnvironmentOf(preview))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectPreviewsPayload{Previews: out})
+	}
+}
+
+func deletePreviewHandler(deleter PreviewCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPreviewDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		preview, err := deleter.ScheduleDeletion(r.Context(), store.DeletePreviewEnvironmentInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			PreviewID:      r.PathValue("preview_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, preview.Version)
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deletePreviewPayload{
+			Preview: previewEnvironmentOf(preview),
+		})
 	}
 }

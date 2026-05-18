@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Preview delete endpoints (BE-0268 pattern, DELETE `/v1/projects/{project_id}/previews/{preview_id}`) should stay parent-project scoped: route through `projectIDResolver` with action `preview.delete`, handler forwards principal org + path project/preview ids plus optional `If-Match`, store service verifies the tenant-scoped parent project and preview row before side effects, rejects stale/already-scheduled state, calls `PreviewEnvironmentRepository.ScheduleDeletion`, enqueues `delete_preview_environment`, and appends a redaction-safe `preview.delete` audit event in the same transaction. Return `202 Accepted` with the scheduled preview snapshot and ETag because teardown is durable but worker-driven.
 - Provisioning job state-machine stories use a pure `JobStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped job row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, derive lease/attempt/timestamp bookkeeping from the target status, and append the matching `provisioning_job_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Deployment state-machine stories use a pure `DeploymentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped deployment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update lifecycle timestamps/error fields, and append the matching `deployment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Worker Dokploy import jobs (BE-0502 pattern for `import_dokploy_resource`) are organization-scoped only and use a typed payload `(organization_id, yalla_organization_id, dokploy_organization_id[, assignment_dokploy_org_id])`. The worker reloads the Yalla organization from Postgres, rejects stale desired versions before scanning Dokploy, then delegates classification/apply to `migrateimport.Importer` through a store-backed repository adapter. Each imported project/environment/service row and its `dokploy_refs` mapping are inserted in the same transaction, so replay after partial success classifies existing refs as `skip_already_imported` and creates only missing descendants. Scanner/Dokploy failures stay retryable unless cancellation interrupted the context; malformed/cross-tenant/stale desired state is `worker.Terminal`.
@@ -34555,4 +34556,47 @@ change that widened Reason to caller-supplied data.
   - `provisioning_jobs` now has two timelines: `provisioning_job_events` for every lifecycle transition and `job_attempts` for finished worker attempts only.
   - Invalid provisioning-job lifecycle edges should use `apierr.InvalidStateTransition("provisioning_job", from, to)`, not generic `apierr.Conflict`.
   - Transition callers may omit actor/request metadata; the repository derives a stable worker/system fallback from the lease/job row, but customer/admin paths should pass explicit actor metadata.
+---
+
+## 2026-05-18 21:17 +03 - BE-0268
+- What was implemented
+  - Implemented DELETE /v1/projects/{project_id}/previews/{preview_id} as a scheduled, worker-driven preview teardown endpoint.
+  - Added preview.delete route/OpenAPI metadata, project-scoped authorization through projectIDResolver, yalla.output.v1/yalla.error.v1 rendering, request/correlation propagation, optional If-Match parsing, and ETag response on success.
+  - Added store-level PreviewEnvironmentService.ScheduleDeletion to verify the tenant-scoped parent project and preview row, reject stale/already-scheduled deletion, stamp deletion_scheduled_at, enqueue delete_preview_environment, and append a redaction-safe preview.delete audit event in the same transaction.
+  - Marked BE-0268 passes=true in ralph/prd.json.
+- Files changed
+  - internal/controlplane/httpapi/project_previews.go
+  - internal/controlplane/httpapi/project_previews_delete_test.go
+  - internal/controlplane/httpapi/project_previews_create_test.go
+  - internal/controlplane/httpapi/routes.go
+  - internal/controlplane/store/preview_environment_service.go
+  - internal/controlplane/store/preview_environment_service_test.go
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run
+  - gofmt -w .
+  - goimports -w . (not installed locally)
+  - go mod tidy
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+  - go test ./internal/controlplane/...
+  - go test -race ./internal/controlplane/...
+  - go test -run TestMigrations ./...
+  - go test -run TestPolicyMatrix ./...
+  - go test -run TestQuotaConcurrency ./...
+  - go test -run TestFakeDokploy ./...
+  - golangci-lint run ./...
+  - staticcheck ./... (not on PATH for direct shell invocation; pre-commit verify executed the optional staticcheck step)
+  - govulncheck ./... (not on PATH for direct shell invocation; pre-commit verify executed govulncheck and found no vulnerabilities)
+- Results
+  - All installed/available required and optional checks passed, including the repository pre-commit `scripts/verify.sh --strict --release` hook.
+  - golangci-lint reported 0 issues.
+- Remaining risks or follow-ups
+  - BE-0269 remains open for the fuller dedicated contract-test story; this iteration added focused endpoint tests required by BE-0268 but did not claim BE-0269.
+  - The existing store JobEnqueuer port still carries only job kind/resource id, matching current create-preview patterns; richer payload persistence remains owned by the durable job wiring stories.
+- **Learnings for future iterations:**
+  - Preview teardown is a scheduled delete, not a hard delete: the API should return the preview row in deleting state with deletion_scheduled_at and let the worker remove Dokploy state and hard-delete the wrapper later.
+  - The project-scoped preview route should authorize at the parent project boundary; preview_id is validated and resolved only inside the tenant-scoped store service.
+  - goimports is not installed on PATH in this runner. staticcheck/govulncheck were not directly available through `command -v`, but the repository verification hook ran its optional staticcheck/govulncheck steps successfully.
 ---

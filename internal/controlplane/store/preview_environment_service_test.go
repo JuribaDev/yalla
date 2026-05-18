@@ -238,6 +238,80 @@ func TestPreviewEnvironmentServiceListProjectPreviewsVerifiesParentProject(t *te
 	}
 }
 
+func TestPreviewEnvironmentServiceScheduleDeletionWritesJobAndAudit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	orgID := seedDomainOrg(t, db)
+	projectID := seedPreviewServiceProject(t, db, orgID)
+	sourceID := seedPreviewServiceEnvironment(t, db, orgID, projectID, "prod-delete", store.EnvironmentKindStandard)
+
+	authz := &recordingAuthorizer{}
+	quota := &recordingQuota{}
+	jobs := &recordingJobs{}
+	svc := newPreviewService(t, s, authz, quota, jobs)
+
+	created, err := svc.Create(ctx, store.CreatePreviewEnvironmentInput{
+		OrganizationID:      orgID,
+		ProjectID:           projectID,
+		PreviewID:           domain.MustNewID(domain.KindPreviewEnvironment).String(),
+		EnvironmentID:       domain.MustNewID(domain.KindEnvironment).String(),
+		SourceEnvironmentID: sourceID,
+		Slug:                "pr-delete",
+		DisplayName:         "PR delete",
+		ChangeRef:           "refs/pull/delete/head",
+		ActorID:             "usr_ada",
+		ActorKind:           "usr",
+		ActorOrgID:          orgID,
+		RequestID:           "req_preview_create_delete",
+		CorrelationID:       "corr_preview_create_delete",
+	})
+	if err != nil {
+		t.Fatalf("Create preview: %v", err)
+	}
+
+	scheduled, err := svc.ScheduleDeletion(ctx, store.DeletePreviewEnvironmentInput{
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		PreviewID:      created.ID,
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     orgID,
+		RequestID:      "req_preview_delete",
+		CorrelationID:  "corr_preview_delete",
+	})
+	if err != nil {
+		t.Fatalf("ScheduleDeletion preview: %v", err)
+	}
+
+	if scheduled.ID != created.ID || scheduled.EnvironmentID != created.EnvironmentID || scheduled.SourceEnvironmentID != sourceID {
+		t.Fatalf("scheduled preview = %+v, want same preview identity", scheduled)
+	}
+	if scheduled.Status != store.PreviewEnvironmentStatusDeleting {
+		t.Errorf("status = %q, want deleting", scheduled.Status)
+	}
+	if scheduled.DeletionScheduledAt == nil {
+		t.Fatal("deletion_scheduled_at = nil, want database timestamp")
+	}
+	if jobs.calls != 2 {
+		t.Errorf("jobs calls = %d, want 2 (create + delete)", jobs.calls)
+	}
+	if quota.calls != 2 {
+		t.Errorf("quota calls = %d, want 2 from create only", quota.calls)
+	}
+
+	events := listProjectAuditEvents(t, s, orgID)
+	if len(events) != 2 {
+		t.Fatalf("audit events = %d, want create + delete", len(events))
+	}
+	deleteEvent := events[1]
+	if deleteEvent.Action != "preview.delete" || deleteEvent.ResourceID != created.ID || deleteEvent.RequestID != "req_preview_delete" {
+		t.Errorf("delete audit event = %+v, want preview.delete for scheduled preview", deleteEvent)
+	}
+}
+
 func TestPreviewEnvironmentServiceCreateValidationCollectsFields(t *testing.T) {
 	t.Parallel()
 

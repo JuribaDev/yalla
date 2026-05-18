@@ -6001,8 +6001,8 @@
       ],
       "type": "endpoint-preview",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the preview backend surface."
+      "passes": true,
+      "notes": "Implemented DELETE /v1/projects/{project_id}/previews/{preview_id}: route/OpenAPI metadata, preview.delete authorization through projectIDResolver, thin handler with If-Match parsing and yalla.output.v1/yalla.error.v1 envelopes, store ScheduleDeletion unit of work that verifies parent project and preview scope, stamps deletion_scheduled_at, enqueues delete_preview_environment, and appends preview.delete audit metadata. Added focused HTTP and isolated-Postgres store tests for success, validation, authorization, not-found, OpenAPI, job/audit, and tenant-scoped project/preview verification."
     },
     {
       "id": "BE-0269",
