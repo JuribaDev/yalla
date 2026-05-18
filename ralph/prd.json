@@ -6191,8 +6191,8 @@
       ],
       "type": "test-jobs",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/jobs/{job_id}/retry."
+      "passes": true,
+      "notes": "Added public contract coverage for POST /v1/jobs/{job_id}/retry: stdout/stderr silence, redacted request logs across success/authn/authz paths, dependency-cause redaction, request_id propagation on error envelopes, and authenticated OpenAPI metadata."
     },
     {
       "id": "BE-0279",

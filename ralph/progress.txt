@@ -35020,3 +35020,13 @@ change that widened Reason to caller-supplied data.
   - The existing `jobIDResolver` is reusable for job mutating verbs because it reloads the source job and mirrors its owning project/environment/service scope into policy before the handler runs.
   - Idempotent retry keys should be scoped with the source job id before they reach `provisioning_jobs.organization_id,idempotency_key` uniqueness, avoiding collisions with unrelated job-producing API calls.
 ---
+## 2026-05-18 22:52 +03 - BE-0278
+- What was implemented: Added public contract tests for `POST /v1/jobs/{job_id}/retry`, covering stdout/stderr silence, success/authn/authz request-log redaction, dependency-cause redaction, request_id propagation on error envelopes, and authenticated OpenAPI metadata including `{job_id}` and `x-required-action`.
+- Files changed: `internal/controlplane/httpapi/jobs_retry_contract_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./internal/controlplane/httpapi -run 'TestRetryJob|TestGetJob'`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `golangci-lint run ./...`; commit hook `scripts/verify.sh --strict --release` including full tests, race tests, focused backend suites, `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release build.
+- Results: All listed checks passed. Direct `goimports` was not installed in this environment, so it was not run outside the hook.
+- Remaining risks or follow-ups: Live Dokploy smoke was not run; the strict hook reported it is opt-in and requires `YALLA_EXTERNAL_DOKPLOY=1` with live Dokploy configuration.
+- **Learnings for future iterations:**
+  - Retry job contract tests can reuse the existing `fakeJobReader` because it satisfies both the resolver `GetJob` path and the mutation `RetryJob` path used by `NewHandler`.
+  - For bare-job mutating endpoints, dependency-cause redaction should be tested with an org-wide deploy-capable principal so resolver fallback to org scope still permits the handler to surface the typed dependency error.
+---
