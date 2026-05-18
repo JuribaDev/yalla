@@ -87,6 +87,7 @@ type resourceStore struct {
 	projects      map[string]*Project
 	environments  map[string]*Environment
 	services      map[string]*Service
+	serviceEnvs   map[string]string
 	domains       map[string]*Domain
 	deployments   map[string]*Deployment
 	// logs maps a deployment ID to its log lines.
@@ -102,6 +103,7 @@ func newResourceStore() resourceStore {
 		projects:      map[string]*Project{},
 		environments:  map[string]*Environment{},
 		services:      map[string]*Service{},
+		serviceEnvs:   map[string]string{},
 		domains:       map[string]*Domain{},
 		deployments:   map[string]*Deployment{},
 		logs:          map[string][]string{},
@@ -135,10 +137,17 @@ func (s *Server) newMux() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/applications", s.createService(ServiceApplication))
 	mux.HandleFunc("GET /api/applications/{id}", s.getService)
+	mux.HandleFunc("POST /application.saveEnvironment", s.saveApplicationEnvironment)
 	mux.HandleFunc("POST /api/compose", s.createService(ServiceCompose))
 	mux.HandleFunc("GET /api/compose/{id}", s.getService)
+	mux.HandleFunc("POST /compose.update", s.updateCompose)
 	mux.HandleFunc("POST /api/databases", s.createService(ServiceDatabase))
 	mux.HandleFunc("GET /api/databases/{id}", s.getService)
+	mux.HandleFunc("POST /postgres.saveEnvironment", s.saveDatabaseEnvironment("postgres", "postgresId"))
+	mux.HandleFunc("POST /mysql.saveEnvironment", s.saveDatabaseEnvironment("mysql", "mysqlId"))
+	mux.HandleFunc("POST /mariadb.saveEnvironment", s.saveDatabaseEnvironment("mariadb", "mariadbId"))
+	mux.HandleFunc("POST /mongo.saveEnvironment", s.saveDatabaseEnvironment("mongo", "mongoId"))
+	mux.HandleFunc("POST /redis.saveEnvironment", s.saveDatabaseEnvironment("redis", "redisId"))
 
 	mux.HandleFunc("GET /api/services/{id}/status", s.getServiceStatus)
 	mux.HandleFunc("POST /api/services/{id}/restart", s.restartService)
@@ -483,6 +492,81 @@ func (s *Server) getService(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, svc)
 }
 
+type saveApplicationEnvironmentRequest struct {
+	ApplicationID string `json:"applicationId"`
+	Env           string `json:"env"`
+	BuildArgs     string `json:"buildArgs"`
+	BuildSecrets  string `json:"buildSecrets"`
+	CreateEnvFile bool   `json:"createEnvFile"`
+}
+
+func (s *Server) saveApplicationEnvironment(w http.ResponseWriter, r *http.Request) {
+	var req saveApplicationEnvironmentRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !requireField(w, req.ApplicationID, "applicationId") {
+		return
+	}
+	s.saveServiceEnvironment(w, req.ApplicationID, ServiceApplication, req.Env)
+}
+
+type updateComposeRequest struct {
+	ComposeID string `json:"composeId"`
+	Env       string `json:"env"`
+}
+
+func (s *Server) updateCompose(w http.ResponseWriter, r *http.Request) {
+	var req updateComposeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !requireField(w, req.ComposeID, "composeId") {
+		return
+	}
+	s.saveServiceEnvironment(w, req.ComposeID, ServiceCompose, req.Env)
+}
+
+func (s *Server) saveDatabaseEnvironment(engine, idField string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]string
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		id := req[idField]
+		if !requireField(w, id, idField) {
+			return
+		}
+		s.saveDatabaseServiceEnvironment(w, id, engine, req["env"])
+	}
+}
+
+func (s *Server) saveServiceEnvironment(w http.ResponseWriter, serviceID, serviceType, env string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	svc, ok := s.resources.services[serviceID]
+	if !ok || svc.Type != serviceType {
+		writeError(w, http.StatusNotFound, "not_found", "no such service")
+		return
+	}
+	s.resources.serviceEnvs[serviceID] = env
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+func (s *Server) saveDatabaseServiceEnvironment(w http.ResponseWriter, serviceID, engine, env string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	svc, ok := s.resources.services[serviceID]
+	if !ok || svc.Type != ServiceDatabase || svc.Engine != engine {
+		writeError(w, http.StatusNotFound, "not_found", "no such database")
+		return
+	}
+	s.resources.serviceEnvs[serviceID] = env
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
 type serviceStatusResponse struct {
 	ServiceID string `json:"service_id"`
 	Status    string `json:"status"`
@@ -747,4 +831,11 @@ func (s *Server) SetServiceStatus(serviceID, status string) bool {
 	}
 	svc.Status = status
 	return true
+}
+
+// ApplicationEnv returns the saved environment for an application service.
+func (s *Server) ApplicationEnv(applicationID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resources.serviceEnvs[applicationID]
 }

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Worker variable sync jobs (BE-0496 pattern for `sync_variables`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id[, engine])`, load the service through the tenant-scoped repository, verify payload scope and `DesiredVersion`, resolve the service-kind-specific Dokploy service ref, fetch all four variable scopes in one read transaction, merge them with `internal/controlplane/variables.Resolver` and the configured secrets provider, render deterministic dotenv content, and call the typed Dokploy `SyncVariables` intent. The typed client maps application to `/application.saveEnvironment`, compose to `/compose.update`, and database engines to `/<engine>.saveEnvironment`; fake Dokploy request recording must redact the entire rendered `env` field because it contains plaintext effective values.
 - Worker domain sync jobs (BE-0495 pattern for `sync_domains`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope and `DesiredVersion`, resolve the service-kind-specific Dokploy service ref, list desired `service_domains`, and call the typed Dokploy `EnsureDomain` intent once per desired row. Persist mappings as `dokploy_refs` rows with `yalla_kind='service_domain'`, `yalla_id=service_domains.id`, and `dokploy_resource='domain'`; replays pass `ExistingID` to `EnsureDomain` and must not insert duplicate domain mappings. Retryable upstream errors stay plain for the durable queue to persist redacted `error_summary`; malformed/stale/cross-tenant desired state is `worker.Terminal`.
 - Worker project teardown jobs (BE-0494 pattern for `project.delete` / PRD alias `delete_project`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id)`, load the project through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `project` `dokploy_refs` row, and call the typed Dokploy `RemoveProject` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like environment/service delete jobs, project delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
 - Worker environment teardown jobs (BE-0493 pattern for `environment.delete` / PRD alias `delete_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id)`, load the environment through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `environment` `dokploy_refs` row, and call the typed Dokploy `RemoveEnvironment` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like service delete jobs, environment delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
@@ -34195,4 +34196,47 @@ change that widened Reason to caller-supplied data.
   - `dokploy_refs.yalla_kind` needed a new `service_domain` member because a single service can own multiple domain mappings; keying domain refs to the parent service would not support per-domain idempotent replay.
   - The fake Dokploy server already supports `POST /api/domains` and `GET /api/domains/{id}`, so worker tests can cover domain provisioning without adding fake-server behavior.
   - Queue redaction tests should claim a real persisted job through `StoreClaimer` to verify `error_summary` storage, not only call `Provisioner.Run` directly.
+---
+## 2026-05-18 19:41 +03 - BE-0496
+- What was implemented
+  - Added the `sync_variables` durable worker job with typed payload validation, tenant-scoped service reload, scope/version checks, deletion-scheduled refusal, effective variable resolution across organization/project/environment/service scopes, and kind-specific Dokploy save-environment execution.
+  - Added typed Dokploy `SyncVariables` intent support for application, compose, and database services.
+  - Extended fake Dokploy with save-environment endpoints and request recording that redacts rendered `env` payloads.
+  - Marked `BE-0496` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/worker/provisioner.go`
+  - `internal/controlplane/worker/provisioner_test.go`
+  - `internal/controlplane/dokploy/types.go`
+  - `internal/controlplane/dokploy/intents.go`
+  - `internal/controlplane/dokploy/dokployfake/dokployfake.go`
+  - `internal/controlplane/dokploy/dokployfake/resources.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test ./internal/controlplane/worker -run 'TestSyncVariablesPayloadValidation|TestProvisionerSyncVariables'`
+  - `go test ./internal/controlplane/worker`
+  - `go test ./internal/controlplane/dokploy ./internal/controlplane/dokploy/dokployfake`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - All executed checks passed.
+  - `golangci-lint run ./...` reported `0 issues`.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed locally.
+- Remaining risks or follow-ups
+  - Database `sync_variables` jobs require the engine in the durable payload because `services.kind` stores only the broad `database` kind.
+- **Learnings for future iterations:**
+  - `sync_variables` must redact fake-Dokploy recorded request bodies at the `env` field level; rendered env values are plaintext by design because Dokploy needs them.
+  - Use `variables.Resolver` inside the worker after fetching all four tenant-scoped variable scopes; do not duplicate precedence or secret-opening logic in the provisioner.
+  - Application/compose/database variable sync uses different Dokploy operation shapes, so keep it behind the typed `dokploy.SyncVariables` intent instead of branching in worker code.
 ---

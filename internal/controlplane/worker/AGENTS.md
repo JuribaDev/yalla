@@ -91,6 +91,15 @@ Background provisioning/metering workers for the control plane.
   `dokploy_refs` row per `service_domain` row using
   `YallaKindServiceDomain`. Replays should call `EnsureDomain` with
   `ExistingID` and must not insert duplicate mapping rows.
+- Variable sync jobs (`sync_variables`) use the scoped payload
+  `(organization_id, project_id, environment_id, service_id[, engine])`, reload
+  the service through `ServiceRepository.GetByID`, verify payload scope and
+  `DesiredVersion`, resolve the service-kind-specific Dokploy service ref, fetch
+  organization/project/environment/service variables in one read transaction,
+  merge through `variables.Resolver` with the configured secrets provider, and
+  call the typed Dokploy `SyncVariables` intent. Fake Dokploy request recording
+  must redact the rendered `env` field because it contains plaintext effective
+  values.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

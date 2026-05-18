@@ -12,6 +12,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy/dokployfake"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	"github.com/JuribaDev/yalla/internal/controlplane/worker"
@@ -1426,6 +1427,101 @@ func TestStartServicePayloadValidation(t *testing.T) {
 	}
 }
 
+func TestSyncVariablesPayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeSyncVariables,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+		},
+		{
+			name: "missing payload service",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeSyncVariables,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeSyncVariables,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong job type",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeSyncDomains,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseSyncVariablesPayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseSyncVariablesPayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseSyncVariablesPayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestProvisionerEnsuresDokployOrganizationAndPersistsMapping(t *testing.T) {
 	t.Parallel()
 
@@ -2006,6 +2102,195 @@ func TestProvisionerSyncDomainsCancellationIsNotTerminal(t *testing.T) {
 	}
 	if worker.IsTerminal(err) {
 		t.Fatalf("Run sync_domains cancellation is terminal: %v", err)
+	}
+}
+
+func TestProvisionerSyncVariablesRendersEffectiveVariablesAndRedactsRequestRecording(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	provider := secrets.NewPlaintext()
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	insertWorkerOrganizationVariable(ctx, t, dataStore, org, "REGION", "us-east-1", false, provider)
+	insertWorkerProjectVariable(ctx, t, dataStore, project, "LOG_LEVEL", "info", false, provider)
+	insertWorkerEnvironmentVariable(ctx, t, dataStore, env, "LOG_LEVEL", "debug", false, provider)
+	insertWorkerServiceVariable(ctx, t, dataStore, svc, "DATABASE_URL", "postgres://sync-variable-secret", true, provider)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:   dataStore,
+		Client:  client,
+		Mapper:  dokploy.NewMapper(),
+		Secrets: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := syncVariablesJob(svc)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run sync_variables: %v", err)
+	}
+
+	reqs := fake.Requests()
+	if len(reqs) != 5 || reqs[4].Method != http.MethodPost || reqs[4].Path != "/application.saveEnvironment" {
+		t.Fatalf("fake requests = %+v, want service seed then POST /application.saveEnvironment", reqs)
+	}
+	if strings.Contains(reqs[4].Body, "postgres://sync-variable-secret") || reqs[4].AuthHeader != output.Sentinel {
+		t.Fatalf("sync_variables request recording leaked secret material: %+v", reqs[4])
+	}
+
+	gotEnv := fake.ApplicationEnv("app_1")
+	for _, want := range []string{"DATABASE_URL=postgres://sync-variable-secret", "LOG_LEVEL=debug", "REGION=us-east-1"} {
+		if !strings.Contains(gotEnv, want) {
+			t.Fatalf("synced env = %q, missing %q", gotEnv, want)
+		}
+	}
+
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed Run sync_variables: %v", err)
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 6 || reqs[5].Method != http.MethodPost || reqs[5].Path != "/application.saveEnvironment" {
+		t.Fatalf("replayed sync_variables fake requests = %+v, want idempotent second saveEnvironment", reqs)
+	}
+}
+
+func TestProvisionerSyncVariablesRetryableFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	provider := secrets.NewPlaintext()
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	insertWorkerServiceVariable(ctx, t, dataStore, svc, "DATABASE_URL", "postgres://sync-variable-secret", true, provider)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:   dataStore,
+		Client:  client,
+		Mapper:  dokploy.NewMapper(),
+		Secrets: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, syncVariablesJob(svc))
+	if err == nil {
+		t.Fatal("Run sync_variables returned nil, want retryable error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run sync_variables error is terminal, want retryable: %v", err)
+	}
+	if gotEnv := fake.ApplicationEnv("app_1"); gotEnv != "" {
+		t.Fatalf("application env after retryable failure = %q, want empty", gotEnv)
+	}
+}
+
+func TestProvisionerSyncVariablesRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	provider := secrets.NewPlaintext()
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	insertWorkerServiceVariable(ctx, t, dataStore, svc, "DATABASE_URL", "postgres://sync-variable-secret", true, provider)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:   dataStore,
+		Client:  client,
+		Mapper:  dokploy.NewMapper(),
+		Secrets: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := syncVariablesJob(svc)
+	job.DesiredVersion = svc.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil || !worker.IsTerminal(err) {
+		t.Fatalf("Run stale sync_variables = %v, want terminal error", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 4 {
+		t.Fatalf("stale sync_variables issued Dokploy requests: %+v", reqs)
+	}
+}
+
+func TestProvisionerSyncVariablesCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	provider := secrets.NewPlaintext()
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	insertWorkerServiceVariable(ctx, t, dataStore, svc, "DATABASE_URL", "postgres://sync-variable-secret", true, provider)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, "app_cancelled")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:   dataStore,
+		Client:  canceledClient{},
+		Mapper:  dokploy.NewMapper(),
+		Secrets: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, syncVariablesJob(svc))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run sync_variables cancellation = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run sync_variables cancellation is terminal: %v", err)
 	}
 }
 
@@ -5856,6 +6141,10 @@ func (canceledClient) EnsureDomain(context.Context, dokploy.EnsureDomainInput) (
 	return dokploy.Domain{}, context.Canceled
 }
 
+func (canceledClient) SyncVariables(context.Context, dokploy.SyncVariablesInput) error {
+	return context.Canceled
+}
+
 func (canceledClient) DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error) {
 	return dokploy.Deployment{}, context.Canceled
 }
@@ -6073,6 +6362,27 @@ func syncDomainsJob(svc store.Service) store.ProvisioningJob {
 		},
 		RequestID:     "req_sync_domains_test",
 		CorrelationID: "corr_sync_domains_test",
+	}
+}
+
+func syncVariablesJob(svc store.Service) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_sync_variables_test",
+		OrganizationID: svc.OrganizationID,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		JobType:        worker.JobTypeSyncVariables,
+		DesiredVersion: svc.Version,
+		IdempotencyKey: "sync-variables-" + svc.ID,
+		Payload: map[string]string{
+			"organization_id": svc.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+		},
+		RequestID:     "req_sync_variables_test",
+		CorrelationID: "corr_sync_variables_test",
 	}
 }
 
@@ -6397,6 +6707,114 @@ func insertWorkerServiceDomain(ctx context.Context, t *testing.T, s *store.Store
 		t.Fatalf("insert service domain: %v", err)
 	}
 	return d
+}
+
+func insertWorkerOrganizationVariable(ctx context.Context, t *testing.T, s *store.Store, org store.Organization, key, value string, secret bool, provider secrets.Provider) store.OrganizationVariable {
+	t.Helper()
+	repo := store.NewOrganizationVariableRepository()
+	upsert := organizationVariableUpsertForTest(t, value, secret, provider)
+	var v store.OrganizationVariable
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		v, err = repo.Upsert(ctx, tx, domain.MustNewID(domain.KindOrganizationVariable).String(), org.ID, key, upsert)
+		return err
+	}); err != nil {
+		t.Fatalf("insert organization variable: %v", err)
+	}
+	return v
+}
+
+func insertWorkerProjectVariable(ctx context.Context, t *testing.T, s *store.Store, project store.Project, key, value string, secret bool, provider secrets.Provider) store.ProjectVariable {
+	t.Helper()
+	repo := store.NewProjectVariableRepository()
+	upsert := projectVariableUpsertForTest(t, value, secret, provider)
+	var v store.ProjectVariable
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		v, err = repo.Upsert(ctx, tx, domain.MustNewID(domain.KindProjectVariable).String(), project.OrganizationID, project.ID, key, upsert)
+		return err
+	}); err != nil {
+		t.Fatalf("insert project variable: %v", err)
+	}
+	return v
+}
+
+func insertWorkerEnvironmentVariable(ctx context.Context, t *testing.T, s *store.Store, env store.Environment, key, value string, secret bool, provider secrets.Provider) store.EnvironmentVariable {
+	t.Helper()
+	repo := store.NewEnvironmentVariableRepository()
+	upsert := environmentVariableUpsertForTest(t, value, secret, provider)
+	var v store.EnvironmentVariable
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		v, err = repo.Upsert(ctx, tx, domain.MustNewID(domain.KindEnvironmentVariable).String(), env.OrganizationID, env.ID, key, upsert)
+		return err
+	}); err != nil {
+		t.Fatalf("insert environment variable: %v", err)
+	}
+	return v
+}
+
+func insertWorkerServiceVariable(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, key, value string, secret bool, provider secrets.Provider) store.ServiceVariable {
+	t.Helper()
+	repo := store.NewServiceVariableRepository()
+	upsert := serviceVariableUpsertForTest(t, value, secret, provider)
+	var v store.ServiceVariable
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		v, err = repo.Upsert(ctx, tx, domain.MustNewID(domain.KindServiceVariable).String(), svc.OrganizationID, svc.ID, key, upsert)
+		return err
+	}); err != nil {
+		t.Fatalf("insert service variable: %v", err)
+	}
+	return v
+}
+
+func organizationVariableUpsertForTest(t *testing.T, value string, secret bool, provider secrets.Provider) store.OrganizationVariableUpsert {
+	t.Helper()
+	if !secret {
+		return store.OrganizationVariableUpsert{Value: value}
+	}
+	ct, keyID, err := provider.Seal([]byte(value))
+	if err != nil {
+		t.Fatalf("seal organization variable: %v", err)
+	}
+	return store.OrganizationVariableUpsert{IsSecret: true, SecretProvider: provider.ProviderID(), SecretKeyID: keyID, SecretCiphertext: ct}
+}
+
+func projectVariableUpsertForTest(t *testing.T, value string, secret bool, provider secrets.Provider) store.ProjectVariableUpsert {
+	t.Helper()
+	if !secret {
+		return store.ProjectVariableUpsert{Value: value}
+	}
+	ct, keyID, err := provider.Seal([]byte(value))
+	if err != nil {
+		t.Fatalf("seal project variable: %v", err)
+	}
+	return store.ProjectVariableUpsert{IsSecret: true, SecretProvider: provider.ProviderID(), SecretKeyID: keyID, SecretCiphertext: ct}
+}
+
+func environmentVariableUpsertForTest(t *testing.T, value string, secret bool, provider secrets.Provider) store.EnvironmentVariableUpsert {
+	t.Helper()
+	if !secret {
+		return store.EnvironmentVariableUpsert{Value: value}
+	}
+	ct, keyID, err := provider.Seal([]byte(value))
+	if err != nil {
+		t.Fatalf("seal environment variable: %v", err)
+	}
+	return store.EnvironmentVariableUpsert{IsSecret: true, SecretProvider: provider.ProviderID(), SecretKeyID: keyID, SecretCiphertext: ct}
+}
+
+func serviceVariableUpsertForTest(t *testing.T, value string, secret bool, provider secrets.Provider) store.ServiceVariableUpsert {
+	t.Helper()
+	if !secret {
+		return store.ServiceVariableUpsert{Value: value}
+	}
+	ct, keyID, err := provider.Seal([]byte(value))
+	if err != nil {
+		t.Fatalf("seal service variable: %v", err)
+	}
+	return store.ServiceVariableUpsert{IsSecret: true, SecretProvider: provider.ProviderID(), SecretKeyID: keyID, SecretCiphertext: ct}
 }
 
 func insertWorkerServiceRef(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, resource store.DokployResource, dokployID string) store.DokployRef {

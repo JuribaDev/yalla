@@ -159,6 +159,19 @@ type EnsureDomainInput struct {
 	HTTPS bool
 }
 
+// SyncVariablesInput describes the desired effective environment-variable
+// content for a Dokploy service.
+type SyncVariablesInput struct {
+	// ServiceID is the concrete Dokploy application, compose, or database ID.
+	ServiceID string
+	// Type selects which Dokploy service endpoint receives the environment.
+	Type ServiceType
+	// Engine selects the database endpoint when Type is ServiceDatabase.
+	Engine string
+	// Env is the rendered dotenv payload.
+	Env string
+}
+
 // DeployServiceInput names the service to deploy.
 type DeployServiceInput struct {
 	// ServiceID is the service to deploy; required.

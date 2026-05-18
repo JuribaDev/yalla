@@ -10333,8 +10333,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: sync_variables."
+      "passes": true,
+      "notes": "Implemented sync_variables durable worker job: typed payload validation, tenant-scoped desired-state load, stale-version rejection, effective Organization -> Project -> Environment -> Service variable resolution through the secrets provider, kind-specific Dokploy save-environment intents, replay-safe idempotent writes, fake-Dokploy retry/cancellation/terminal tests, and redacted request recording for rendered env payloads."
     },
     {
       "id": "BE-0497",

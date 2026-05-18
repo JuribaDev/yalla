@@ -3,11 +3,16 @@ package worker
 import (
 	"context"
 	"errors"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/variables"
 )
 
 // JobTypeEnsureDokployOrganization is the durable provisioning job that makes
@@ -112,6 +117,10 @@ const JobTypeDeleteProjectAlias = "delete_project"
 // service_domains desired state into Dokploy domain bindings.
 const JobTypeSyncDomains = "sync_domains"
 
+// JobTypeSyncVariables is the durable provisioning job that reconciles the
+// effective Yalla variable hierarchy into a Dokploy service environment.
+const JobTypeSyncVariables = "sync_variables"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -120,6 +129,7 @@ type DokployClient interface {
 	EnsureEnvironment(context.Context, dokploy.EnsureEnvironmentInput) (dokploy.Environment, error)
 	EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error)
 	EnsureDomain(context.Context, dokploy.EnsureDomainInput) (dokploy.Domain, error)
+	SyncVariables(context.Context, dokploy.SyncVariablesInput) error
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 	RollbackService(context.Context, dokploy.RollbackServiceInput) (dokploy.ServiceStatus, error)
@@ -940,6 +950,72 @@ func ParseSyncDomainsPayload(job store.ProvisioningJob) (SyncDomainsPayload, err
 	}, nil
 }
 
+// SyncVariablesPayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeSyncVariables.
+type SyncVariablesPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	Engine         string
+}
+
+// ParseSyncVariablesPayload validates a sync-variables job payload and returns
+// a terminal error for payload shapes retrying cannot repair.
+func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeSyncVariables {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be sync_variables"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return SyncVariablesPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return SyncVariablesPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		Engine:         job.Payload["engine"],
+	}, nil
+}
+
 // ParseDeleteEnvironmentPayload validates a delete-environment job payload and
 // returns a terminal error for payload shapes retrying cannot repair.
 func ParseDeleteEnvironmentPayload(job store.ProvisioningJob) (DeleteEnvironmentPayload, error) {
@@ -1043,9 +1119,14 @@ type ProvisionerConfig struct {
 	Environments  *store.EnvironmentRepository
 	Services      *store.ServiceRepository
 	Domains       *store.ServiceDomainRepository
+	OrgVariables  *store.OrganizationVariableRepository
+	ProjVariables *store.ProjectVariableRepository
+	EnvVariables  *store.EnvironmentVariableRepository
+	SvcVariables  *store.ServiceVariableRepository
 	Deployments   *store.DeploymentRepository
 	Refs          *store.DokployRefRepository
 	Mapper        *dokploy.Mapper
+	Secrets       secrets.Provider
 	Client        DokployClient
 }
 
@@ -1057,9 +1138,14 @@ type Provisioner struct {
 	environments  *store.EnvironmentRepository
 	services      *store.ServiceRepository
 	domains       *store.ServiceDomainRepository
+	orgVariables  *store.OrganizationVariableRepository
+	projVariables *store.ProjectVariableRepository
+	envVariables  *store.EnvironmentVariableRepository
+	svcVariables  *store.ServiceVariableRepository
 	deployments   *store.DeploymentRepository
 	refs          *store.DokployRefRepository
 	mapper        *dokploy.Mapper
+	resolver      *variables.Resolver
 	client        DokployClient
 }
 
@@ -1095,6 +1181,22 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if domains == nil {
 		domains = store.NewServiceDomainRepository()
 	}
+	orgVariables := cfg.OrgVariables
+	if orgVariables == nil {
+		orgVariables = store.NewOrganizationVariableRepository()
+	}
+	projVariables := cfg.ProjVariables
+	if projVariables == nil {
+		projVariables = store.NewProjectVariableRepository()
+	}
+	envVariables := cfg.EnvVariables
+	if envVariables == nil {
+		envVariables = store.NewEnvironmentVariableRepository()
+	}
+	svcVariables := cfg.SvcVariables
+	if svcVariables == nil {
+		svcVariables = store.NewServiceVariableRepository()
+	}
 	deployments := cfg.Deployments
 	if deployments == nil {
 		deployments = store.NewDeploymentRepository()
@@ -1107,6 +1209,14 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if mapper == nil {
 		mapper = dokploy.NewMapper()
 	}
+	provider := cfg.Secrets
+	if provider == nil {
+		provider = secrets.NewPlaintext()
+	}
+	resolver, err := variables.NewResolver(provider)
+	if err != nil {
+		return nil, apierr.InvalidInput(apierr.FieldViolation{Field: "secrets", Reason: "must be a valid secrets provider"})
+	}
 	return &Provisioner{
 		store:         cfg.Store,
 		organizations: orgs,
@@ -1114,9 +1224,14 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		environments:  environments,
 		services:      services,
 		domains:       domains,
+		orgVariables:  orgVariables,
+		projVariables: projVariables,
+		envVariables:  envVariables,
+		svcVariables:  svcVariables,
 		deployments:   deployments,
 		refs:          refs,
 		mapper:        mapper,
+		resolver:      resolver,
 		client:        cfg.Client,
 	}, nil
 }
@@ -1158,6 +1273,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runDeleteProject(ctx, job)
 	case JobTypeSyncDomains:
 		return p.runSyncDomains(ctx, job)
+	case JobTypeSyncVariables:
+		return p.runSyncVariables(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1784,10 +1901,48 @@ func (p *Provisioner) runSyncDomains(ctx context.Context, job store.Provisioning
 	return nil
 }
 
+func (p *Provisioner) runSyncVariables(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseSyncVariablesPayload(job)
+	if err != nil {
+		return err
+	}
+
+	target, err := p.loadSyncVariablesTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	syncErr := p.client.SyncVariables(ctx, dokploy.SyncVariablesInput{
+		ServiceID: target.DokployServiceID,
+		Type:      target.ServiceType,
+		Engine:    target.Engine,
+		Env:       target.Env,
+	})
+	if syncErr != nil {
+		if interrupted(ctx, syncErr) {
+			return syncErr
+		}
+		if apierr.Retryable(syncErr) {
+			return syncErr
+		}
+		return Terminal(syncErr)
+	}
+	return nil
+}
+
 type syncDomainTarget struct {
 	Domain            store.ServiceDomain
 	DokployServiceID  string
 	ExistingDokployID string
+}
+
+type syncVariablesTarget struct {
+	DokployServiceID string
+	ServiceType      dokploy.ServiceType
+	Engine           string
+	Env              string
 }
 
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
@@ -2588,6 +2743,97 @@ func (p *Provisioner) loadSyncDomainsTarget(ctx context.Context, job store.Provi
 	return targets, nil
 }
 
+func (p *Provisioner) loadSyncVariablesTarget(ctx context.Context, job store.ProvisioningJob, payload SyncVariablesPayload) (syncVariablesTarget, error) {
+	var target syncVariablesTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync variables"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "sync_variables")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				target.DokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if target.DokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before syncing variables"))
+		}
+
+		orgVars, err := p.orgVariables.ListByOrganization(ctx, q, payload.OrganizationID)
+		if err != nil {
+			return err
+		}
+		projectVars, err := p.projVariables.ListByProject(ctx, q, payload.OrganizationID, payload.ProjectID)
+		if err != nil {
+			return err
+		}
+		envVars, err := p.envVariables.ListByEnvironment(ctx, q, payload.OrganizationID, payload.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		serviceVars, err := p.svcVariables.ListByService(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if err != nil {
+			return err
+		}
+		resolved, err := p.resolver.Resolve(variables.ResolveInput{
+			OrganizationVariables: scopedOrganizationVariables(orgVars),
+			ProjectVariables:      scopedProjectVariables(projectVars),
+			EnvironmentVariables:  scopedEnvironmentVariables(envVars),
+			ServiceVariables:      scopedServiceVariables(serviceVars),
+		}, variables.Options{})
+		if err != nil {
+			return Terminal(err)
+		}
+
+		serviceType, engine, kindErr := dokploySyncKindForService(svc, payload.Engine)
+		if kindErr != nil {
+			return kindErr
+		}
+		target.ServiceType = serviceType
+		target.Engine = engine
+		target.Env = renderDotenv(resolved.Variables)
+		return nil
+	})
+	if err != nil {
+		return syncVariablesTarget{}, err
+	}
+	return target, nil
+}
+
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {
 	var (
 		deployment       store.Deployment
@@ -2683,6 +2929,125 @@ func dokployResourceForServiceKind(kind, jobName string) (store.DokployResource,
 			Reason: "must be application, compose, or database for " + jobName,
 		}))
 	}
+}
+
+func dokploySyncKindForService(svc store.Service, engine string) (dokploy.ServiceType, string, error) {
+	switch svc.Kind {
+	case store.ServiceKindApplication:
+		return dokploy.ServiceApplication, "", nil
+	case store.ServiceKindCompose:
+		return dokploy.ServiceCompose, "", nil
+	case store.ServiceKindDatabase:
+		engine = strings.TrimSpace(engine)
+		switch engine {
+		case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
+			return dokploy.ServiceDatabase, engine, nil
+		default:
+			return "", "", Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.engine",
+				Reason: "must be postgres, mysql, mariadb, mongo, or redis for database sync_variables",
+			}))
+		}
+	default:
+		return "", "", Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service.kind",
+			Reason: "must be application, compose, or database for sync_variables",
+		}))
+	}
+}
+
+func renderDotenv(vars []variables.Rendered) string {
+	if len(vars) == 0 {
+		return ""
+	}
+	copied := append([]variables.Rendered(nil), vars...)
+	sort.SliceStable(copied, func(i, j int) bool {
+		return copied[i].Key < copied[j].Key
+	})
+	var b strings.Builder
+	for i, v := range copied {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(v.Key)
+		b.WriteByte('=')
+		b.WriteString(dotenvValue(v.Value))
+	}
+	return b.String()
+}
+
+func dotenvValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	if strings.ContainsAny(value, "\n\r\"'\\# ") {
+		return strconv.Quote(value)
+	}
+	return value
+}
+
+func scopedOrganizationVariables(rows []store.OrganizationVariable) []variables.ScopedVariable {
+	out := make([]variables.ScopedVariable, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, variables.ScopedVariable{
+			ResourceID:       row.ID,
+			Key:              row.Key,
+			Value:            row.Value,
+			IsSecret:         row.IsSecret,
+			SecretProvider:   row.SecretProvider,
+			SecretKeyID:      row.SecretKeyID,
+			SecretCiphertext: append([]byte(nil), row.SecretCiphertext...),
+		})
+	}
+	return out
+}
+
+func scopedProjectVariables(rows []store.ProjectVariable) []variables.ScopedVariable {
+	out := make([]variables.ScopedVariable, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, variables.ScopedVariable{
+			ResourceID:       row.ID,
+			Key:              row.Key,
+			Value:            row.Value,
+			IsSecret:         row.IsSecret,
+			SecretProvider:   row.SecretProvider,
+			SecretKeyID:      row.SecretKeyID,
+			SecretCiphertext: append([]byte(nil), row.SecretCiphertext...),
+		})
+	}
+	return out
+}
+
+func scopedEnvironmentVariables(rows []store.EnvironmentVariable) []variables.ScopedVariable {
+	out := make([]variables.ScopedVariable, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, variables.ScopedVariable{
+			ResourceID:       row.ID,
+			Key:              row.Key,
+			Value:            row.Value,
+			IsSecret:         row.IsSecret,
+			SecretProvider:   row.SecretProvider,
+			SecretKeyID:      row.SecretKeyID,
+			SecretCiphertext: append([]byte(nil), row.SecretCiphertext...),
+		})
+	}
+	return out
+}
+
+func scopedServiceVariables(rows []store.ServiceVariable) []variables.ScopedVariable {
+	out := make([]variables.ScopedVariable, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, variables.ScopedVariable{
+			ResourceID:       row.ID,
+			Key:              row.Key,
+			Value:            row.Value,
+			IsSecret:         row.IsSecret,
+			SecretProvider:   row.SecretProvider,
+			SecretKeyID:      row.SecretKeyID,
+			SecretCiphertext: append([]byte(nil), row.SecretCiphertext...),
+		})
+	}
+	return out
 }
 
 func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload, dokployID string) error {

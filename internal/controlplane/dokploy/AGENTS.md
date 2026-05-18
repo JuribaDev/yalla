@@ -24,6 +24,11 @@ client.
 - "Ensure" intents are idempotent against Yalla's source-of-truth state: a
   populated `ExistingID` fetches+verifies the resource; an empty one creates it.
   The caller (worker) records the returned Dokploy ID in Postgres.
+- `SyncVariables` is an intent, not raw proxy access: it accepts a concrete
+  Dokploy service ID, service type, optional database engine, and rendered
+  dotenv content, then maps to the service-kind-specific Dokploy operation.
+  Keep service-kind branching in this package so worker jobs stay source-of-
+  truth focused.
 - Only idempotent methods (`GET`, `DELETE`) are retried — never `POST` — so a
   retry can never duplicate a provisioning side effect. Retries fire only on
   catalogued **retryable** errors (`apierr.Retryable`).
@@ -101,6 +106,9 @@ client.
 - Every recorded request is scrubbed: sensitive header values become
   `output.Sentinel` and the body runs through a redactor seeded with the
   bearer token. Anything new the recorder captures must stay redaction-safe.
+- Requests that carry rendered environment content must redact the `env` field
+  as a whole in recorded fixtures; rendered env content contains plaintext
+  effective variable values even when the source rows were secret at rest.
 - The fake takes no `testing.TB`; callers `defer srv.Close()`. It depends only
   on `internal/output` + stdlib, so any package's tests can import it without
   a cycle.

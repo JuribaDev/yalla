@@ -170,6 +170,67 @@ func (c *Client) EnsureDomain(ctx context.Context, in EnsureDomainInput) (Domain
 	return d, nil
 }
 
+// SyncVariables replaces the effective environment variables for a Dokploy
+// service through the service-kind-specific API surface.
+func (c *Client) SyncVariables(ctx context.Context, in SyncVariablesInput) error {
+	if !in.Type.Valid() {
+		return apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "type",
+			Reason: "must be application, compose, or database",
+		})
+	}
+	if v := requireFields(field{"service_id", in.ServiceID}); v != nil {
+		return v
+	}
+	id := strings.TrimSpace(in.ServiceID)
+	env := in.Env
+
+	switch in.Type {
+	case ServiceApplication:
+		return c.post(ctx, "/application.saveEnvironment", map[string]any{
+			"applicationId": id,
+			"env":           env,
+			"buildArgs":     "",
+			"buildSecrets":  "",
+			"createEnvFile": true,
+		}, nil)
+	case ServiceCompose:
+		return c.post(ctx, "/compose.update", map[string]any{
+			"composeId": id,
+			"env":       env,
+		}, nil)
+	case ServiceDatabase:
+		engine := strings.TrimSpace(in.Engine)
+		if engine == "" {
+			return apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "engine",
+				Reason: "is required for database services",
+			})
+		}
+		switch engine {
+		case EnginePostgres, EngineMysql, EngineMariadb, EngineMongo, EngineRedis:
+		default:
+			return apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "engine",
+				Reason: "must be postgres, mysql, mariadb, mongo, or redis",
+			})
+		}
+		idField := engine + "Id"
+		if engine == EngineMariadb {
+			idField = "mariadbId"
+		}
+		return c.post(ctx, "/"+engine+".saveEnvironment", map[string]any{
+			idField: id,
+			"env":   env,
+		}, nil)
+	default:
+		return apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "type",
+			Reason: "must be application, compose, or database",
+		})
+	}
+}
+
 // DeployService triggers a deployment of a service and returns the created
 // deployment.
 func (c *Client) DeployService(ctx context.Context, in DeployServiceInput) (Deployment, error) {

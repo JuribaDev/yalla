@@ -187,7 +187,7 @@ func (s *Server) record(r *http.Request) {
 		Path:     r.URL.Path,
 		RawQuery: r.URL.RawQuery,
 		Headers:  redactHeaders(r.Header),
-		Body:     s.redactor.Redact(string(body)),
+		Body:     s.redactRecordedBody(r.URL.Path, body),
 		At:       time.Now().UTC(),
 	}
 	if r.Header.Get("Authorization") != "" {
@@ -197,6 +197,25 @@ func (s *Server) record(r *http.Request) {
 	s.mu.Lock()
 	s.requests = append(s.requests, rec)
 	s.mu.Unlock()
+}
+
+func (s *Server) redactRecordedBody(path string, body []byte) string {
+	redacted := s.redactor.Redact(string(body))
+	if !strings.Contains(path, "saveEnvironment") && path != "/compose.update" {
+		return redacted
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return redacted
+	}
+	if _, ok := payload["env"]; ok {
+		payload["env"] = output.Sentinel
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return redacted
+	}
+	return s.redactor.Redact(string(b))
 }
 
 // redactHeaders returns a copy of h with every sensitive header value replaced
