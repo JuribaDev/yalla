@@ -151,6 +151,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeRateLimited:            {true, MessageSpecific, "the caller exceeded a request rate limit; back off and retry"},
 	yerr.CodeUnsupported:            {false, MessageSpecific, "the requested operation is not supported by this build"},
 	yerr.CodeServer:                 {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
+	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
@@ -547,11 +548,12 @@ func QuotaExceeded(resource string, limit int64) *yerr.Error {
 	return e
 }
 
-// DokployUnavailable builds an E_SERVER error (HTTP 502) for a failed call to
-// the upstream Dokploy provisioning backend. The cause is preserved for
-// server-side logging via Unwrap but is never echoed in the Message.
+// DokployUnavailable builds an E_DOKPLOY_UNAVAILABLE error (HTTP 502) for a
+// failed call to the upstream Dokploy provisioning backend. The cause is
+// preserved for server-side logging via Unwrap but is never echoed in the
+// Message.
 func DokployUnavailable(cause error) *yerr.Error {
-	return yerr.New(yerr.CodeServer, "the Dokploy provisioning backend is unavailable").
+	return yerr.New(yerr.CodeDokployUnavailable, "the Dokploy provisioning backend is unavailable").
 		WithHint("this is a transient upstream failure; retry after a short backoff").
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }

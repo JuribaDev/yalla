@@ -172,8 +172,8 @@ func TestPlan_UntypedActualErrorBecomesDokployUnavailable(t *testing.T) {
 		Repairer: &fakeRepairer{}, Reviewer: &fakeReviewer{}, Unmanaged: &fakeUnmanaged{},
 	})
 	_, err := rec.Plan(context.Background(), validOrgID)
-	if got := errCode(err); got != yerr.CodeServer {
-		t.Errorf("error code = %q; want %q (err=%v)", got, yerr.CodeServer, err)
+	if got := errCode(err); got != yerr.CodeDokployUnavailable {
+		t.Errorf("error code = %q; want %q (err=%v)", got, yerr.CodeDokployUnavailable, err)
 	}
 }
 

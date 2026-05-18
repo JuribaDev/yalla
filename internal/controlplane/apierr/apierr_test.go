@@ -59,7 +59,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
-		yerr.CodeServer, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeServer, yerr.CodeDokployUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
 	for _, code := range required {
@@ -102,7 +102,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"invalid", Invalid(""), yerr.CodeValidation, 400},
 		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
 		{"rate limited", RateLimited("organization", 3*time.Second), yerr.CodeRateLimited, 429},
-		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeServer, 502},
+		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
 		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
@@ -511,7 +511,7 @@ func TestDependencyErrorsAreDistinguished(t *testing.T) {
 		wantDep  Dependency
 		wantCode yerr.Code
 	}{
-		{"dokploy", DokployUnavailable(stderrors.New("x")), DependencyDokploy, yerr.CodeServer},
+		{"dokploy", DokployUnavailable(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployUnavailable},
 		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeUnavailable},
 		{"queue", QueueUnavailable(stderrors.New("x")), DependencyQueue, yerr.CodeUnavailable},
 		{"network", NetworkFailure(stderrors.New("x")), DependencyNetwork, yerr.CodeNetwork},

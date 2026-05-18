@@ -2,6 +2,7 @@ package apienvelope
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -191,6 +192,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeQuotaExceeded, http.StatusTooManyRequests},
 		{yerr.CodeUnsupported, http.StatusNotImplemented},
 		{yerr.CodeServer, http.StatusBadGateway},
+		{yerr.CodeDokployUnavailable, http.StatusBadGateway},
 		{yerr.CodeUpstreamBug, http.StatusBadGateway},
 		{yerr.CodeNetwork, http.StatusBadGateway},
 		{yerr.CodeTimeout, http.StatusGatewayTimeout},
@@ -214,6 +216,48 @@ func TestStatusForCode(t *testing.T) {
 		if got := StatusForCode(yerr.Code(doc.Code)); got < 400 {
 			t.Errorf("StatusForCode(%s) = %d, want a >= 400 failure status", doc.Code, got)
 		}
+	}
+}
+
+func TestWriteErrorDokployUnavailableContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "dkp_live_super_secret_contract_value"
+	err := yerr.New(yerr.CodeDokployUnavailable, "the Dokploy provisioning backend is unavailable").
+		WithHint("this is a transient upstream failure; retry after a short backoff").
+		Wrap(stderrors.New("dial tcp 10.0.0.42:443: token " + secret))
+
+	rec := httptest.NewRecorder()
+	WriteError(rec, "req-dokploy-unavailable", err)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if body := rec.Body.String(); strings.Contains(body, secret) || strings.Contains(body, "10.0.0.42") {
+		t.Fatalf("error envelope leaked upstream cause: %s", body)
+	}
+	var env decodedError
+	if decodeErr := json.Unmarshal(rec.Body.Bytes(), &env); decodeErr != nil {
+		t.Fatalf("decode: %v", decodeErr)
+	}
+	if env.SchemaVersion != ErrorSchema || env.OK {
+		t.Fatalf("envelope = %+v, want %s error envelope", env, ErrorSchema)
+	}
+	if env.RequestID != "req-dokploy-unavailable" {
+		t.Errorf("request_id = %q, want req-dokploy-unavailable", env.RequestID)
+	}
+	if env.Error.Code != string(yerr.CodeDokployUnavailable) {
+		t.Errorf("error.code = %q, want %q", env.Error.Code, yerr.CodeDokployUnavailable)
+	}
+	if env.Error.Message != "the Dokploy provisioning backend is unavailable" {
+		t.Errorf("error.message = %q", env.Error.Message)
+	}
+	if env.Error.Hint != "this is a transient upstream failure; retry after a short backoff" {
+		t.Errorf("error.hint = %q", env.Error.Hint)
+	}
+	wantDoc := DocsBaseURL + "/" + string(yerr.CodeDokployUnavailable)
+	if env.Error.DocumentationURL != wantDoc {
+		t.Errorf("documentation_url = %q, want %q", env.Error.DocumentationURL, wantDoc)
 	}
 }
 

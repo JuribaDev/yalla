@@ -33,6 +33,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeNetwork, 8},
 		{CodeTimeout, 8},
 		{CodeServer, 8},
+		{CodeDokployUnavailable, 8},
 		{CodeUpstreamBug, 8},
 		{CodeUnavailable, 8},
 		{CodeNoInput, 9},
@@ -46,6 +47,22 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		if got := tc.code.ExitCode(); got != tc.want {
 			t.Errorf("Code(%q).ExitCode() = %d, want %d", tc.code, got, tc.want)
 		}
+	}
+}
+
+func TestDokployUnavailableDescriptionNamesUpstreamOutage(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDokployUnavailable) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "upstream Dokploy provisioning backend is temporarily unavailable"
+	if got != want {
+		t.Fatalf("E_DOKPLOY_UNAVAILABLE description = %q, want %q", got, want)
 	}
 }
 

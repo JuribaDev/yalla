@@ -530,8 +530,8 @@ func TestPlan_ScannerFailureSurfacesAsDokployUnavailable(t *testing.T) {
 	_, err := imp.Plan(context.Background(), migrateimport.PlanInput{
 		DokployOrganizationID: dokployOrg,
 	})
-	if !hasCode(err, yerr.CodeServer) {
-		t.Fatalf("Plan(scanner fail) err = %v; want CodeServer", err)
+	if !hasCode(err, yerr.CodeDokployUnavailable) {
+		t.Fatalf("Plan(scanner fail) err = %v; want CodeDokployUnavailable", err)
 	}
 }
 
