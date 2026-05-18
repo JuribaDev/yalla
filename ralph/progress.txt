@@ -32345,3 +32345,26 @@ change that widened Reason to caller-supplied data.
     file header documents this delegation explicitly so a future
     reader does not mistake the absence for a coverage gap.
 ---
+
+## 2026-05-18 - BE-0185 - Add contract tests for GET /v1/services/{service_id}
+- Added the closure-of-contract suite for GET /v1/services/{service_id} as a structural twin of environments_get_contract_test.go (BE-0155). The existing services_test.go (BE-0184) pins the 200 success envelope, schema_version, request_id, OpenAPI registration, unauthenticated/not-found/cross-tenant/dependency-failure status mapping, the resolver wiring invariant, and the nil-reader-is-Internal contract; services_get_policy_test.go (BE-0186) pins the role × scoped-grant × support cross-tenant matrix. This file closes the three contract criteria those leave open: ResponseWriter-only output, bearer-token redaction on success AND authorization-failure logs, and the "dependency cause + datastore address never reaches the wire" half of the StoreUnavailable contract.
+- Files changed:
+  - internal/controlplane/httpapi/services_get_contract_test.go (new, 3 named tests + getServiceHandlerForWithLogger helper)
+  - ralph/prd.json (BE-0185 -> passes: true; notes updated)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l . -> clean
+  - go vet ./... -> clean
+  - go mod tidy -> no changes
+  - go test -run 'TestGetService(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/... -> ok (0.558s)
+  - go test -count=1 ./internal/controlplane/httpapi/... -> ok (1.247s)
+  - go test -race -count=1 ./internal/controlplane/httpapi/... -> ok (9.230s)
+  - go test -count=1 ./... -> all packages pass
+  - go test -race -count=1 ./... -> all packages pass (httpapi 13.920s)
+- Results: all checks pass.
+- Remaining risks or follow-ups: none — pure contract-coverage story; no production code changed.
+- **Learnings for future iterations:**
+  - **Closure-of-contract test pattern for a bare-id READ endpoint** (BE-0185 pattern, internal/controlplane/httpapi/services_get_contract_test.go): when the base *_test.go (BE-0184 services_test.go) and *_policy_test.go (BE-0186 services_get_policy_test.go) already cover wire+matrix, the contract story is a verbatim structural twin of environments_get_contract_test.go (BE-0155). The same three named tests close the same three contract gaps for any bare-id GET whose payload carries no secret-bearing fields: (1) ServerWritesResponseDataOnlyToResponseWriter (not parallel — captureProcessOutput swaps os streams; asserts stdout/stderr empty AND payload arrives in body AND logBuf non-empty), (2) RequestLogRedactsBearerToken (parallel; two sub-tests success + authorization-failure-via-disabled-principal; deny reader returns an error if invoked to prove policy short-circuited before reader; pins both log and body don't echo the bearer), (3) ErrorEnvelopeDoesNotLeakDependencyCause (parallel; apierr.StoreUnavailable wrapping a cause string with a bare datastore address; asserts E_UNAVAILABLE, non-empty stable message, AND neither cause text NOR the bare IP appear in body).
+  - **Per-endpoint *HandlerForWithLogger helper is mandatory for the redaction leg** (BE-0185 / BE-0182 / BE-0179 / BE-0176 pattern): the contract suite's base getServiceHandlerFor bakes in authForSvcGet which only accepts "a-valid-token", so the contract secret would never reach the handler. The closure file declares its own getServiceHandlerForWithLogger(id, authErr, reader, logger) that uses fakeAuthenticator{identity, err} and injects the caller-supplied logger. Mirror the sibling's helper verbatim, substituting only the endpoint's port (ServiceReader here vs EnvironmentReader for BE-0155) and keeping every zero-value fake byte-identical so a future NewHandler arglist reorder updates all callers in one diff.
+  - **Bare-id services route inherits the no-secret-on-wire property from environmentService** (BE-0185): GET /v1/services/{service_id} renders the canonical row through environmentServiceOf, whose wire shape is id, organization_id, project_id, environment_id, slug, display_name, kind, version, created_at, updated_at, and an optional deletion_scheduled_at. None of those are bearer- or secret-bearing, so the redaction tests only need to prove the BEARER doesn't leak; there is no "submitted-secret redaction" leg (cf. BE-0176 for endpoints whose body carries secret values). This property is shared with environments_get / projects_get / project_environments_get / api_keys_get's wire shapes.
+---
