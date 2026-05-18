@@ -6305,8 +6305,8 @@
       ],
       "type": "test-admin",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for GET /v1/admin/dokploy/drift."
+      "passes": true,
+      "notes": "Contract coverage for GET /v1/admin/dokploy/drift. Added explicit request-log redaction coverage for token/api_key query params and bearer credentials."
     },
     {
       "id": "BE-0285",

@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/output"
 )
 
 type fakeDriftFindingReader struct {
@@ -35,12 +39,16 @@ func (f *fakeDriftFindingReader) ListDriftFindings(ctx context.Context, organiza
 }
 
 func adminDriftHandlerFor(authn Authenticator, reader DriftFindingReader) http.Handler {
+	return adminDriftHandlerForWithLogger(authn, reader, nil)
+}
+
+func adminDriftHandlerForWithLogger(authn Authenticator, reader DriftFindingReader, logger *slog.Logger) http.Handler {
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authn, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, reader)
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, logger, nil, reader)
 }
 
 func adminDriftPrincipal(orgID string, role policy.Role) policy.Principal {
@@ -117,6 +125,47 @@ func TestListAdminDokployDriftReturnsFilteredFindings(t *testing.T) {
 	}
 	if len(env.Data.Findings) != 1 || env.Data.Findings[0].ID != "drft_001" || env.Data.Findings[0].ServiceID != "svc_alpha" {
 		t.Fatalf("findings = %+v, want seeded finding", env.Data.Findings)
+	}
+}
+
+func TestListAdminDokployDriftContractRedactsRequestLogs(t *testing.T) {
+	t.Parallel()
+
+	const queryToken = "dokploy-query-token-secret"
+	const queryAPIKey = "dokploy-query-api-key-secret"
+	const bearerSecret = "yk_live_admin_drift_secret"
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	reader := &fakeDriftFindingReader{}
+	h := adminDriftHandlerForWithLogger(fakeAuthenticator{identity: auth.Identity{
+		Principal: adminDriftPrincipal("org_support", policy.RoleSupport),
+		Method:    auth.MethodAPIKey,
+	}}, reader, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/dokploy/drift?organization_id=org_target&token="+queryToken+"&api_key="+queryAPIKey, nil)
+	req.Header.Set("Authorization", "Bearer "+bearerSecret)
+	req.Header.Set("X-Request-Id", "req_admin_drift_redaction")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, secret := range []string{queryToken, queryAPIKey, bearerSecret} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("response body leaked secret %q: %s", secret, body)
+		}
+	}
+	rawLogs := logs.String()
+	for _, secret := range []string{queryToken, queryAPIKey, bearerSecret} {
+		if strings.Contains(rawLogs, secret) {
+			t.Fatalf("request logs leaked secret %q: %s", secret, rawLogs)
+		}
+	}
+	if !strings.Contains(rawLogs, output.Sentinel) {
+		t.Fatalf("request logs = %s, want at least one redaction sentinel", rawLogs)
 	}
 }
 
