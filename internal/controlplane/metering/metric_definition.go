@@ -61,6 +61,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"container_memory_mb_hours": {
+		Key:          "container_memory_mb_hours",
+		Unit:         "mb_hour",
+		Source:       "dokploy_or_cadvisor",
+		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.

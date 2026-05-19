@@ -47,6 +47,7 @@ const (
 	QuotaResourceHTTPRequestBytes             QuotaResource = "http_request_bytes"
 	QuotaResourceHTTPBandwidthTotal           QuotaResource = "http_bandwidth_total"
 	QuotaResourceContainerCPUMillicoreSeconds QuotaResource = "container_cpu_millicore_seconds"
+	QuotaResourceContainerMemoryMBHours       QuotaResource = "container_memory_mb_hours"
 )
 
 // quotaResources is the membership set behind QuotaResource.Valid.
@@ -76,6 +77,7 @@ var quotaResources = map[QuotaResource]struct{}{
 	QuotaResourceHTTPRequestBytes:             {},
 	QuotaResourceHTTPBandwidthTotal:           {},
 	QuotaResourceContainerCPUMillicoreSeconds: {},
+	QuotaResourceContainerMemoryMBHours:       {},
 }
 
 // Valid reports whether r is one of the closed set of quota dimensions.

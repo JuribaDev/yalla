@@ -158,6 +158,8 @@ func containerMetricResource(key string) (store.QuotaResource, bool) {
 	switch key {
 	case "container_cpu_millicore_seconds":
 		return store.QuotaResourceContainerCPUMillicoreSeconds, true
+	case "container_memory_mb_hours":
+		return store.QuotaResourceContainerMemoryMBHours, true
 	default:
 		return "", false
 	}

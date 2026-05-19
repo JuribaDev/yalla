@@ -519,6 +519,68 @@ func TestUsageReaderIncludesContainerCPUCountersForCurrentPeriod(t *testing.T) {
 	}
 }
 
+func TestUsageReaderIncludesContainerMemoryCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "ContainerMemoryUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-container-memory")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "container_memory_mb_hours", store.EntitlementSourceSubscriptionOverride, 100000, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceContainerMemoryMBHours,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       512,
+		Unit:           "mb_hour",
+		Source:         "dokploy_or_cadvisor",
+		IdempotencyKey: "container_memory:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var memory store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceContainerMemoryMBHours {
+			memory = row
+			break
+		}
+	}
+	if memory.Resource == "" {
+		t.Fatalf("usage rows %+v missing container_memory_mb_hours counter", got)
+	}
+	if memory.UsedValue != 512 {
+		t.Fatalf("container_memory_mb_hours UsedValue = %d, want aggregated counter 512", memory.UsedValue)
+	}
+	if memory.LimitValue == nil || *memory.LimitValue != 100000 {
+		t.Fatalf("container_memory_mb_hours limit = %+v, want subscription entitlement 100000", memory)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

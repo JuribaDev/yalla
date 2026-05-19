@@ -61,3 +61,15 @@ func TestContainerCPUMillicoreSecondsMetricDefinition(t *testing.T) {
 		t.Fatalf("container_cpu_millicore_seconds definition = %+v, want millicore_second/dokploy_or_cadvisor/metered/billing-grade", def)
 	}
 }
+
+func TestContainerMemoryMBHoursMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("container_memory_mb_hours")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(container_memory_mb_hours) missing")
+	}
+	if def.Key != "container_memory_mb_hours" || def.Unit != "mb_hour" || def.Source != "dokploy_or_cadvisor" || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("container_memory_mb_hours definition = %+v, want mb_hour/dokploy_or_cadvisor/metered/billing-grade", def)
+	}
+}
