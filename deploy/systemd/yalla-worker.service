@@ -1,0 +1,48 @@
+[Unit]
+Description=Yalla Control Plane Provisioning Worker
+Documentation=https://github.com/JuribaDev/yalla
+Wants=network-online.target
+After=network-online.target postgresql.service yalla-api.service
+
+[Service]
+Type=simple
+User=yalla
+Group=yalla
+WorkingDirectory=/var/lib/yalla
+Environment=YALLA_PROFILE=production
+EnvironmentFile=/etc/yalla/control-plane.env
+ExecStart=/usr/local/bin/yalla-worker
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yalla-worker
+StateDirectory=yalla
+RuntimeDirectory=yalla
+UMask=0077
+
+# Least-privilege runtime hardening. Keep these in sync with
+# internal/release/systemd_artifact_static_test.go.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/yalla /run/yalla
+
+[Install]
+WantedBy=multi-user.target

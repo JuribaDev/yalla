@@ -106,6 +106,7 @@ defined in `.github/workflows/ci.yml`:
 | Backup encryption | `go test ./internal/release/... -run TestBackupEncryption` and `go test ./internal/controlplane/backup/... -run TestFileReporterEncryptionMarker` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Rate limit bypass resistance | `go test ./internal/release/... -run TestRateLimitBypassResistance` and `go test ./internal/controlplane/httpapi/... -run TestRateLimitBypassResistance` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -229,6 +230,38 @@ structured JSON logs. Operators can render the artifact offline with
 `kubectl apply --dry-run=server -f deploy/kubernetes/yalla-control-plane.yaml`.
 CI pins the contract with
 `go test ./internal/release/... -run TestKubernetesArtifact`.
+
+## systemd Operations Artifact
+
+The single-node systemd baseline lives under `deploy/systemd/` with separate
+units for `deploy/systemd/yalla-api.service` and
+`deploy/systemd/yalla-worker.service`. The API unit executes
+`/usr/local/bin/yalla-api`; the worker unit executes
+`/usr/local/bin/yalla-worker`. Both run as the dedicated non-root `yalla`
+service account, load runtime configuration from
+`/etc/yalla/control-plane.env`, and write structured JSON diagnostics to
+journald.
+
+The checked-in units intentionally do **not** include database URLs, signing
+keys, secret-encryption keys, Dokploy endpoints, or Dokploy tokens. Operators
+copy `deploy/systemd/control-plane.env.example` to
+`/etc/yalla/control-plane.env`, replace the `<redacted:...>` placeholders from
+their secret manager, and keep the rendered file outside the repository with
+mode `0640` and group `yalla`.
+
+Both units preserve a least-privilege sandbox: `NoNewPrivileges=true`,
+`ProtectSystem=strict`, `ProtectHome=true`, private temporary and device
+namespaces, empty capability sets, native syscall architecture, and address
+families limited to `AF_UNIX`, `AF_INET`, and `AF_INET6`. `yalla-api` binds
+`127.0.0.1:8080` by default for a local TLS-terminating reverse proxy and
+exposes `GET /healthz` plus `GET /readyz`; `yalla-worker` has no HTTP listener
+and is observed through process liveness, durable job state, worker metrics,
+dead-letter alerts, and structured logs.
+
+Operators can dry-run the unit syntax with
+`systemd-analyze verify deploy/systemd/yalla-api.service deploy/systemd/yalla-worker.service`.
+CI pins the artifact with
+`go test ./internal/release/... -run TestSystemdArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

@@ -127,6 +127,18 @@ Helm artifact change should update the manifest, `deploy/kubernetes`
 runbook, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## systemd operations artifact (BE-0413)
+
+`systemd_artifact_static_test.go` pins the checked-in single-node
+baseline under `deploy/systemd/`: the artifact must define separate
+`yalla-api` and `yalla-worker` units, execute `/usr/local/bin/yalla-api`
+and `/usr/local/bin/yalla-worker`, load runtime secrets only from
+`/etc/yalla/control-plane.env`, preserve the least-privilege systemd
+sandbox, and document `/healthz` + `/readyz` plus journald structured
+logs. Any future systemd artifact change should update the unit files,
+`deploy/systemd` runbook, SECURITY.md verification-gates row, CI step,
+and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing
