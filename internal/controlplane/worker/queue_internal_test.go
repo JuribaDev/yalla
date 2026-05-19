@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 // These are pure unit tests for the queue's decision logic — backoff, failure
@@ -121,4 +124,59 @@ func TestNewOwnerIDIsUnique(t *testing.T) {
 		}
 		seen[id] = struct{}{}
 	}
+}
+
+func TestStoreClaimerRecordsJobQueueMetrics(t *testing.T) {
+	t.Parallel()
+
+	metrics := telemetry.NewJobQueueMetrics()
+	claimer := &StoreClaimer{metrics: metrics}
+	job := store.ProvisioningJob{
+		ID:             "job_queue_metrics",
+		OrganizationID: "org_queue_metrics",
+		ProjectID:      "proj_queue_metrics",
+		EnvironmentID:  "env_queue_metrics",
+		ServiceID:      "svc_queue_metrics",
+		JobType:        "sync_variables",
+		Status:         store.JobStatusRunning,
+		Attempts:       2,
+		MaxAttempts:    5,
+		RequestID:      "req_queue_metrics",
+		CorrelationID:  "corr_queue_metrics",
+	}
+
+	claimer.recordClaimMetric(job)
+	claimer.recordOutcomeMetric(job, store.JobStatusRetrying, 45*time.Second)
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalEvents != 2 {
+		t.Fatalf("total_events = %d, want 2", snapshot.TotalEvents)
+	}
+	claimed := findQueueMetric(snapshot.Series, telemetry.JobQueueEventClaimed, "sync_variables", string(store.JobStatusRunning))
+	if claimed == nil {
+		t.Fatalf("missing claimed metric: %+v", snapshot.Series)
+	}
+	if claimed.JobID != job.ID || claimed.OrganizationID != job.OrganizationID || claimed.ServiceID != job.ServiceID {
+		t.Errorf("claimed metric = %+v, want latest job/resource hints", *claimed)
+	}
+
+	retry := findQueueMetric(snapshot.Series, telemetry.JobQueueEventCompleted, "sync_variables", string(store.JobStatusRetrying))
+	if retry == nil {
+		t.Fatalf("missing retry outcome metric: %+v", snapshot.Series)
+	}
+	if retry.StatusClass != "retry" || retry.NextRunDelayMS != 45000 {
+		t.Errorf("retry metric = %+v, want retry class and 45s delay", *retry)
+	}
+	if retry.RequestID != job.RequestID || retry.CorrelationID != job.CorrelationID {
+		t.Errorf("retry metric = %+v, want request/correlation hints", *retry)
+	}
+}
+
+func findQueueMetric(metrics []telemetry.JobQueueMetric, event telemetry.JobQueueEventName, jobType, status string) *telemetry.JobQueueMetric {
+	for i := range metrics {
+		if metrics[i].Event == event && metrics[i].JobType == jobType && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
 }

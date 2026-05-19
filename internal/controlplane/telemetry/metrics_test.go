@@ -96,3 +96,76 @@ func findHTTPRequestMetric(metrics []HTTPRequestMetric, method, route string, st
 	}
 	return nil
 }
+
+func TestJobQueueMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewJobQueueMetrics()
+	metrics.RecordJobQueueEvent(JobQueueEvent{
+		Event:          JobQueueEventClaimed,
+		JobType:        "ensure_project",
+		Status:         "running",
+		JobID:          "job_metrics_claimed",
+		RequestID:      "req_metrics_claimed",
+		CorrelationID:  "corr_metrics_claimed",
+		OrganizationID: "org_metrics_safe",
+		ProjectID:      "proj_metrics_safe",
+	})
+	metrics.RecordJobQueueEvent(JobQueueEvent{
+		Event:          JobQueueEventCompleted,
+		JobType:        "ensure_project",
+		Status:         "succeeded",
+		JobID:          "job_metrics_succeeded",
+		RequestID:      "req_metrics_succeeded",
+		CorrelationID:  "corr_metrics_succeeded",
+		OrganizationID: "org_metrics_safe",
+		ProjectID:      "proj_metrics_safe",
+	})
+	metrics.RecordJobQueueEvent(JobQueueEvent{
+		Event:          JobQueueEventCompleted,
+		JobType:        "ensure_project",
+		Status:         "retrying",
+		JobID:          "job_metrics_retry",
+		RequestID:      "req_metrics_retry",
+		CorrelationID:  "corr_metrics_retry",
+		OrganizationID: "org_metrics_safe",
+		ProjectID:      "proj_metrics_safe",
+		NextRunDelayMS: 30000,
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalEvents != 3 {
+		t.Fatalf("total_events = %d, want 3", snapshot.TotalEvents)
+	}
+	if len(snapshot.Series) != 3 {
+		t.Fatalf("series len = %d, want 3: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	claimed := findJobQueueMetric(snapshot.Series, JobQueueEventClaimed, "ensure_project", "running")
+	if claimed == nil {
+		t.Fatalf("missing claimed metric: %+v", snapshot.Series)
+	}
+	if claimed.Count != 1 || claimed.JobID != "job_metrics_claimed" || claimed.OrganizationID != "org_metrics_safe" {
+		t.Errorf("claimed metric = %+v, want latest claim hints", *claimed)
+	}
+
+	retrying := findJobQueueMetric(snapshot.Series, JobQueueEventCompleted, "ensure_project", "retrying")
+	if retrying == nil {
+		t.Fatalf("missing retrying metric: %+v", snapshot.Series)
+	}
+	if retrying.StatusClass != "retry" || retrying.NextRunDelayMS != 30000 {
+		t.Errorf("retrying metric = %+v, want retry class and delay hint", *retrying)
+	}
+	if retrying.RequestID == "" || retrying.CorrelationID == "" || retrying.ProjectID == "" {
+		t.Errorf("retrying metric = %+v, want request/correlation/resource hints", *retrying)
+	}
+}
+
+func findJobQueueMetric(metrics []JobQueueMetric, event JobQueueEventName, jobType, status string) *JobQueueMetric {
+	for i := range metrics {
+		if metrics[i].Event == event && metrics[i].JobType == jobType && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}

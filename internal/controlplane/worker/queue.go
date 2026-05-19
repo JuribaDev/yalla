@@ -19,6 +19,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 // Defaults for a StoreClaimer left partially configured. They are deliberately
@@ -183,6 +184,9 @@ type StoreClaimerConfig struct {
 	// Logger receives structured diagnostics. A nil value defaults to
 	// slog.Default().
 	Logger *slog.Logger
+	// Metrics receives low-cardinality job queue observations. A nil value
+	// defaults to telemetry.DefaultJobQueueMetrics.
+	Metrics *telemetry.JobQueueMetrics
 	// Now is an injectable clock; tests set it for determinism. A nil value
 	// defaults to time.Now().UTC.
 	Now func() time.Time
@@ -201,6 +205,7 @@ type StoreClaimer struct {
 	completeTimeout time.Duration
 	backoff         Backoff
 	logger          *slog.Logger
+	metrics         *telemetry.JobQueueMetrics
 	now             func() time.Time
 }
 
@@ -238,6 +243,10 @@ func NewStoreClaimer(cfg StoreClaimerConfig) (*StoreClaimer, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	metrics := cfg.Metrics
+	if metrics == nil {
+		metrics = telemetry.DefaultJobQueueMetrics
+	}
 	clock := cfg.Now
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -252,6 +261,7 @@ func NewStoreClaimer(cfg StoreClaimerConfig) (*StoreClaimer, error) {
 		completeTimeout: completeTimeout,
 		backoff:         cfg.Backoff,
 		logger:          logger,
+		metrics:         metrics,
 		now:             clock,
 	}, nil
 }
@@ -277,6 +287,7 @@ func (c *StoreClaimer) Claim(ctx context.Context) (Lease, error) {
 	if !found {
 		return nil, nil
 	}
+	c.recordClaimMetric(job)
 	c.logger.InfoContext(ctx, "claimed provisioning job",
 		"job_id", job.ID, "job_type", job.JobType, "organization_id", job.OrganizationID,
 		"attempt", job.Attempts, "max_attempts", job.MaxAttempts,
@@ -306,6 +317,7 @@ func (l *storeLease) Run(ctx context.Context) error {
 				"job_id", l.job.ID, "error", err.Error())
 			return err
 		}
+		c.recordOutcomeMetric(l.job, store.JobStatusSucceeded, 0)
 		c.logger.InfoContext(ctx, "provisioning job succeeded",
 			"job_id", l.job.ID, "request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
 		return nil
@@ -335,6 +347,7 @@ func (l *storeLease) recordFailure(ctx context.Context, runErr error) error {
 		}); err != nil {
 			return err
 		}
+		c.recordOutcomeMetric(l.job, store.JobStatusFailed, 0)
 		c.logger.ErrorContext(ctx, "provisioning job failed permanently",
 			"job_id", l.job.ID, "attempt", l.job.Attempts,
 			"request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
@@ -347,6 +360,7 @@ func (l *storeLease) recordFailure(ctx context.Context, runErr error) error {
 		}); err != nil {
 			return err
 		}
+		c.recordOutcomeMetric(l.job, store.JobStatusDeadLetter, 0)
 		c.logger.ErrorContext(ctx, "provisioning job dead-lettered after exhausting its retry budget",
 			"job_id", l.job.ID, "attempts", l.job.Attempts, "max_attempts", l.job.MaxAttempts,
 			"request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
@@ -360,6 +374,7 @@ func (l *storeLease) recordFailure(ctx context.Context, runErr error) error {
 	}); err != nil {
 		return err
 	}
+	c.recordOutcomeMetric(l.job, store.JobStatusRetrying, delay)
 	c.logger.WarnContext(ctx, "provisioning job failed; scheduled for retry",
 		"job_id", l.job.ID, "attempt", l.job.Attempts, "retry_in", delay.String(),
 		"request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
@@ -379,6 +394,7 @@ func (l *storeLease) Release(ctx context.Context) error {
 			"job_id", l.job.ID, "error", err.Error())
 		return err
 	}
+	c.recordOutcomeMetric(l.job, store.JobStatusRetrying, 0)
 	c.logger.InfoContext(ctx, "released in-flight provisioning job for retry",
 		"job_id", l.job.ID, "request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
 	return nil
@@ -398,6 +414,38 @@ func (c *StoreClaimer) complete(ctx context.Context, job store.ProvisioningJob, 
 		_, err := c.jobs.Transition(ctx, tx, job.OrganizationID, job.ID, to, mut)
 		return err
 	})
+}
+
+func (c *StoreClaimer) recordClaimMetric(job store.ProvisioningJob) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.RecordJobQueueEvent(jobQueueEvent(job, telemetry.JobQueueEventClaimed, job.Status, 0))
+}
+
+func (c *StoreClaimer) recordOutcomeMetric(job store.ProvisioningJob, status store.JobStatus, nextRunDelay time.Duration) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.RecordJobQueueEvent(jobQueueEvent(job, telemetry.JobQueueEventCompleted, status, nextRunDelay))
+}
+
+func jobQueueEvent(job store.ProvisioningJob, event telemetry.JobQueueEventName, status store.JobStatus, nextRunDelay time.Duration) telemetry.JobQueueEvent {
+	return telemetry.JobQueueEvent{
+		Event:          event,
+		JobType:        job.JobType,
+		Status:         string(status),
+		JobID:          job.ID,
+		RequestID:      job.RequestID,
+		CorrelationID:  job.CorrelationID,
+		OrganizationID: job.OrganizationID,
+		ProjectID:      job.ProjectID,
+		EnvironmentID:  job.EnvironmentID,
+		ServiceID:      job.ServiceID,
+		Attempt:        job.Attempts,
+		MaxAttempts:    job.MaxAttempts,
+		NextRunDelayMS: nextRunDelay.Milliseconds(),
+	}
 }
 
 // interrupted reports whether ctx was cancelled or err is a context
