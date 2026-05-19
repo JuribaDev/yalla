@@ -58,7 +58,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 	required := []yerr.Code{
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
-		yerr.CodeQuotaExceeded,
+		yerr.CodeQuotaExceeded, yerr.CodeUnsupportedServiceType,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeSecretDecryption, yerr.CodeInternal,
 	}
@@ -103,6 +103,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeValidation, 400},
 		{"invalid", Invalid(""), yerr.CodeValidation, 400},
 		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
+		{"unsupported service type", UnsupportedServiceType("dokploy-private-redis"), yerr.CodeUnsupportedServiceType, 400},
 		{"rate limited", RateLimited("organization", 3*time.Second), yerr.CodeRateLimited, 429},
 		{"dokploy auth", DokployAuth(stderrors.New("x")), yerr.CodeDokployAuth, 502},
 		{"dokploy forbidden", DokployForbidden(stderrors.New("x")), yerr.CodeDokployForbidden, 502},
@@ -136,6 +137,51 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 				t.Errorf("%s produced an empty message", tc.name)
 			}
 		})
+	}
+}
+
+func TestUnsupportedServiceTypeContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_unsupported_service_type_secret_token"
+	err := UnsupportedServiceType("dokploy-private-redis").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeUnsupportedServiceType {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeUnsupportedServiceType)
+	}
+	if err.Message != "service type is not supported" {
+		t.Fatalf("message = %q, want fixed unsupported-service-type message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 400 {
+			t.Errorf("HTTPStatus = %d, want 400", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_UNSUPPORTED_SERVICE_TYPE must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-unsupported-service-type", err)
+	body := rec.Body.String()
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-unsupported-service-type"`) ||
+		!strings.Contains(body, string(yerr.CodeUnsupportedServiceType)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeUnsupportedServiceType)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+	if strings.Contains(body, "yka_unsupported_service_type_secret_token") || strings.Contains(body, "Bearer") {
+		t.Fatalf("unsupported-service-type envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Fatalf("expected redaction sentinel %q in unsupported-service-type envelope: %s", output.Sentinel, body)
 	}
 }
 

@@ -36327,3 +36327,40 @@ change that widened Reason to caller-supplied data.
   - For reconciliation subtype stories, add a subtype-specific test file beside existing `application_git_test.go` and drive the real `Reconciler` through fake ports, not just `Diff`, so Repairer/Reviewer/Unmanaged dispatch counts are pinned.
   - Service-type drift should be review-only. Once the upstream service type no longer matches desired, safe repairs are unsafe even if build/env/domain fields also differ.
 ---
+## 2026-05-19 04:08 +03 - BE-0537
+- What was implemented
+  - Added the stable `E_UNSUPPORTED_SERVICE_TYPE` public error code.
+  - Added `apierr.UnsupportedServiceType` as the typed backend constructor with HTTP 400, non-retryable taxonomy, message-specific policy, fixed public message, and redaction-safe hint.
+  - Added renderer/status, CLI manifest description, exit-code, envelope documentation URL, and secret-redaction tests.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr` (red first, failed on missing code/constructor/status)
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not available on direct PATH check; repository pre-commit strict verification ran it)
+  - `govulncheck ./...` (not available on direct PATH check; repository pre-commit strict verification ran it)
+  - `scripts/verify.sh --strict --release` via pre-commit hook
+- Results
+  - Required checks passed.
+  - `golangci-lint` passed with 0 issues.
+  - Repository pre-commit strict verification passed, including focused backend suites, `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot release build.
+  - `goimports` was not installed in this environment.
+- Remaining risks or follow-ups
+  - No call sites currently needed migration; future service create/import/reconcile paths should use `apierr.UnsupportedServiceType` instead of raw string codes when unsupported service types must surface as public errors.
+- **Learnings for future iterations:**
+  - `E_UNSUPPORTED_SERVICE_TYPE` is a request-shape/service-contract error: use HTTP 400 and exit code 2, not the generic `E_UNSUPPORTED` HTTP 501 / exit code 10 operation-not-supported contract.
+  - Keep the submitted service type out of public message/hint/details; the constructor accepts it for call-site clarity but intentionally emits value-free public fields.
+---

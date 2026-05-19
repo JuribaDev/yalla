@@ -192,6 +192,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeIdempotencyConflict, http.StatusConflict},
 		{yerr.CodeRateLimited, http.StatusTooManyRequests},
 		{yerr.CodeQuotaExceeded, http.StatusTooManyRequests},
+		{yerr.CodeUnsupportedServiceType, http.StatusBadRequest},
 		{yerr.CodeUnsupported, http.StatusNotImplemented},
 		{yerr.CodeServer, http.StatusBadGateway},
 		{yerr.CodeDokployAuth, http.StatusBadGateway},

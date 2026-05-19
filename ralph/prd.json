@@ -11112,8 +11112,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_UNSUPPORTED_SERVICE_TYPE."
+      "passes": true,
+      "notes": "Stable error code: E_UNSUPPORTED_SERVICE_TYPE. Implemented as a typed backend error via apierr.UnsupportedServiceType with HTTP 400, non-retryable message-specific taxonomy, yalla.error.v1 envelope/doc-link/redaction tests, CLI manifest description, and exit-code mapping."
     },
     {
       "id": "BE-0538",

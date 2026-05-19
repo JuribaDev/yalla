@@ -14,6 +14,7 @@
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict, JobNotClaimed, JobCancelled
 //   - Quota:                QuotaExceeded
+//   - Service contract:     UnsupportedServiceType
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
 //     DokployConflict, DokployRateLimited, DokployUnavailable,
 //     DokployBadResponse,
@@ -154,6 +155,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeInvalidStateTransition: {false, MessageSpecific, "the requested lifecycle transition is not allowed by the resource state machine"},
 	yerr.CodeIdempotencyConflict:    {false, MessageSpecific, "an idempotency key was reused for a request that differs from the original"},
 	yerr.CodeQuotaExceeded:          {true, MessageSpecific, "an organization quota or plan limit is exhausted"},
+	yerr.CodeUnsupportedServiceType: {false, MessageSpecific, "the requested service type is not supported by Yalla"},
 	yerr.CodeRateLimited:            {true, MessageSpecific, "the caller exceeded a request rate limit; back off and retry"},
 	yerr.CodeUnsupported:            {false, MessageSpecific, "the requested operation is not supported by this build"},
 	yerr.CodeServer:                 {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
@@ -579,6 +581,16 @@ func QuotaExceeded(resource string, limit int64) *yerr.Error {
 		e = e.WithDetail(DetailKeyQuotaLimit, strconv.FormatInt(limit, 10))
 	}
 	return e
+}
+
+// UnsupportedServiceType builds an E_UNSUPPORTED_SERVICE_TYPE error (HTTP
+// 400) for a service type outside Yalla's public service contract. The
+// submitted type is accepted for call-site clarity but intentionally not
+// echoed in public fields; callers may pass values derived from Dokploy or
+// customer payloads without risking credential-shaped text in envelopes.
+func UnsupportedServiceType(_ string) *yerr.Error {
+	return yerr.New(yerr.CodeUnsupportedServiceType, "service type is not supported").
+		WithHint("choose one of Yalla's supported service types")
 }
 
 // DokployAuth builds an E_DOKPLOY_AUTH error (HTTP 502) for a private Dokploy

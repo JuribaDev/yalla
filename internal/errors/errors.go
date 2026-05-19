@@ -85,7 +85,12 @@ const (
 	// transient throughput cap): a quota failure persists until the limit is
 	// raised or usage is released.
 	CodeQuotaExceeded Code = "E_QUOTA_EXCEEDED"
-	CodeServer        Code = "E_SERVER"
+	// CodeUnsupportedServiceType marks a service type Yalla does not support
+	// as part of its public service contract. It is distinct from the generic
+	// CodeUnsupported operation/build code so agents can correct service
+	// intent without treating the whole endpoint as unavailable.
+	CodeUnsupportedServiceType Code = "E_UNSUPPORTED_SERVICE_TYPE"
+	CodeServer                 Code = "E_SERVER"
 	// CodeDokployAuth marks a private Dokploy provisioning backend response
 	// that rejected Yalla's own upstream credentials. It is distinct from
 	// customer authentication/authorization codes and from transient Dokploy
@@ -187,6 +192,7 @@ var codeDescriptions = map[Code]string{
 	CodeIdempotencyConflict:    "idempotency key reused for a request that differs from the original",
 	CodeRateLimited:            "request rejected because the caller exceeded a request rate limit",
 	CodeQuotaExceeded:          "request rejected because an organization quota or plan limit is exhausted",
+	CodeUnsupportedServiceType: "requested service type is not supported by Yalla",
 	CodeServer:                 "upstream Dokploy server returned an error",
 	CodeDokployAuth:            "upstream Dokploy provisioning backend rejected Yalla credentials",
 	CodeDokployForbidden:       "upstream Dokploy provisioning backend denied the requested operation",
@@ -217,7 +223,7 @@ func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeValidation, CodeInvalidInput,
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
-		CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
+		CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded, CodeUnsupportedServiceType,
 		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug,
 		CodeNetwork, CodeDBUnavailable, CodeMigrationRequired, CodeSecretDecryption, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
@@ -252,7 +258,7 @@ func (c Code) ExitCode() int {
 	switch c {
 	case "":
 		return 0
-	case CodeUsage, CodeValidation, CodeInvalidInput, CodeScopeRequired:
+	case CodeUsage, CodeValidation, CodeInvalidInput, CodeScopeRequired, CodeUnsupportedServiceType:
 		return 2
 	case CodeConfig, CodeOrphan, CodeMigrationRequired:
 		return 3

@@ -95,6 +95,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_INVALID_STATE_TRANSITION,
 //	E_IDEMPOTENCY_CONFLICT                    -> 409 Conflict
 //	E_RATE_LIMITED, E_QUOTA_EXCEEDED          -> 429 Too Many Requests
+//	E_UNSUPPORTED_SERVICE_TYPE                -> 400 Bad Request
 //	E_UNSUPPORTED                             -> 501 Not Implemented
 //	E_SERVER, E_DOKPLOY_AUTH, E_DOKPLOY_FORBIDDEN, E_DOKPLOY_NOT_FOUND,
 //	E_DOKPLOY_CONFLICT, E_DOKPLOY_RATE_LIMITED, E_DOKPLOY_UNAVAILABLE,
@@ -107,7 +108,7 @@ var envelopeRedactor = output.NewRedactor()
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
 	switch code {
-	case yerr.CodeValidation, yerr.CodeInvalidInput, yerr.CodeUsage, yerr.CodeScopeRequired:
+	case yerr.CodeValidation, yerr.CodeInvalidInput, yerr.CodeUsage, yerr.CodeScopeRequired, yerr.CodeUnsupportedServiceType:
 		return http.StatusBadRequest
 	case yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth:
 		return http.StatusUnauthorized

@@ -34,6 +34,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeIdempotencyConflict, 6},
 		{CodeRateLimited, 7},
 		{CodeQuotaExceeded, 7},
+		{CodeUnsupportedServiceType, 2},
 		{CodeNetwork, 8},
 		{CodeTimeout, 8},
 		{CodeServer, 8},
@@ -58,6 +59,22 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		if got := tc.code.ExitCode(); got != tc.want {
 			t.Errorf("Code(%q).ExitCode() = %d, want %d", tc.code, got, tc.want)
 		}
+	}
+}
+
+func TestUnsupportedServiceTypeDescriptionNamesServiceTypeContract(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeUnsupportedServiceType) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "requested service type is not supported by Yalla"
+	if got != want {
+		t.Fatalf("E_UNSUPPORTED_SERVICE_TYPE description = %q, want %q", got, want)
 	}
 }
 
