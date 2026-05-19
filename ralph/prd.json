@@ -12537,8 +12537,8 @@
       ],
       "type": "backoffice-config",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented backoffice RuntimeConfigCache with immutable snapshots, version identifiers, set revision invalidation tokens, last-known-good fallback on reload failure, stale alerts, concurrent-reader tests, and a store-backed loader over active published admin config."
     },
     {
       "id": "BE-0613",

@@ -112,6 +112,17 @@ func TestAdminConfigRepositoryDraftPublishArchiveRollbackAndActiveRuntime(t *tes
 	if len(active) != 1 || active[0].ID != published.ID {
 		t.Fatalf("active at now = %+v, want first published version only", active)
 	}
+	var runtime []store.AdminRuntimeConfigVersion
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		runtime, err = repo.ListActivePublishedRuntime(ctx, q, now)
+		return err
+	}); err != nil {
+		t.Fatalf("ListActivePublishedRuntime at now: %v", err)
+	}
+	if len(runtime) != 1 || runtime[0].Version.ID != published.ID || runtime[0].Domain != store.AdminConfigDomainPricing || runtime[0].Revision != 5 {
+		t.Fatalf("runtime at now = %+v, want published version with set domain and revision", runtime)
+	}
 	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
 		var err error
 		active, err = repo.ListActivePublished(ctx, q, future.Add(time.Second))

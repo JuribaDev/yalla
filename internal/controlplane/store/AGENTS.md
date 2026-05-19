@@ -235,10 +235,12 @@ Postgres persistence for control-plane source-of-truth state.
 - `admin_config_sets` and `admin_config_versions` are global operator-owned
   runtime configuration, not tenant data. Do not add `organization_id` to these
   tables unless the product explicitly introduces tenant-local backoffice config.
-- Runtime readers must use `AdminConfigRepository.ListActivePublished`: it
-  returns only published versions whose `effective_at` is active, one current
-  version per config set. Drafts and future-effective versions are never runtime
-  inputs.
+- Runtime readers must use `AdminConfigRepository.ListActivePublishedRuntime`
+  when they need cache invalidation/routing metadata: it returns only published
+  versions whose `effective_at` is active, one current version per config set,
+  plus the owning set's domain and revision token. Drafts and future-effective
+  versions are never runtime inputs. Use `ListActivePublished` only for tests or
+  internal code that truly needs the bare version rows.
 - Config version changes should create new rows or archive existing rows. Do
   not mutate a published payload in place. `admin_config_sets.revision` is the
   cache invalidation token and should be bumped by every version mutation.

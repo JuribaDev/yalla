@@ -10,3 +10,8 @@ before it is published.
 - Treat blocking errors as part of a successful dry-run result when the request
   shape is valid. Reserve typed API errors for malformed requests, missing
   referenced database rows, and dependency failures.
+- Runtime configuration consumers should use `RuntimeConfigCache` over a
+  `RuntimeConfigLoader`. Snapshots are immutable, carry config set/version
+  identifiers plus revision tokens, preserve the last known good payload after
+  reload failures, and emit stale/reload alerts without exposing payload
+  contents.

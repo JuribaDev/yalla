@@ -80,6 +80,14 @@ type AdminConfigVersion struct {
 	UpdatedAt           time.Time
 }
 
+// AdminRuntimeConfigVersion pairs one active published config version with the
+// owning set metadata runtime caches need for invalidation and routing.
+type AdminRuntimeConfigVersion struct {
+	Version  AdminConfigVersion
+	Domain   AdminConfigDomain
+	Revision int64
+}
+
 // CreateAdminConfigSetInput describes a new backoffice configuration family.
 type CreateAdminConfigSetInput struct {
 	Slug        string
@@ -336,6 +344,44 @@ func (r *AdminConfigRepository) ListActivePublished(ctx context.Context, q Queri
 			return nil, apierr.StoreUnavailable(err)
 		}
 		out = append(out, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	return out, nil
+}
+
+// ListActivePublishedRuntime returns active published versions with their set
+// domain and revision tokens for runtime config cache reloads.
+func (r *AdminConfigRepository) ListActivePublishedRuntime(ctx context.Context, q Querier, at time.Time) ([]AdminRuntimeConfigVersion, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	rows, err := q.Query(ctx,
+		`SELECT DISTINCT ON (v.config_set_id)
+		        v.id, v.config_set_id, v.version, v.status, v.payload, v.effective_at,
+		        v.published_at, v.published_by, v.rollback_of_version_id,
+		        v.rollback_reason, v.archived_at, v.created_at, v.updated_at,
+		        s.domain, s.revision
+		   FROM admin_config_versions v
+		   JOIN admin_config_sets s ON s.id = v.config_set_id
+		  WHERE v.status = 'published'
+		    AND v.effective_at <= $1
+		  ORDER BY v.config_set_id, v.effective_at DESC, v.version DESC, v.id DESC`,
+		at,
+	)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	out := make([]AdminRuntimeConfigVersion, 0)
+	for rows.Next() {
+		var item AdminRuntimeConfigVersion
+		if err := rows.Scan(append(adminConfigVersionScanDest(&item.Version), &item.Domain, &item.Revision)...); err != nil {
+			return nil, apierr.StoreUnavailable(err)
+		}
+		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, apierr.StoreUnavailable(err)
