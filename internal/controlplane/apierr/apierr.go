@@ -760,5 +760,5 @@ func Timeout(dep Dependency, cause error) *yerr.Error {
 // Message is a fixed, generic string; cause is preserved via Unwrap for
 // server-side logging and is never echoed to the client.
 func Internal(cause error) *yerr.Error {
-	return yerr.New(yerr.CodeInternal, "an internal error occurred").Wrap(cause)
+	return yerr.New(yerr.CodeInternal, "an unexpected internal error occurred").Wrap(cause)
 }

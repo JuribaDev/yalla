@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- `E_INTERNAL` is the backend's generic programming/unexpected-failure contract: use `apierr.Internal(cause)`, render HTTP 500, keep the public message fixed as "an unexpected internal error occurred", omit public hints/details, preserve the cause only for server-side logging, and keep nil-error envelope fallback on the same message/docs-link contract.
 - Reconciliation service-type mismatches are dangerous review-only drift: once desired and actual `dokploy.ServiceType` differ, `diffService` must emit `ActionReviewServiceTypeChange` and stop before build/env/domain safe repairs. Safe repairs against an untrusted upstream type can mutate the wrong Dokploy resource shape.
 - Secret-open failures are a distinct public error contract: use `apierr.SecretDecryption()` / `E_SECRET_DECRYPTION` for failures opening sealed secret material (provider mismatch, unknown key, invalid ciphertext). It is HTTP 500, non-retryable, MessageGeneric, preserves the cause only for server-side diagnostics, and public envelopes must not expose plaintext, ciphertext, provider ids, key ids, or crypto details.
 - Worker provisioning-job outcome writes distinguish cancelled jobs from stale lease ownership: `JobRepository.Transition` returns `apierr.JobCancelled()` / `E_JOB_CANCELLED` when an expected-lease outcome targets a job already moved to `cancelled`, while lease-owner mismatch on an active/reclaimed job remains `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED`.
@@ -36477,4 +36478,39 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `E_BREAK_GLASS_REQUIRED` is an authorization/escalation gate, not a generic policy denial: it maps to HTTP 403 and CLI exit code 4, uses a fixed generic public message, and preserves target/action details only as the wrapped server-side cause.
   - Error-contract stories remain a four-point update: shared `internal/errors` registry, backend `apierr` taxonomy/constructor, `apienvelope.StatusForCode`, and redaction/doc-link tests.
+---
+## 2026-05-19 04:41 +03 - BE-0540
+- What was implemented
+  - Pinned the `E_INTERNAL` backend contract with a focused test for HTTP 500, non-retryable generic-message taxonomy, no public hint/details, server-side cause preservation, `yalla.error.v1` envelope shape, `request_id`, documentation URL, and no leakage from wrapped credential-shaped causes.
+  - Updated `apierr.Internal` to use the stable public message `an unexpected internal error occurred`.
+  - Updated the `apienvelope.WriteError` nil-error fallback to use the same stable `E_INTERNAL` public message and documentation link.
+  - Marked BE-0540 as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/apierr -run TestInternalErrorContract -count=1` (red first failed on the previous generic message, then passed after implementation)
+  - `go test ./internal/controlplane/apienvelope -run TestWriteErrorNilErrorIsInternal -count=1`
+  - `gofmt -w .`
+  - `goimports -w .` not run: `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/apierr ./internal/controlplane/apienvelope`
+  - `go test ./internal/controlplane/...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` not run: `staticcheck` is not installed in this environment.
+  - `govulncheck ./...` not run: `govulncheck` is not installed in this environment.
+- Results
+  - Required formatting, tidy, focused tests, full unit tests, full race tests, vet, and installed linting all passed.
+- Remaining risks or follow-ups
+  - No persistence, migrations, policy, quota, jobs, worker behavior, or Dokploy integration was touched, so Postgres-backed and external Dokploy focused suites were not required for this error-contract-only story.
+- **Learnings for future iterations:**
+  - `E_INTERNAL` should be reserved for programming or unexpected backend failures. It should never include recovery hints or structured details on the public wire; attach the root cause only through `Wrap` for server-side diagnostics.
+  - The nil-error path in `apienvelope.WriteError` is part of the public `E_INTERNAL` contract because it is the defensive renderer fallback when a caller has no typed error value.
 ---

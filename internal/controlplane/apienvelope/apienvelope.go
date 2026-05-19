@@ -182,7 +182,7 @@ func WriteError(w http.ResponseWriter, requestID string, err *yerr.Error) {
 // are pending). Prefer WriteError everywhere else.
 func WriteErrorStatus(w http.ResponseWriter, status int, requestID string, err *yerr.Error) {
 	code := errorCode(err)
-	message := "internal error"
+	message := "an unexpected internal error occurred"
 	hint := ""
 	var details map[string]string
 	if err != nil {

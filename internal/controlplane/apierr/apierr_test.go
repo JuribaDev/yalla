@@ -188,6 +188,58 @@ func TestUnsupportedServiceTypeContract(t *testing.T) {
 	}
 }
 
+func TestInternalErrorContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "yka_internal_contract_secret_token"
+	cause := stderrors.New("failed with Authorization: Bearer " + secret)
+	err := Internal(cause)
+	if err.Code != yerr.CodeInternal {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeInternal)
+	}
+	if err.Message != "an unexpected internal error occurred" {
+		t.Fatalf("message = %q, want fixed generic internal message", err.Message)
+	}
+	if err.Hint != "" {
+		t.Fatalf("hint = %q, want empty hint", err.Hint)
+	}
+	if len(err.Details) != 0 {
+		t.Fatalf("details = %v, want none", err.Details)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("Internal must preserve the cause for server-side logging")
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_INTERNAL is not catalogued")
+	}
+	if entry.HTTPStatus != 500 {
+		t.Errorf("HTTPStatus = %d, want 500", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("E_INTERNAL must not be retryable")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-internal-contract", err)
+	body := rec.Body.String()
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-internal-contract"`) ||
+		!strings.Contains(body, string(yerr.CodeInternal)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeInternal)) {
+		t.Fatalf("envelope missing stable internal contract fields: %s", body)
+	}
+	if strings.Contains(body, secret) || strings.Contains(body, "Authorization") || strings.Contains(body, "Bearer") {
+		t.Fatalf("internal envelope leaked cause detail: %s", body)
+	}
+}
+
 func TestMigrationRequiredContract(t *testing.T) {
 	t.Parallel()
 

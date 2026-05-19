@@ -356,6 +356,12 @@ func TestWriteErrorNilErrorIsInternal(t *testing.T) {
 	if env.Error.Message == "" {
 		t.Errorf("error.message must not be empty for a nil error")
 	}
+	if env.Error.Message != "an unexpected internal error occurred" {
+		t.Errorf("error.message = %q, want fixed generic internal message", env.Error.Message)
+	}
+	if env.Error.DocumentationURL != DocsBaseURL+"/"+string(yerr.CodeInternal) {
+		t.Errorf("documentation_url = %q, want E_INTERNAL docs link", env.Error.DocumentationURL)
+	}
 }
 
 // TestEnvelopeRedactsSecrets proves the renderer is a redaction backstop:
