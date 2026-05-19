@@ -111,10 +111,11 @@
   `/usr/local/bin/yalla-worker`, document the Yalla API -> Postgres source of
   truth -> worker -> private Dokploy API boundary, require backup and restore
   rehearsal evidence before destructive rollback, route schema changes through
-  `/usr/local/bin/yalla-api --migrate-only`, pin `/healthz`, `/readyz`,
-  `/version`, `/metrics`, stable JSON envelopes, structured log redaction,
-  least-privilege operator-managed config, and the opt-in external Dokploy
-  smoke warning.
+  `/usr/local/bin/yalla-api --migrate-only`, pin the required `YALLA_*`
+  environment names as `<redacted:...>` placeholders, expected `PASS` /
+  `ok  ` / `active` / stable envelope output shapes, `/healthz`, `/readyz`,
+  `/version`, `/metrics`, structured log redaction, least-privilege
+  operator-managed config, and the opt-in external Dokploy smoke warning.
 - Release checklist operations artifacts follow the same static-release-gate
   pattern as deployment/SLO artifacts: keep
   `docs/operations/release-checklist.md`, SECURITY.md, CI,
@@ -39846,4 +39847,34 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Release procedure docs should describe evidence shapes and redacted summaries, not ask operators to paste full command transcripts.
   - `internal/release/release_checklist_artifact_static_test.go` is the load-bearing gate for the release checklist; update the checklist, SECURITY.md, CI/verify wiring, and `internal/release/AGENTS.md` together when the procedure changes.
+---
+## 2026-05-19 18:52 +03 - BE-0552
+- What was implemented
+  - Completed the rollback procedure documentation by extending `docs/operations/rollback-checklist.md` with required redacted rollback environment placeholders, expected output shapes, stable envelope examples, and evidence guidance that avoids full rendered transcripts.
+  - Extended the rollback checklist static release test to pin required environment variables and expected outputs.
+  - Updated `SECURITY.md`, `internal/release/AGENTS.md`, and the Codebase Patterns section so future rollback documentation changes keep the same release-gate contract.
+  - Marked BE-0552 as passing in `ralph/prd.json`.
+- Files changed
+  - `docs/operations/rollback-checklist.md`
+  - `internal/release/rollback_checklist_artifact_static_test.go`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed in this environment)
+  - `go mod tidy`
+  - `go test ./internal/release/... -run TestRollbackChecklistArtifact`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+- Results
+  - PASS for formatting, module cleanup, focused rollback static test, full test suite, race detector, and vet.
+  - `goimports` was not installed; no import changes were needed for this documentation/static-test story.
+- Remaining risks or follow-ups
+  - None for BE-0552.
+- **Learnings for future iterations:**
+  - Documentation stories can complete against an existing operations artifact when the artifact is the right public procedure, but the static test should pin the new acceptance criteria directly.
+  - Rollback procedure evidence should record command names, target versions, timestamps, and stable output shapes instead of full transcripts that might carry operator-local details.
 ---

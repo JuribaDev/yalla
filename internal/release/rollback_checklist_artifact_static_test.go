@@ -36,6 +36,11 @@ func TestRollbackChecklistArtifactDocumentsLeastPrivilegeAndSecrets(t *testing.T
 
 	for _, want := range []string{
 		"/etc/yalla/control-plane.env",
+		"YALLA_DATABASE_URL=<redacted:YALLA_DATABASE_URL>",
+		"YALLA_DOKPLOY_BASE_URL=<redacted:YALLA_DOKPLOY_BASE_URL>",
+		"YALLA_DOKPLOY_TOKEN=<redacted:YALLA_DOKPLOY_TOKEN>",
+		"YALLA_BACKUP_STATUS_FILE=<redacted:YALLA_BACKUP_STATUS_FILE>",
+		"YALLA_REHEARSAL_DATABASE_URL=<redacted:YALLA_REHEARSAL_DATABASE_URL>",
 		"operator-managed",
 		"least-privilege",
 		"Customers must never receive Dokploy API tokens",
@@ -61,6 +66,32 @@ func TestRollbackChecklistArtifactDocumentsLeastPrivilegeAndSecrets(t *testing.T
 	} {
 		if strings.Contains(strings.ToLower(checklist), strings.ToLower(forbidden)) {
 			t.Fatalf("%s must not contain rendered secret-looking value %q", rollbackChecklistPath, forbidden)
+		}
+	}
+}
+
+func TestRollbackChecklistArtifactDocumentsExpectedOutputs(t *testing.T) {
+	root := projectRoot(t)
+	checklist := readTextFile(t, filepath.Join(root, rollbackChecklistPath))
+
+	for _, want := range []string{
+		"## Expected outputs",
+		"PASS",
+		"ok  github.com/juribadev/yalla",
+		"active",
+		"service=yalla-api",
+		"service=yalla-worker",
+		"schema_version\":\"yalla.output.v1",
+		"schema_version\":\"yalla.error.v1",
+		"\"ok\":true",
+		"\"request_id\":\"req_",
+		"\"api_schema_version\"",
+		"\"migration_version\"",
+		"\"checks\"",
+		"Never copy the full rendered output into rollback notes",
+	} {
+		if !strings.Contains(checklist, want) {
+			t.Fatalf("%s missing expected-output guidance %q", rollbackChecklistPath, want)
 		}
 	}
 }

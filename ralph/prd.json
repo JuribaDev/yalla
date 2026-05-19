@@ -11397,8 +11397,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: rollback procedure."
+      "passes": true,
+      "notes": "Documented the rollback procedure in docs/operations/rollback-checklist.md with required redacted environment placeholders, expected output shapes, and failure recovery guidance; pinned it with the rollback checklist static artifact test plus SECURITY.md and internal/release guidance."
     },
     {
       "id": "BE-0553",

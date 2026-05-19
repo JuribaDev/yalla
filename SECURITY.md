@@ -762,12 +762,19 @@ and durable job safety.
 The checklist requires runtime secrets to stay in operator-managed
 configuration such as `/etc/yalla/control-plane.env`, requires dry-run output
 to show only redacted `YALLA_*` variable names, and requires rollback to use
-versioned operations instead of ad hoc SQL. It documents `/healthz`,
-`/readyz`, `/version`, `/metrics`, structured JSON logs, dead-letter alerts,
-least-privilege access, redaction of tokens, API keys, cookies, database URLs,
-Dokploy tokens, request bodies, response bodies, and rendered environment
-values, plus the opt-in external live-Dokploy smoke test that must never run
-against production.
+versioned operations instead of ad hoc SQL. Required rollback environment
+references use placeholders such as
+`YALLA_DATABASE_URL=<redacted:YALLA_DATABASE_URL>`,
+`YALLA_DOKPLOY_BASE_URL=<redacted:YALLA_DOKPLOY_BASE_URL>`,
+`YALLA_DOKPLOY_TOKEN=<redacted:YALLA_DOKPLOY_TOKEN>`,
+`YALLA_BACKUP_STATUS_FILE=<redacted:YALLA_BACKUP_STATUS_FILE>`, and
+`YALLA_REHEARSAL_DATABASE_URL=<redacted:YALLA_REHEARSAL_DATABASE_URL>`.
+It documents `/healthz`, `/readyz`, `/version`, `/metrics`, expected `PASS`,
+`ok  `, `active`, `yalla.output.v1`, and `yalla.error.v1` output shapes,
+structured JSON logs, dead-letter alerts, least-privilege access, redaction of
+tokens, API keys, cookies, database URLs, Dokploy tokens, request bodies,
+response bodies, and rendered environment values, plus the opt-in external
+live-Dokploy smoke test that must never run against production.
 
 CI pins the rollback checklist artifact with
 `go test ./internal/release/... -run TestRollbackChecklistArtifact`.

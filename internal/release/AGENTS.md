@@ -283,10 +283,12 @@ Yalla API -> Postgres source of truth -> worker -> private Dokploy API
 boundary, keep runtime secrets operator-managed, require backup and restore
 rehearsal evidence before destructive rollback, route schema changes through
 `/usr/local/bin/yalla-api --migrate-only`, document `/healthz`, `/readyz`,
-`/version`, `/metrics`, stable JSON envelopes, structured log redaction, and
-opt-in external Dokploy smoke tests. Any future rollback-checklist change
-should update the checklist, SECURITY.md verification-gates row, CI step, and
-`scripts/verify.sh` in the same edit.
+`/version`, `/metrics`, exact required `YALLA_*` environment names as
+`<redacted:...>` placeholders, expected `PASS` / `ok  ` / `active` / stable
+envelope output shapes, structured log redaction, and opt-in external Dokploy
+smoke tests. Any future rollback-checklist change should update the checklist,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
 
 ## Config example files artifact (BE-0418)
 

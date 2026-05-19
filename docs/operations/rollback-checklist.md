@@ -52,6 +52,25 @@ secret-encryption keys, API keys, cookies, or rendered environment values.
    paste, or print rendered database URLs, Dokploy tokens, API keys, cookies,
    signing keys, secret-encryption keys, or environment variable values.
 
+## Required environment
+
+Rollback commands load runtime values from operator-managed configuration,
+usually `/etc/yalla/control-plane.env`. Rollback notes may list variable names
+and redacted placeholders only:
+
+```bash
+YALLA_DATABASE_URL=<redacted:YALLA_DATABASE_URL>
+YALLA_DOKPLOY_BASE_URL=<redacted:YALLA_DOKPLOY_BASE_URL>
+YALLA_DOKPLOY_TOKEN=<redacted:YALLA_DOKPLOY_TOKEN>
+YALLA_BACKUP_STATUS_FILE=<redacted:YALLA_BACKUP_STATUS_FILE>
+YALLA_REHEARSAL_DATABASE_URL=<redacted:YALLA_REHEARSAL_DATABASE_URL>
+```
+
+Do not paste rendered values from the env file into rollback notes, chat,
+tickets, logs, screenshots, or audit metadata. If an optional external
+Dokploy smoke test is approved, set `YALLA_EXTERNAL_DOKPLOY=1` only in the
+non-production test environment for that command invocation.
+
 ## Pre-rollback safety
 
 Run the dry-run safety checks first:
@@ -178,6 +197,58 @@ YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...
 ```
 
 The live-Dokploy smoke test is opt-in and must never run against production.
+
+## Expected outputs
+
+Rollback evidence should record which command was run, the target release or
+migration version, the target environment, timestamp, and pass/fail status.
+Never copy the full rendered output into rollback notes because command output
+can include local paths, incidental identifiers, or operator environment
+details.
+
+Go test gates should finish with package-level `ok` lines and no failing test
+records:
+
+```text
+ok  github.com/juribadev/yalla/internal/controlplane/httpapi
+ok  github.com/juribadev/yalla/internal/release
+PASS
+```
+
+Service liveness checks should report the expected systemd state without
+printing service environment values:
+
+```text
+active
+active
+```
+
+Successful health and readiness probes return stable success envelopes with
+request IDs:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"checks":{"database":true,"migrations":true,"queue":true}}}
+```
+
+Failed readiness returns the stable error envelope and must not expose database
+URLs, Dokploy tokens, request bodies, response bodies, or rendered environment
+values:
+
+```json
+{"schema_version":"yalla.error.v1","ok":false,"request_id":"req_example","error":{"code":"E_SERVER","message":"service unavailable"}}
+```
+
+`/version` evidence should include release identity plus compatibility
+metadata:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"version":"v0.0.0","commit":"<redacted:git-sha>","date":"2026-05-19T00:00:00Z","api_schema_version":"yalla.api.v1","migration_version":"<redacted:migration-version>"}}
+```
+
+Structured log evidence may be summarized as key presence only. Acceptable
+rollback evidence says `service=yalla-api`, `service=yalla-worker`,
+`request_id`, `correlation_id`, `status_class`, and stable `error_code` were
+present where applicable.
 
 ## Completion
 
