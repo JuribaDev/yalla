@@ -158,6 +158,7 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 	raw := make([]queryRawResult, 0, len(traefikQueries))
 	samples := map[string]TraefikMetricSample{}
 	var requestSeries []prometheusSeries
+	var durationBucketSeries []prometheusSeries
 	for _, q := range traefikQueries {
 		matrix, body, err := a.queryRange(ctx, q.promMetric, start, end, in.Step)
 		if err != nil {
@@ -166,6 +167,9 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 		raw = append(raw, queryRawResult{metric: q.promMetric, body: body})
 		if q.name == "http_requests" {
 			requestSeries = append(requestSeries, matrix.Data.Result...)
+		}
+		if q.name == "http_request_duration_seconds_bucket" {
+			durationBucketSeries = append(durationBucketSeries, matrix.Data.Result...)
 		}
 		for _, series := range matrix.Data.Result {
 			sample, ok := normalizeTraefikSeries(q, series, start, end, a.queryVersion)
@@ -185,6 +189,7 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 	addBandwidthSamples(samples, start, end, a.queryVersion)
 	addRPSPeakSamples(samples, requestSeries, start, end, a.queryVersion)
 	addHTTP5xxCountSamples(samples, start, end, a.queryVersion)
+	addLatencyP95Samples(samples, durationBucketSeries, start, end, a.queryVersion)
 
 	checksum := checksumPrometheusResults(raw)
 	result.RawSampleChecksum = checksum
@@ -409,6 +414,122 @@ func addHTTP5xxCountSamples(samples map[string]TraefikMetricSample, start, end t
 		}
 		samples[sample.aggregateKey()] = sample
 	}
+}
+
+type histogramBucket struct {
+	upperBound float64
+	count      float64
+}
+
+func addLatencyP95Samples(samples map[string]TraefikMetricSample, bucketSeries []prometheusSeries, start, end time.Time, version string) {
+	bucketsByService := map[string][]histogramBucket{}
+	for _, series := range bucketSeries {
+		service := strings.TrimSpace(firstLabel(series.Metric, "service", "service_name", "traefik_service"))
+		if service == "" {
+			continue
+		}
+		rawLe := strings.TrimSpace(series.Metric["le"])
+		if rawLe == "" {
+			continue
+		}
+		upperBound, err := strconv.ParseFloat(rawLe, 64)
+		if err != nil || math.IsNaN(upperBound) {
+			continue
+		}
+		delta, ok := counterDelta(series.Values)
+		if !ok || delta < 0 {
+			continue
+		}
+		bucketsByService[service] = append(bucketsByService[service], histogramBucket{
+			upperBound: upperBound,
+			count:      delta,
+		})
+	}
+	for service, buckets := range bucketsByService {
+		p95Seconds, ok := histogramQuantileUpperBound(0.95, buckets)
+		if !ok {
+			continue
+		}
+		sample := TraefikMetricSample{
+			Name:         "latency_p95_ms",
+			Service:      service,
+			Value:        p95Seconds * 1000,
+			Unit:         "millisecond",
+			WindowStart:  start,
+			WindowEnd:    end,
+			QueryVersion: version,
+			Labels:       map[string]string{"service": service},
+		}
+		samples[sample.aggregateKey()] = sample
+	}
+}
+
+func histogramQuantileUpperBound(q float64, buckets []histogramBucket) (float64, bool) {
+	if q <= 0 || q > 1 || len(buckets) == 0 {
+		return 0, false
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].upperBound < buckets[j].upperBound })
+	merged := make([]histogramBucket, 0, len(buckets))
+	for _, bucket := range buckets {
+		if len(merged) > 0 && merged[len(merged)-1].upperBound == bucket.upperBound {
+			merged[len(merged)-1].count += bucket.count
+			continue
+		}
+		merged = append(merged, bucket)
+	}
+	total := 0.0
+	for _, bucket := range merged {
+		if math.IsInf(bucket.upperBound, 1) {
+			total = bucket.count
+			break
+		}
+		if bucket.count > total {
+			total = bucket.count
+		}
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	rank := q * total
+	var previousBound float64
+	var previousCount float64
+	havePrevious := false
+	for _, bucket := range merged {
+		if bucket.count < previousCount {
+			bucket.count = previousCount
+		}
+		if bucket.count < rank {
+			if !math.IsInf(bucket.upperBound, 1) {
+				previousBound = bucket.upperBound
+				havePrevious = true
+			}
+			previousCount = bucket.count
+			continue
+		}
+		if math.IsInf(bucket.upperBound, 1) {
+			if havePrevious {
+				return previousBound, true
+			}
+			return 0, false
+		}
+		bucketCount := bucket.count - previousCount
+		if bucketCount <= 0 {
+			return bucket.upperBound, true
+		}
+		lowerBound := 0.0
+		if havePrevious {
+			lowerBound = previousBound
+		}
+		position := (rank - previousCount) / bucketCount
+		if position < 0 {
+			position = 0
+		}
+		if position > 1 {
+			position = 1
+		}
+		return lowerBound + (bucket.upperBound-lowerBound)*position, true
+	}
+	return 0, false
 }
 
 func isHTTP5xxStatus(status string) bool {

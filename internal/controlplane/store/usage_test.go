@@ -462,6 +462,72 @@ func TestUsageReaderIncludesHTTPRPSPeak1mCountersForCurrentPeriod(t *testing.T) 
 	}
 }
 
+func TestUsageReaderIncludesLatencyP95MSCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "LatencyP95Usage")
+	plan := seededPlan(ctx, t, s, pricing, "business-latency-p95")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	ent := baseOverrideInput(org.ID, sub.ID, "latency_p95_ms", store.EntitlementSourceSubscriptionOverride, 250, now)
+	ent.EnforcementMode = store.EnforcementModeSoft
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs, ent)
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceLatencyP95MS,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       125,
+		Unit:           "millisecond",
+		Source:         "traefik",
+		IdempotencyKey: "latency_p95_ms:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var latency store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceLatencyP95MS {
+			latency = row
+			break
+		}
+	}
+	if latency.Resource == "" {
+		t.Fatalf("usage rows %+v missing latency_p95_ms counter", got)
+	}
+	if latency.UsedValue != 125 {
+		t.Fatalf("latency_p95_ms UsedValue = %d, want aggregated counter 125", latency.UsedValue)
+	}
+	if latency.LimitValue == nil || *latency.LimitValue != 250 {
+		t.Fatalf("latency_p95_ms limit = %+v, want subscription entitlement 250", latency)
+	}
+	if latency.EnforcementMode == nil || *latency.EnforcementMode != store.EnforcementModeSoft {
+		t.Fatalf("latency_p95_ms enforcement = %+v, want soft", latency.EnforcementMode)
+	}
+}
+
 func TestUsageReaderIncludesHTTPBandwidthTotalCountersForCurrentPeriod(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)

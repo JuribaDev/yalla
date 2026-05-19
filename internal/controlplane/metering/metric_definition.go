@@ -50,6 +50,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementObservability,
 		BillingGrade: false,
 	},
+	"latency_p95_ms": {
+		Key:          "latency_p95_ms",
+		Unit:         "millisecond",
+		Source:       "traefik",
+		Enforcement:  MetricEnforcementObservability,
+		BillingGrade: false,
+	},
 	"http_response_bytes": {
 		Key:          "http_response_bytes",
 		Unit:         "byte",

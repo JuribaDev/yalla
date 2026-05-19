@@ -133,6 +133,8 @@ func metricResource(key string) (store.QuotaResource, bool) {
 		return store.QuotaResourceHTTPRPSPeak1m, true
 	case "http_5xx_count":
 		return store.QuotaResourceHTTP5xxCount, true
+	case "latency_p95_ms":
+		return store.QuotaResourceLatencyP95MS, true
 	default:
 		return "", false
 	}

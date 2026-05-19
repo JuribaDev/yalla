@@ -12100,8 +12100,8 @@
       ],
       "type": "tracked-metric",
       "priority": 2,
-      "passes": false,
-      "notes": "Tracked metric: latency_p95_ms."
+      "passes": true,
+      "notes": "Completed latency_p95_ms as a non-billing Traefik observability metric with p95 histogram derivation, attributed usage event emission, aggregation/customer usage visibility, closed quota_resource support, redaction/idempotency/tenant-isolation tests, and migration 0072."
     },
     {
       "id": "BE-0590",

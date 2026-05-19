@@ -38,6 +38,18 @@ func TestHTTP5xxCountMetricDefinition(t *testing.T) {
 	}
 }
 
+func TestLatencyP95MSMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("latency_p95_ms")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(latency_p95_ms) missing")
+	}
+	if def.Key != "latency_p95_ms" || def.Unit != "millisecond" || def.Source != "traefik" || def.Enforcement != MetricEnforcementObservability || def.BillingGrade {
+		t.Fatalf("latency_p95_ms definition = %+v, want millisecond/traefik/observability/non-billing-grade", def)
+	}
+}
+
 func TestHTTPResponseBytesMetricDefinition(t *testing.T) {
 	t.Parallel()
 

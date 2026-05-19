@@ -242,6 +242,99 @@ func TestTraefikUsageEmitterWritesHTTP5xxCountUsageEventsIdempotently(t *testing
 	}
 }
 
+func TestTraefikUsageEmitterWritesLatencyP95MSUsageEventsIdempotently(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	sample := metering.AttributedTraefikSample{
+		TraefikMetricSample: metering.TraefikMetricSample{
+			Name:              "latency_p95_ms",
+			Service:           "customer-yalla-" + seed.ServiceID,
+			Value:             125,
+			Unit:              "millisecond",
+			WindowStart:       start,
+			WindowEnd:         start.Add(time.Minute),
+			QueryVersion:      "traefik-prom-v1",
+			RawSampleChecksum: "latencyp95abcdef123456",
+			Labels:            map[string]string{"authorization": "Bearer should-not-leak"},
+		},
+		OrganizationID:    seed.OrganizationID,
+		ProjectID:         seed.ProjectID,
+		EnvironmentID:     seed.EnvironmentID,
+		ServiceID:         seed.ServiceID,
+		AttributionSource: metering.TraefikAttributionSourceLabel,
+		Confidence:        metering.TraefikAttributionConfidenceHigh,
+		Metadata:          map[string]string{"token": "must-redact", "route": "/checkout"},
+	}
+
+	first, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_latency_p95_ms",
+	})
+	if err != nil {
+		t.Fatalf("first Emit: %v", err)
+	}
+	second, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_latency_p95_ms",
+	})
+	if err != nil {
+		t.Fatalf("second Emit: %v", err)
+	}
+	if len(first.Events) != 1 || len(second.Events) != 1 {
+		t.Fatalf("events len first/second = %d/%d, want 1/1", len(first.Events), len(second.Events))
+	}
+	event := first.Events[0]
+	if event.ID != second.Events[0].ID {
+		t.Fatalf("duplicate window wrote a new event id %q, want existing %q", second.Events[0].ID, event.ID)
+	}
+	if event.Resource != store.QuotaResourceLatencyP95MS || event.Unit != "millisecond" || event.Source != metering.TraefikUsageSource || event.Quantity != 125 {
+		t.Fatalf("usage event = %+v, want latency_p95_ms millisecond traefik quantity=125", event)
+	}
+	if event.OrganizationID != seed.OrganizationID || event.ProjectID != seed.ProjectID || event.EnvironmentID != seed.EnvironmentID || event.ServiceID != seed.ServiceID {
+		t.Fatalf("usage event scope = %+v, want full attributed service scope", event)
+	}
+	if event.RequestID != "req_latency_p95_ms" {
+		t.Fatalf("RequestID = %q, want req_latency_p95_ms", event.RequestID)
+	}
+	if event.Metadata["token"] != "[REDACTED]" {
+		t.Fatalf("token metadata = %q, want redacted", event.Metadata["token"])
+	}
+	assertUsageEventCount(t, db, seed.OrganizationID, 1)
+
+	counters := store.NewUsageCounterRepository()
+	var aggregation store.UsageCounterAggregationResult
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var aggregateErr error
+		aggregation, aggregateErr = counters.AggregateUsageEvents(ctx, tx, store.AggregateUsageCountersInput{
+			OrganizationID:     seed.OrganizationID,
+			PeriodStart:        time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			PeriodEnd:          time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			AggregatedAt:       start.Add(2 * time.Minute),
+			AggregationVersion: 1,
+		})
+		return aggregateErr
+	}); err != nil {
+		t.Fatalf("AggregateUsageEvents: %v", err)
+	}
+	if len(aggregation.Counters) != 1 {
+		t.Fatalf("aggregated counters len = %d, want 1; got %+v", len(aggregation.Counters), aggregation.Counters)
+	}
+	counter := aggregation.Counters[0]
+	if counter.Key != string(store.QuotaResourceLatencyP95MS) || counter.Unit != "millisecond" || counter.Source != metering.TraefikUsageSource || counter.Quantity != 125 {
+		t.Fatalf("usage counter = %+v, want latency_p95_ms millisecond traefik quantity=125", counter)
+	}
+}
+
 func TestTraefikUsageEmitterWritesHTTPResponseBytesUsageEventsIdempotently(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
@@ -639,6 +732,45 @@ func TestTraefikUsageEmitterKeepsHTTPRPSPeak1mTenantScoped(t *testing.T) {
 			Confidence:        metering.TraefikAttributionConfidenceHigh,
 		}},
 		RequestID: "req_cross_tenant_rps_peak",
+	})
+	assertYallaCode(t, err, yerr.CodeNotFound)
+	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
+	assertUsageEventCount(t, db, bravo.OrganizationID, 0)
+}
+
+func TestTraefikUsageEmitterKeepsLatencyP95MSTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	alpha := seedMeteringHierarchy(t, db, f)
+	bravo := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	_, err = emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples: []metering.AttributedTraefikSample{{
+			TraefikMetricSample: metering.TraefikMetricSample{
+				Name:              "latency_p95_ms",
+				Service:           "customer-yalla-" + bravo.ServiceID,
+				Value:             150,
+				Unit:              "millisecond",
+				WindowStart:       start,
+				WindowEnd:         start.Add(time.Minute),
+				RawSampleChecksum: "cross-tenant-latency-p95",
+			},
+			OrganizationID:    alpha.OrganizationID,
+			ProjectID:         bravo.ProjectID,
+			EnvironmentID:     bravo.EnvironmentID,
+			ServiceID:         bravo.ServiceID,
+			AttributionSource: metering.TraefikAttributionSourceLabel,
+			Confidence:        metering.TraefikAttributionConfidenceHigh,
+		}},
+		RequestID: "req_cross_tenant_latency_p95",
 	})
 	assertYallaCode(t, err, yerr.CodeNotFound)
 	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
