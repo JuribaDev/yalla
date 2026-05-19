@@ -273,6 +273,11 @@ Postgres persistence for control-plane source-of-truth state.
   cross-table link inside a tenant uses a **plain** composite FK — *not*
   `ON DELETE SET NULL`, which would null the `NOT NULL organization_id`; the
   org-level `ON DELETE CASCADE` already cleans both sides.
+- Billing-grade `usage_events` writes go through `UsageEventRepository.Append`:
+  it validates the tenant-owned resource scope, redacts metadata, assigns the
+  active subscription period (calendar-month UTC fallback), and treats
+  `(organization_id, source, idempotency_key)` as replay-safe idempotency. Do
+  not update usage events; corrections are new `adjusted` rows.
 - `QuotaRepository` (`quota.go`) is the persistence half of the quota checker:
   `EffectiveLimit` (org override else plan default, one ordered query),
   `LockUsage` (`INSERT ... ON CONFLICT DO NOTHING` then `SELECT ... FOR UPDATE`

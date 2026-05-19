@@ -11701,8 +11701,8 @@
       ],
       "type": "metering",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented migration 0051_usage_events_metering_contract extending usage_events with resource scope columns, quantity, unit, source, idempotency_key, period_start/end, tenant-safe composite FKs, idempotency uniqueness, and an append-only update rejection trigger. Added UsageEventRepository.Append with validation, tenant-scope existence checks, metadata redaction, active subscription period assignment with UTC calendar fallback, replay-safe duplicate idempotency handling, and adjustment event support. Added isolated Postgres tests for idempotency, redaction, correction events, period assignment, validation failure, tenant-scope not-found, and database append-only behavior. No public HTTP surface was added in this persistence story, so yalla.output.v1/yalla.error.v1 route envelope criteria are not applicable until a usage-events API lands."
     },
     {
       "id": "BE-0569",

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Billing-grade usage events are append-only and written through `store.UsageEventRepository.Append`: validate the tenant-owned organization/project/environment/service scope before insert, redact metadata at the repository boundary, assign the active subscription period with a UTC calendar-month fallback, and use `(organization_id, source, idempotency_key)` for replay-safe idempotency; corrections are new `adjusted` rows, never updates.
 - Customer-visible limits/usage reads now prefer current accepted subscription entitlements when one exists, joining them with `quota_usage` counters and billing-period reset windows; legacy `quota_policies` remain the fallback for organizations without a current subscription. Public projections expose source labels and thresholds but never plan ids, subscription ids, provider ids, override ids, or override reasons.
 - Runtime entitlement resolution is now a first-class service in `internal/controlplane/entitlements`: build `entitlements.Resolver` over `store.SubscriptionRepository`, expose keyed snapshots with `value`/`enforcement_mode`/`source`/`explanation`, validate cache hits through `SubscriptionRepository.EntitlementRevision(org, at)`, and call `ResolveWithQuerier(ctx, tx, orgID, at)` from quota or worker units already inside `Store.Write` so entitlement reads share the same transaction snapshot as the guarded desired-state write. `quota.Checker` should be constructed with `quota.WithEntitlementResolver(resolver)` and keeps legacy `quota_policies` as fallback for dimensions with no entitlement key yet.
 - Subscription entitlement resolution is a store-level deterministic layering rule: current subscriptions are `trialing|active|past_due` and inside `current_period_start <= at < current_period_end`; canceled/out-of-period subscriptions contribute no runtime entitlements; candidate precedence is plan defaults < `subscription_override` rows for that subscription < organization-level `emergency_admin` rows, with newest active `effective_from`, then `created_at`, then `id` as tie-breakers. Override reasons are redacted before persistence.
@@ -314,6 +315,46 @@
   - Reconciliation-service-type stories can be implemented as subtype-specific reconcile tests plus canonical closed-set updates when the subtype introduces a new drift reason/action.
   - Build settings should be normalized using renderer semantics before comparison so blank defaults do not become drift.
   - Build config values are sensitive operational data; keep them in Repairer-only fields and out of `Reason`, IDs, review events, and unmanaged records.
+---
+## 2026-05-19 05:50 +03 - BE-0568
+- What was implemented
+  - Added migration `0051_usage_events_metering_contract` to extend `usage_events` with resource scope columns, `quantity`, `unit`, `source`, `idempotency_key`, billing period bounds, tenant-safe composite FKs, replay-safe uniqueness, and a database trigger rejecting updates.
+  - Added `store.UsageEventRepository.Append` with validation, tenant-scope existence checks, metadata redaction, active subscription period assignment with UTC calendar-month fallback, duplicate idempotency replay, and `adjusted` correction event support.
+  - Added integration tests for idempotency, redaction, correction events, period assignment, validation failure, cross-tenant not-found behavior, and database append-only behavior.
+  - Updated store guidance and consolidated the reusable usage-events pattern at the top of this progress log.
+- Files changed
+  - `internal/controlplane/store/migrate/migrations/0051_usage_events_metering_contract.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0051_usage_events_metering_contract.down.sql`
+  - `internal/controlplane/store/usage_event.go`
+  - `internal/controlplane/store/usage_event_repository_test.go`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...`
+  - `govulncheck ./...`
+- Results
+  - Required formatting, tidy, tests, race detector, vet, focused backend suites, migration checks, policy/quota/fake-Dokploy focused suites, and `golangci-lint` passed.
+  - `staticcheck` and `govulncheck` were not installed.
+- Remaining risks or follow-ups
+  - No public HTTP surface was added for this persistence story; envelope and route-level authorization criteria remain applicable to future API stories.
+  - Aggregation into `usage_counters` is intentionally left for BE-0569.
+- **Learnings for future iterations:**
+  - `usage_events` still carries legacy quota columns (`resource`, `delta`, `reservation_id`) for compatibility; new billing writers must provide `quantity`/`unit`/`source` and should use the repository rather than raw SQL.
+  - Period assignment should prefer the active `trialing|active|past_due` subscription containing `occurred_at`; when no subscription exists, use a deterministic UTC calendar-month period.
 ---
 - HTTP reads of an "already-redacted at persistence" surface (audit log, job error_summary, redacted reservation reasons, ...) project the persisted values onto the wire VERBATIM — the handler must not silently re-scrub or un-scrub sentinel values. The contract is "redaction is the writer's job, the reader trusts the chokepoint": audit.Auditor redacts metadata + IP + UA before AuditRepository.Append persists the row (the store treats them as clean), and the HTTP handler renders them as-is. Pin this structurally with a "feed the fake reader a row whose values are output.Sentinel, assert the wire renders Sentinel" test — a future regression that "cleans up" sentinels in the projection fails this test, not only review.
 - Endpoints that expose N coupled scalar fields that are EITHER all-present OR all-absent project as ONE nullable nested OBJECT on the wire, not N coupled-nullable scalars. Canonical cases: usage.limit ({limit_value, enforcement_mode, source} or null), audit_event.actor ({id, kind} or null for an unauthenticated denied event), audit_event.resource ({id, kind} or null for an organization-root action). An agent reads one boolean (`actor != null`) instead of validating N invalid combinations. The store struct mirrors the wire (a single `*Foo` pointer or N pointers projected together with an all-or-nothing guard). Adding a new field to the nested object later is forward-compatible.
