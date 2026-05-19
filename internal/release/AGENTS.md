@@ -207,6 +207,20 @@ Dokploy smoke, and secret redaction. Any future OpenAPI-update-doc change
 should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Security review checklist artifact (BE-0550)
+
+`security_review_checklist_artifact_static_test.go` pins the developer-facing
+security review checklist at `docs/development/security-review-checklist.md`:
+the guide must document the Yalla API -> Postgres source of truth ->
+provisioning worker -> private Dokploy API boundary, exact security review
+commands, expected outputs, stable `yalla.output.v1` / `yalla.error.v1`
+envelopes, request IDs, OpenAPI compatibility, auth/policy/quota/idempotency/
+audit ordering, tenant isolation, isolated Postgres tests, fake-Dokploy-by-
+default behavior, opt-in live Dokploy smoke, redacted environment placeholders,
+secret redaction, and failure recovery. Any future security-review-doc change
+should update the guide, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command

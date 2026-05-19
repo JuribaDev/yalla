@@ -286,6 +286,12 @@ if ! go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact; the
   required_failed=1
 fi
 
+# Required: security review checklist artifact static tests
+step "go test ./internal/release/... -run TestSecurityReviewChecklistArtifact"
+if ! go test ./internal/release/... -run TestSecurityReviewChecklistArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

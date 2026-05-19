@@ -112,6 +112,7 @@ defined in `.github/workflows/ci.yml`:
 | Worker job authoring artifact | `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Fake Dokploy usage artifact | `go test ./internal/release/... -run TestFakeDokployUsageArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | OpenAPI update procedure artifact | `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Security review checklist artifact | `go test ./internal/release/... -run TestSecurityReviewChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -716,6 +717,36 @@ against production.
 
 CI pins the release checklist artifact with
 `go test ./internal/release/... -run TestReleaseChecklistArtifact`.
+
+## Security Review Checklist Artifact
+
+The backend security review checklist lives at
+`docs/development/security-review-checklist.md`. It binds review approval to
+the versioned backend binaries (`/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`), the Customer / Agent / CI -> Postgres source
+of truth -> provisioning worker -> private Dokploy API boundary, stable
+`yalla.output.v1` and `yalla.error.v1` envelopes, `request_id` propagation,
+OpenAPI compatibility, auth, policy, quota, idempotency, audit, tenant
+isolation, and fake-Dokploy-by-default testing.
+
+The checklist pins the required gates: `gofmt -w .`, `goimports -w .`,
+`go mod tidy`, `go test ./...`, `go test -race ./...`, `go vet ./...`,
+`scripts/verify.sh`, `go test ./internal/controlplane/...`,
+`go test -race ./internal/controlplane/...`,
+`go test -run TestMigrations ./...`,
+`go test -run TestPolicyMatrix ./...`,
+`go test -run TestQuotaConcurrency ./...`,
+`go test -run TestFakeDokploy ./...`, and
+`go test ./internal/release/... -run TestSecurityReviewChecklistArtifact`.
+It also documents expected `PASS`, `ok  `, `HTTP/1.1 200 OK`, and
+`no changes` outputs; redacted environment placeholders such as
+`YALLA_DATABASE_URL=<redacted:YALLA_DATABASE_URL>`; failure recovery for
+formatting, contract, tenant-isolation, redaction, migration, and fake-Dokploy
+failures; and the opt-in `YALLA_EXTERNAL_DOKPLOY=1 go test -run
+TestLiveDokploySmoke ./...` smoke test that must never run against production.
+
+CI pins the security review checklist artifact with
+`go test ./internal/release/... -run TestSecurityReviewChecklistArtifact`.
 
 ## Rollback Checklist Artifact
 

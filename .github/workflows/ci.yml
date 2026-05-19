@@ -153,6 +153,9 @@ jobs:
       - name: OpenAPI update procedure artifact static tests
         run: go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact
 
+      - name: Security review checklist artifact static tests
+        run: go test ./internal/release/... -run TestSecurityReviewChecklistArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

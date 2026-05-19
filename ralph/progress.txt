@@ -1,4 +1,14 @@
 ## Codebase Patterns
+- Security review checklist documentation follows the static-release-gate
+  pattern: keep `docs/development/security-review-checklist.md`, SECURITY.md,
+  CI, `scripts/verify.sh`, `internal/release/AGENTS.md`, and
+  `internal/release/security_review_checklist_artifact_static_test.go` in
+  lockstep; document the Yalla API -> Postgres source of truth -> provisioning
+  worker -> private Dokploy API boundary, exact security review commands,
+  expected outputs, stable JSON envelopes, request IDs, OpenAPI compatibility,
+  auth/policy/quota/idempotency/audit ordering, tenant isolation, isolated
+  Postgres tests, fake-Dokploy-by-default behavior, opt-in live Dokploy smoke,
+  redacted environment placeholders, secret redaction, and failure recovery.
 - OpenAPI update procedure documentation follows the static-release-gate
   pattern: keep `docs/development/openapi-update-procedure.md`, SECURITY.md,
   CI, `scripts/verify.sh`, `internal/release/AGENTS.md`, and
@@ -258,6 +268,49 @@
 - `E_INTERNAL` is the backend's generic programming/unexpected-failure contract: use `apierr.Internal(cause)`, render HTTP 500, keep the public message fixed as "an unexpected internal error occurred", omit public hints/details, preserve the cause only for server-side logging, and keep nil-error envelope fallback on the same message/docs-link contract.
 - Reconciliation service-type mismatches are dangerous review-only drift: once desired and actual `dokploy.ServiceType` differ, `diffService` must emit `ActionReviewServiceTypeChange` and stop before build/env/domain safe repairs. Safe repairs against an untrusted upstream type can mutate the wrong Dokploy resource shape.
 - Secret-open failures are a distinct public error contract: use `apierr.SecretDecryption()` / `E_SECRET_DECRYPTION` for failures opening sealed secret material (provider mismatch, unknown key, invalid ciphertext). It is HTTP 500, non-retryable, MessageGeneric, preserves the cause only for server-side diagnostics, and public envelopes must not expose plaintext, ciphertext, provider ids, key ids, or crypto details.
+
+## 2026-05-19 18:43 +03 - BE-0550
+- What was implemented
+  - Added `docs/development/security-review-checklist.md` with the backend security review scope, exact commands, required redacted environment placeholders, expected outputs, contract checks, redaction requirements, tenant-isolation expectations, fake-Dokploy-by-default guidance, opt-in live Dokploy smoke warning, and failure recovery guidance.
+  - Added `internal/release/security_review_checklist_artifact_static_test.go` to pin the checklist contents and verify wiring through `SECURITY.md`, `.github/workflows/ci.yml`, and `scripts/verify.sh`.
+  - Wired the new static artifact gate into CI, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Updated `ralph/prd.json` to mark `BE-0550` as passing.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/security-review-checklist.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/security_review_checklist_artifact_static_test.go`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/release/... -run TestSecurityReviewChecklistArtifact` first failed while the checklist and gate wiring were missing, then passed after implementation.
+  - `gofmt -w .`
+  - `goimports -w .` skipped because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `scripts/verify.sh`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - `scripts/verify.sh` passed and confirmed optional `govulncheck` and `staticcheck` are not installed.
+- Remaining risks or follow-ups
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment; `scripts/verify.sh` reported the optional scanner skips explicitly.
+  - Remaining documentation stories after `BE-0550` are still marked `passes: false`.
+- **Learnings for future iterations:**
+  - Documentation artifacts in this range should use the existing static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase.
+---
 - Worker provisioning-job outcome writes distinguish cancelled jobs from stale lease ownership: `JobRepository.Transition` returns `apierr.JobCancelled()` / `E_JOB_CANCELLED` when an expected-lease outcome targets a job already moved to `cancelled`, while lease-owner mismatch on an active/reclaimed job remains `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED`.
 - Provisioning job outcome writes should prove lease ownership at commit time: `worker.StoreClaimer.complete` sets `store.JobTransition.ExpectedLeaseOwner`, and `JobRepository.Transition` returns typed `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED` when the locked row is no longer leased by that worker. This prevents stale workers from overwriting a job already reclaimed after lease expiry.
 - Reconciliation-service-type stories should pin the subtype with a focused `internal/controlplane/reconcile/*_test.go` matrix while updating the canonical closed-set table when a new `ActionType` / `DriftReason` is introduced. Build/source config drift is value-bearing like env vars: route desired values only through Repairer-only fields (`Action.DesiredBuild`), keep `Type`/`Kind`/`Reason`/IDs value-free, and normalize build settings before diffing so renderer defaults (blank builder => dockerfile, blank dockerfile path => `Dockerfile`) do not create false positives.

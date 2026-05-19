@@ -11359,8 +11359,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: security review checklist."
+      "passes": true,
+      "notes": "Documented the security review checklist and pinned the artifact with static release tests, CI, scripts/verify.sh, SECURITY.md, and internal/release guidance."
     },
     {
       "id": "BE-0551",
