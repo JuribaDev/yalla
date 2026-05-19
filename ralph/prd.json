@@ -6761,8 +6761,8 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
-      "notes": "Drift coverage for compose."
+      "passes": true,
+      "notes": "Pinned compose drift reconciliation in internal/controlplane/reconcile/compose_test.go. The suite covers safe compose build config repair through the Repairer port, value-free classification redaction for compose build values, deleted upstream compose resource as dangerous review, changed upstream config as safe repair, missing managed domain as safe ensure, unmanaged extra compose resource as quarantine, and service-type mismatch as dangerous review only. The generic reconcile engine already satisfied the behavior, so no production code changes were required. gofmt, go mod tidy, go test ./..., go test -race ./..., go vet ./..., focused controlplane/reconcile suites, migration/policy/quota/fake-Dokploy checks, and golangci-lint all pass. The pre-commit strict verifier also passed govulncheck, staticcheck, GoReleaser check, and snapshot release; goimports was not installed."
     },
     {
       "id": "BE-0309",

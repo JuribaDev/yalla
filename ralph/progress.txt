@@ -36398,3 +36398,33 @@ change that widened Reason to caller-supplied data.
   - Drop-artifact reconciliation uses the same `ActionUpdateBuildConfig` path as git/image builders, but the sensitive value is `BuildSettings.ArtifactURL`; tests should assert URLs and token query strings stay out of `Action.Kind`, `Action.Type`, `Action.Reason`, `Action.EnvVarKey`, and identifier fields.
   - Service-type mismatch remains the guardrail for all builder-specific drift tests: once actual type changes, expect only `review_service_type_change` and no build/domain/env repair.
 ---
+## 2026-05-19 04:20 +03 - BE-0308
+- What was implemented: Added compose-specific drift reconciliation verification for safe build config repair, deleted upstream resource review, changed upstream config repair, missing managed domain ensure, unmanaged extra compose quarantine, and service-type mismatch review-only behavior. The generic reconcile engine already satisfied the story, so no production code changes were required.
+- Files changed:
+  - internal/controlplane/reconcile/compose_test.go
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run:
+  - go test ./internal/controlplane/reconcile -run 'TestComposeReconcile' -count=1
+  - gofmt -w .
+  - goimports -w . (not installed)
+  - go mod tidy
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+  - go test ./internal/controlplane/...
+  - go test -race ./internal/controlplane/...
+  - go test -run TestMigrations ./...
+  - go test -run TestPolicyMatrix ./...
+  - go test -run TestFakeDokploy ./...
+  - go test -run TestQuotaConcurrency ./...
+  - golangci-lint run ./...
+  - staticcheck ./... (not available on direct PATH check; repository pre-commit strict verification ran it)
+  - govulncheck ./... (not available on direct PATH check; repository pre-commit strict verification ran it and found no vulnerabilities)
+  - pre-commit scripts/verify.sh --strict --release
+- Results: All checks passed. The compose tests passed against the existing reconcile implementation, confirming this was a verification story. The repository pre-commit strict verifier also passed focused backend suites, `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot release build.
+- Remaining risks or follow-ups: None for BE-0308. The PRD still has later reconciliation-service-type stories with passes=false.
+- **Learnings for future iterations:**
+  - Compose drift uses the same reconcile planner path as application services once both desired and actual `Service.Type` are `dokploy.ServiceCompose`; verification should pin the subtype in test setup and then assert the generic safe/dangerous/unmanaged classifications.
+  - Service-type mismatch remains review-only for compose too: once actual is no longer `compose`, `diffService` must stop before build/domain/env safe repairs.
+---
