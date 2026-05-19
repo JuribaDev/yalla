@@ -63,6 +63,9 @@ const (
 	// ActionReviewServiceTypeChange records that a managed service's type has
 	// changed on Dokploy.
 	ActionReviewServiceTypeChange ActionType = "review_service_type_change"
+	// ActionReviewServiceRoleChange records that a managed application or
+	// compose service's runtime role changed on Dokploy.
+	ActionReviewServiceRoleChange ActionType = "review_service_role_change"
 	// ActionMarkUnmanaged records a Dokploy resource without a Yalla
 	// counterpart.
 	ActionMarkUnmanaged ActionType = "mark_unmanaged"
@@ -103,6 +106,9 @@ const (
 	// ReasonServiceTypeChanged is emitted when a known service's type
 	// differs between desired and actual.
 	ReasonServiceTypeChanged DriftReason = "service_type_changed"
+	// ReasonServiceRoleChanged is emitted when a known application/compose
+	// service's runtime role differs between desired and actual.
+	ReasonServiceRoleChanged DriftReason = "service_role_changed"
 	// ReasonResourceUnmanaged is emitted for a Dokploy resource that has no
 	// Yalla counterpart.
 	ReasonResourceUnmanaged DriftReason = "resource_unmanaged"
@@ -170,6 +176,10 @@ type DesiredService struct {
 	ID    domain.ID
 	Label string
 	Type  dokploy.ServiceType
+	// Role is the runtime shape for application and compose services.
+	// Blank means the upstream desired-state adapter has not projected role
+	// yet and is ignored for drift comparison.
+	Role dokploy.ServiceRole
 	// Build is the source-of-truth build configuration for application and
 	// compose services. It is ignored for database services.
 	Build dokploy.BuildSettings
@@ -234,6 +244,7 @@ type ActualService struct {
 	DokployID string
 	Name      string
 	Type      dokploy.ServiceType
+	Role      dokploy.ServiceRole
 	Build     dokploy.BuildSettings
 	Engine    string
 	EnvVars   []ActualEnvVar

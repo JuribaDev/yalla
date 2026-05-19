@@ -122,6 +122,7 @@ var reconcileDriftReasons = []reconcile.DriftReason{
 	reconcile.ReasonServiceMissing,
 	reconcile.ReasonDatabaseMissing,
 	reconcile.ReasonServiceTypeChanged,
+	reconcile.ReasonServiceRoleChanged,
 	reconcile.ReasonResourceUnmanaged,
 }
 
@@ -139,6 +140,7 @@ var reconcileActionTypes = []reconcile.ActionType{
 	reconcile.ActionReviewMissingDatabase,
 	reconcile.ActionReviewRenamedDomain,
 	reconcile.ActionReviewServiceTypeChange,
+	reconcile.ActionReviewServiceRoleChange,
 	reconcile.ActionMarkUnmanaged,
 }
 
@@ -211,6 +213,7 @@ func reconcileBaseline() (reconcile.DesiredOrganization, reconcile.ActualOrganiz
 						ID:        appID,
 						Label:     "demo-app",
 						Type:      dokploy.ServiceApplication,
+						Role:      dokploy.RoleWeb,
 						DokployID: "dokploy-svc-app",
 						EnvVars: []reconcile.DesiredEnvVar{
 							{Key: "FOO", Value: "foo-value"},
@@ -246,6 +249,7 @@ func reconcileBaseline() (reconcile.DesiredOrganization, reconcile.ActualOrganiz
 						DokployID: "dokploy-svc-app",
 						Name:      "demo-app-svcappabcd",
 						Type:      dokploy.ServiceApplication,
+						Role:      dokploy.RoleWeb,
 						EnvVars: []reconcile.ActualEnvVar{
 							{Key: "FOO", Value: "foo-value"},
 						},
@@ -444,6 +448,24 @@ func reconcileScenarios() []reconcileScenario {
 			},
 			reasonTag: reconcile.ReasonServiceTypeChanged,
 			typeTag:   reconcile.ActionReviewServiceTypeChange,
+		},
+		{
+			name: "known worker whose Dokploy role changed emits service_role_changed dangerous review",
+			mutator: func(d *reconcile.DesiredOrganization, a *reconcile.ActualOrganization) {
+				d.Projects[0].Environments[0].Services[0].Role = dokploy.RoleWorker
+				a.Projects[0].Environments[0].Services[0].Role = dokploy.RoleCron
+				a.Projects[0].Environments[0].Services[0].Build = dokploy.BuildSettings{
+					Builder:   dokploy.BuilderNixpacks,
+					GitBranch: "staging",
+				}
+			},
+			expect: reconcileExpect{
+				reason:     reconcile.ReasonServiceRoleChanged,
+				kind:       reconcile.DriftDangerous,
+				actionType: reconcile.ActionReviewServiceRoleChange,
+			},
+			reasonTag: reconcile.ReasonServiceRoleChanged,
+			typeTag:   reconcile.ActionReviewServiceRoleChange,
 		},
 		{
 			name: "actual service without desired counterpart emits resource_unmanaged",

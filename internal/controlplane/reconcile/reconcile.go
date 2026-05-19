@@ -285,7 +285,7 @@ func reviewEventFor(action Action) ReviewEvent {
 		Service:        action.Service,
 	}
 	switch action.Type {
-	case ActionReviewMissingService, ActionReviewMissingDatabase, ActionReviewServiceTypeChange:
+	case ActionReviewMissingService, ActionReviewMissingDatabase, ActionReviewServiceTypeChange, ActionReviewServiceRoleChange:
 		event.Level = LevelService
 	case ActionReviewRenamedDomain:
 		event.Level = LevelDomain

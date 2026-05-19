@@ -35,6 +35,14 @@ produces a deterministic Plan of actions classified as `DriftSafe`,
   engines differ after normalization, emit one dangerous
   `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` action and
   stop before env/domain safe repairs.
+- **Runtime role drift is subtype drift.** For application and compose
+  services, a non-empty desired `Role` (`web`, `worker`, `cron`) is the
+  runtime subtype boundary. If actual reports a different role after
+  normalization, emit one dangerous `ActionReviewServiceRoleChange` /
+  `ReasonServiceRoleChanged` action and stop before build/env/domain safe
+  repairs. Desired domains are web-only; for non-web desired roles, ignore
+  desired domains so a bad adapter cannot auto-bind inbound HTTP to a worker
+  or cron process.
 - **Unmanaged means quarantine, never delete.** A Dokploy resource without a
   Yalla counterpart is recorded via `UnmanagedRecorder` only. The engine
   never auto-deletes unmanaged resources and adapters never expose them on a

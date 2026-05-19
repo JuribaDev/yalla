@@ -286,8 +286,23 @@ func diffService(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService
 		// longer matches Yalla's source of truth.
 		return
 	}
+	if ds.Type != dokploy.ServiceDatabase && normaliseRole(ds.Role) != "" && normaliseRole(ds.Role) != normaliseRole(as.Role) {
+		plan.Actions = append(plan.Actions, Action{
+			Type:    ActionReviewServiceRoleChange,
+			Kind:    DriftDangerous,
+			Reason:  ReasonServiceRoleChanged,
+			Service: ref,
+		})
+		// Runtime role drift changes service semantics (for example worker
+		// vs cron/web). Do not emit safe repairs against a service whose
+		// runtime shape no longer matches Yalla's source of truth.
+		return
+	}
 	diffBuild(plan, ref, ds, as)
 	diffEnvVars(plan, ref, ds, as)
+	if normaliseRole(ds.Role) != "" && normaliseRole(ds.Role) != string(dokploy.RoleWeb) {
+		ds.Domains = nil
+	}
 	diffDomains(plan, ref, ds, as)
 }
 
@@ -575,6 +590,10 @@ func normaliseHost(host string) string {
 
 func normaliseEngine(engine string) string {
 	return strings.ToLower(strings.TrimSpace(engine))
+}
+
+func normaliseRole(role dokploy.ServiceRole) string {
+	return strings.ToLower(strings.TrimSpace(string(role)))
 }
 
 func normaliseBuildForDiff(in dokploy.BuildSettings) dokploy.BuildSettings {
