@@ -14,6 +14,18 @@ func TestHTTPRequestsMetricDefinition(t *testing.T) {
 	}
 }
 
+func TestHTTPRPSPeak1mMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("http_rps_peak_1m")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(http_rps_peak_1m) missing")
+	}
+	if def.Key != "http_rps_peak_1m" || def.Unit != "requests_per_second" || def.Source != "traefik" || def.Enforcement != MetricEnforcementSoft || def.BillingGrade {
+		t.Fatalf("http_rps_peak_1m definition = %+v, want requests_per_second/traefik/soft/non-billing-grade", def)
+	}
+}
+
 func TestHTTPResponseBytesMetricDefinition(t *testing.T) {
 	t.Parallel()
 

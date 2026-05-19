@@ -395,6 +395,73 @@ func TestUsageReaderIncludesBillingGradeUsageCountersForCurrentPeriod(t *testing
 	}
 }
 
+func TestUsageReaderIncludesHTTPRPSPeak1mCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "HTTPRPSPeakUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-rps")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	ent := baseOverrideInput(org.ID, sub.ID, "http_rps_peak_1m", store.EntitlementSourceSubscriptionOverride, 15, now)
+	ent.EnforcementMode = store.EnforcementModeSoft
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		ent)
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceHTTPRPSPeak1m,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       8,
+		Unit:           "requests_per_second",
+		Source:         "traefik",
+		IdempotencyKey: "http_rps_peak_1m:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var peak store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceHTTPRPSPeak1m {
+			peak = row
+			break
+		}
+	}
+	if peak.Resource == "" {
+		t.Fatalf("usage rows %+v missing http_rps_peak_1m counter", got)
+	}
+	if peak.UsedValue != 8 {
+		t.Fatalf("http_rps_peak_1m UsedValue = %d, want aggregated counter 8", peak.UsedValue)
+	}
+	if peak.LimitValue == nil || *peak.LimitValue != 15 {
+		t.Fatalf("http_rps_peak_1m limit = %+v, want subscription entitlement 15", peak)
+	}
+	if peak.EnforcementMode == nil || *peak.EnforcementMode != store.EnforcementModeSoft {
+		t.Fatalf("http_rps_peak_1m enforcement = %+v, want soft", peak.EnforcementMode)
+	}
+}
+
 func TestUsageReaderIncludesHTTPBandwidthTotalCountersForCurrentPeriod(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)

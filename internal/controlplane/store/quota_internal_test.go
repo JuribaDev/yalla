@@ -20,8 +20,8 @@ func TestQuotaResourceValid(t *testing.T) {
 		QuotaResourceConcurrentDeployments, QuotaResourceMonthlyDeployments,
 		QuotaResourceDeployments, QuotaResourceFailedDeployments, QuotaResourceBuildMinutes,
 		QuotaResourceHTTPRequests, QuotaResourceHTTPResponseBytes, QuotaResourceHTTPRequestBytes,
-		QuotaResourceHTTPBandwidthTotal, QuotaResourceContainerCPUMillicoreSeconds,
-		QuotaResourceContainerMemoryMBHours, QuotaResourceStorageGBMonth,
+		QuotaResourceHTTPBandwidthTotal, QuotaResourceHTTPRPSPeak1m,
+		QuotaResourceContainerCPUMillicoreSeconds, QuotaResourceContainerMemoryMBHours, QuotaResourceStorageGBMonth,
 		QuotaResourceBackupStorageGBMonth,
 	}
 	if len(valid) != len(quotaResources) {

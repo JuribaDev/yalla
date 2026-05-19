@@ -157,12 +157,16 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 	}
 	raw := make([]queryRawResult, 0, len(traefikQueries))
 	samples := map[string]TraefikMetricSample{}
+	var requestSeries []prometheusSeries
 	for _, q := range traefikQueries {
 		matrix, body, err := a.queryRange(ctx, q.promMetric, start, end, in.Step)
 		if err != nil {
 			return TraefikCollection{}, err
 		}
 		raw = append(raw, queryRawResult{metric: q.promMetric, body: body})
+		if q.name == "http_requests" {
+			requestSeries = append(requestSeries, matrix.Data.Result...)
+		}
 		for _, series := range matrix.Data.Result {
 			sample, ok := normalizeTraefikSeries(q, series, start, end, a.queryVersion)
 			if !ok {
@@ -179,6 +183,7 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 		}
 	}
 	addBandwidthSamples(samples, start, end, a.queryVersion)
+	addRPSPeakSamples(samples, requestSeries, start, end, a.queryVersion)
 
 	checksum := checksumPrometheusResults(raw)
 	result.RawSampleChecksum = checksum
@@ -336,6 +341,82 @@ func addBandwidthSamples(samples map[string]TraefikMetricSample, start, end time
 		}
 		samples[sample.aggregateKey()] = sample
 	}
+}
+
+func addRPSPeakSamples(samples map[string]TraefikMetricSample, requestSeries []prometheusSeries, start, end time.Time, version string) {
+	intervalRates := map[string]map[float64]float64{}
+	for _, series := range requestSeries {
+		service := strings.TrimSpace(firstLabel(series.Metric, "service", "service_name", "traefik_service"))
+		if service == "" {
+			continue
+		}
+		for _, interval := range counterRates(series.Values) {
+			if intervalRates[service] == nil {
+				intervalRates[service] = map[float64]float64{}
+			}
+			intervalRates[service][interval.timestamp] += interval.rate
+		}
+	}
+	for service, byInterval := range intervalRates {
+		var peak float64
+		for _, rate := range byInterval {
+			if rate > peak {
+				peak = rate
+			}
+		}
+		if peak <= 0 {
+			continue
+		}
+		sample := TraefikMetricSample{
+			Name:         "http_rps_peak_1m",
+			Service:      service,
+			Value:        peak,
+			Unit:         "requests_per_second",
+			WindowStart:  start,
+			WindowEnd:    end,
+			QueryVersion: version,
+			Labels:       map[string]string{"service": service},
+		}
+		samples[sample.aggregateKey()] = sample
+	}
+}
+
+type counterRate struct {
+	timestamp float64
+	rate      float64
+}
+
+func counterRates(values []prometheusValue) []counterRate {
+	var prev prometheusValue
+	prevValue := 0.0
+	havePrev := false
+	rates := []counterRate{}
+	for _, point := range values {
+		current, ok := point.Float()
+		if !ok {
+			continue
+		}
+		if !havePrev {
+			prev = point
+			prevValue = current
+			havePrev = true
+			continue
+		}
+		elapsed := point.Timestamp - prev.Timestamp
+		if elapsed <= 0 {
+			prev = point
+			prevValue = current
+			continue
+		}
+		delta := current - prevValue
+		if delta < 0 {
+			delta = current
+		}
+		rates = append(rates, counterRate{timestamp: point.Timestamp, rate: delta / elapsed})
+		prev = point
+		prevValue = current
+	}
+	return rates
 }
 
 func (s TraefikMetricSample) aggregateKey() string {

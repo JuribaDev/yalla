@@ -36,6 +36,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"http_rps_peak_1m": {
+		Key:          "http_rps_peak_1m",
+		Unit:         "requests_per_second",
+		Source:       "traefik",
+		Enforcement:  MetricEnforcementSoft,
+		BillingGrade: false,
+	},
 	"http_response_bytes": {
 		Key:          "http_response_bytes",
 		Unit:         "byte",

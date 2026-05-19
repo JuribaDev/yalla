@@ -82,6 +82,73 @@ func TestTraefikUsageEmitterWritesHTTPRequestsUsageEventsIdempotently(t *testing
 	assertUsageEventCount(t, db, seed.OrganizationID, 1)
 }
 
+func TestTraefikUsageEmitterWritesHTTPRPSPeak1mUsageEventsIdempotently(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	sample := metering.AttributedTraefikSample{
+		TraefikMetricSample: metering.TraefikMetricSample{
+			Name:              "http_rps_peak_1m",
+			Service:           "customer-yalla-" + seed.ServiceID,
+			Value:             7.5,
+			Unit:              "requests_per_second",
+			WindowStart:       start,
+			WindowEnd:         start.Add(time.Minute),
+			QueryVersion:      "traefik-prom-v1",
+			RawSampleChecksum: "rpspeakabcdef123456",
+			Labels:            map[string]string{"authorization": "Bearer should-not-leak"},
+		},
+		OrganizationID:    seed.OrganizationID,
+		ProjectID:         seed.ProjectID,
+		EnvironmentID:     seed.EnvironmentID,
+		ServiceID:         seed.ServiceID,
+		AttributionSource: metering.TraefikAttributionSourceLabel,
+		Confidence:        metering.TraefikAttributionConfidenceHigh,
+		Metadata:          map[string]string{"token": "must-redact", "route": "/"},
+	}
+
+	first, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_rps_peak",
+	})
+	if err != nil {
+		t.Fatalf("first Emit: %v", err)
+	}
+	second, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_rps_peak",
+	})
+	if err != nil {
+		t.Fatalf("second Emit: %v", err)
+	}
+	if len(first.Events) != 1 || len(second.Events) != 1 {
+		t.Fatalf("events len first/second = %d/%d, want 1/1", len(first.Events), len(second.Events))
+	}
+	event := first.Events[0]
+	if event.ID != second.Events[0].ID {
+		t.Fatalf("duplicate window wrote a new event id %q, want existing %q", second.Events[0].ID, event.ID)
+	}
+	if event.Resource != store.QuotaResourceHTTPRPSPeak1m || event.Unit != "requests_per_second" || event.Source != metering.TraefikUsageSource || event.Quantity != 7.5 {
+		t.Fatalf("usage event = %+v, want http_rps_peak_1m requests_per_second traefik quantity=7.5", event)
+	}
+	if event.OrganizationID != seed.OrganizationID || event.ProjectID != seed.ProjectID || event.EnvironmentID != seed.EnvironmentID || event.ServiceID != seed.ServiceID {
+		t.Fatalf("usage event scope = %+v, want full attributed service scope", event)
+	}
+	if event.Metadata["token"] != "[REDACTED]" {
+		t.Fatalf("token metadata = %q, want redacted", event.Metadata["token"])
+	}
+	assertUsageEventCount(t, db, seed.OrganizationID, 1)
+}
+
 func TestTraefikUsageEmitterWritesHTTPResponseBytesUsageEventsIdempotently(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
@@ -292,7 +359,7 @@ func TestTraefikUsageEmitterWritesHTTPBandwidthTotalUsageEventsIdempotently(t *t
 	assertUsageEventCount(t, db, seed.OrganizationID, 1)
 }
 
-func TestTraefikUsageEmitterSkipsNonBillingOrUnsafeSamples(t *testing.T) {
+func TestTraefikUsageEmitterSkipsUnsupportedOrUnsafeSamples(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
 	s := newMeteringStore(t, db)
@@ -308,7 +375,7 @@ func TestTraefikUsageEmitterSkipsNonBillingOrUnsafeSamples(t *testing.T) {
 	result, err := emitter.Emit(ctx, metering.TraefikUsageInput{
 		Samples: []metering.AttributedTraefikSample{
 			{
-				TraefikMetricSample: metering.TraefikMetricSample{Name: "http_rps_peak_1m", Value: 4, Unit: "requests_per_second", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+				TraefikMetricSample: metering.TraefikMetricSample{Name: "http_request_duration_seconds_bucket", Value: 4, Unit: "observation", WindowStart: start, WindowEnd: start.Add(time.Minute)},
 				OrganizationID:      seed.OrganizationID,
 				ProjectID:           seed.ProjectID,
 				EnvironmentID:       seed.EnvironmentID,
@@ -440,6 +507,45 @@ func TestTraefikUsageEmitterKeepsHTTPBandwidthTotalTenantScoped(t *testing.T) {
 			Confidence:        metering.TraefikAttributionConfidenceHigh,
 		}},
 		RequestID: "req_cross_tenant_bandwidth_total",
+	})
+	assertYallaCode(t, err, yerr.CodeNotFound)
+	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
+	assertUsageEventCount(t, db, bravo.OrganizationID, 0)
+}
+
+func TestTraefikUsageEmitterKeepsHTTPRPSPeak1mTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	alpha := seedMeteringHierarchy(t, db, f)
+	bravo := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	_, err = emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples: []metering.AttributedTraefikSample{{
+			TraefikMetricSample: metering.TraefikMetricSample{
+				Name:              "http_rps_peak_1m",
+				Service:           "customer-yalla-" + bravo.ServiceID,
+				Value:             6.25,
+				Unit:              "requests_per_second",
+				WindowStart:       start,
+				WindowEnd:         start.Add(time.Minute),
+				RawSampleChecksum: "cross-tenant-rps-peak",
+			},
+			OrganizationID:    alpha.OrganizationID,
+			ProjectID:         bravo.ProjectID,
+			EnvironmentID:     bravo.EnvironmentID,
+			ServiceID:         bravo.ServiceID,
+			AttributionSource: metering.TraefikAttributionSourceLabel,
+			Confidence:        metering.TraefikAttributionConfidenceHigh,
+		}},
+		RequestID: "req_cross_tenant_rps_peak",
 	})
 	assertYallaCode(t, err, yerr.CodeNotFound)
 	assertUsageEventCount(t, db, alpha.OrganizationID, 0)

@@ -312,6 +312,12 @@ do not mix customer API handlers into CLI packages.
   invoiceable keys, emit only fully attributed samples into append-only
   `usage_events` with replay-safe idempotency keys, and expose current-period
   totals through `usage_counters` rather than mutable source state.
+- Soft or observability Traefik metrics that must appear in customer usage APIs
+  or internal billing export snapshots still use the durable metering vertical:
+  define the metric, add the `quota_resource` migration/constant, emit only
+  fully attributed samples into `usage_events`, and let `usage_counters` drive
+  visibility. `BillingGrade=false` controls billing semantics; it is not a
+  reason to skip persistence.
 - Deployment usage metering should be emitted from Yalla timelines, never from
   Dokploy current state. Count deployment outcomes from terminal
   `deployment_events`; derive `build_minutes` from immutable `job_attempts`

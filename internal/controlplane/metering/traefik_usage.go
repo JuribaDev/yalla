@@ -77,7 +77,7 @@ func (e *TraefikUsageEmitter) Emit(ctx context.Context, in TraefikUsageInput) (T
 
 func buildTraefikUsageEventInput(sample AttributedTraefikSample, requestID string) (store.AppendUsageEventInput, bool, error) {
 	def, ok := LookupMetricDefinition(sample.Name)
-	if !ok || !def.BillingGrade {
+	if !ok {
 		return store.AppendUsageEventInput{}, false, nil
 	}
 	if sample.OrganizationID == "" || sample.ProjectID == "" || sample.EnvironmentID == "" || sample.ServiceID == "" {
@@ -129,6 +129,8 @@ func metricResource(key string) (store.QuotaResource, bool) {
 		return store.QuotaResourceHTTPRequestBytes, true
 	case "http_bandwidth_total":
 		return store.QuotaResourceHTTPBandwidthTotal, true
+	case "http_rps_peak_1m":
+		return store.QuotaResourceHTTPRPSPeak1m, true
 	default:
 		return "", false
 	}

@@ -12005,8 +12005,8 @@
       ],
       "type": "tracked-metric",
       "priority": 2,
-      "passes": false,
-      "notes": "Tracked metric: http_rps_peak_1m."
+      "passes": true,
+      "notes": "Implemented http_rps_peak_1m as a soft, non-billing Traefik tracked metric: runtime definition, quota_resource migration/constant, interval-based Traefik peak RPS normalization, attributed usage_events emission with idempotency/redaction/tenant isolation, aggregation into customer usage counters, and billing export snapshot visibility."
     },
     {
       "id": "BE-0585",

@@ -46,6 +46,7 @@ const (
 	QuotaResourceHTTPResponseBytes            QuotaResource = "http_response_bytes"
 	QuotaResourceHTTPRequestBytes             QuotaResource = "http_request_bytes"
 	QuotaResourceHTTPBandwidthTotal           QuotaResource = "http_bandwidth_total"
+	QuotaResourceHTTPRPSPeak1m                QuotaResource = "http_rps_peak_1m"
 	QuotaResourceContainerCPUMillicoreSeconds QuotaResource = "container_cpu_millicore_seconds"
 	QuotaResourceContainerMemoryMBHours       QuotaResource = "container_memory_mb_hours"
 	QuotaResourceStorageGBMonth               QuotaResource = "storage_gb_month"
@@ -78,6 +79,7 @@ var quotaResources = map[QuotaResource]struct{}{
 	QuotaResourceHTTPResponseBytes:            {},
 	QuotaResourceHTTPRequestBytes:             {},
 	QuotaResourceHTTPBandwidthTotal:           {},
+	QuotaResourceHTTPRPSPeak1m:                {},
 	QuotaResourceContainerCPUMillicoreSeconds: {},
 	QuotaResourceContainerMemoryMBHours:       {},
 	QuotaResourceStorageGBMonth:               {},

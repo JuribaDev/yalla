@@ -3,6 +3,7 @@ package metering
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -76,6 +77,7 @@ func TestTraefikAdapterCollectsWindowedPrometheusMetrics(t *testing.T) {
 
 	assertSample(t, byKey, "http_requests|yalla-svc_123|200|", 19, "request")
 	assertSample(t, byKey, "http_requests|yalla-svc_123|500|", 2, "request")
+	assertSample(t, byKey, "http_rps_peak_1m|yalla-svc_123||", 0.8, "requests_per_second")
 	assertSample(t, byKey, "http_request_bytes|yalla-svc_123||", 600, "byte")
 	assertSample(t, byKey, "http_response_bytes|yalla-svc_123||", 1200, "byte")
 	assertSample(t, byKey, "http_bandwidth_total|yalla-svc_123||", 1800, "byte")
@@ -151,7 +153,7 @@ func assertSample(t *testing.T, samples map[string]TraefikMetricSample, key stri
 		sort.Strings(keys)
 		t.Fatalf("missing sample %q; got keys %v", key, keys)
 	}
-	if s.Value != want || s.Unit != unit {
+	if math.Abs(s.Value-want) > 0.000000001 || s.Unit != unit {
 		t.Fatalf("%s = (%v, %q), want (%v, %q)", key, s.Value, s.Unit, want, unit)
 	}
 }
