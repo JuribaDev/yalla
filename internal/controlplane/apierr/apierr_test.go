@@ -57,7 +57,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 	}
 	required := []yerr.Code{
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
-		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
+		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
@@ -97,6 +97,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
 		{"job not claimed", JobNotClaimed(), yerr.CodeJobNotClaimed, 409},
+		{"job cancelled", JobCancelled(), yerr.CodeJobCancelled, 409},
 		{"invalid state transition", InvalidStateTransition("deployment", "queued", "succeeded"), yerr.CodeInvalidStateTransition, 409},
 		{"idempotency conflict", IdempotencyConflict(""), yerr.CodeIdempotencyConflict, 409},
 		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeValidation, 400},
@@ -226,6 +227,50 @@ func TestJobNotClaimedContract(t *testing.T) {
 	}
 	if !strings.Contains(body, output.Sentinel) {
 		t.Errorf("expected redaction sentinel %q in job-not-claimed envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestJobCancelledContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_job_cancelled_secret_token_value"
+	err := JobCancelled().WithHint("retry " + leaked)
+	if err.Code != yerr.CodeJobCancelled {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeJobCancelled)
+	}
+	if err.Message != "the provisioning job has been cancelled" {
+		t.Fatalf("message = %q, want fixed cancellation message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_JOB_CANCELLED must not be retryable by replaying the same job")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-job-cancelled", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-job-cancelled"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeJobCancelled)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_job_cancelled_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("job-cancelled envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in job-cancelled envelope: %s", output.Sentinel, body)
 	}
 }
 

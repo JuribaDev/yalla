@@ -12,7 +12,7 @@
 //   - Auth / policy:        AuthenticationRequired, AuthInvalid, AuthExpired,
 //     Unauthenticated, Forbidden, ScopeRequired
 //   - Validation:           InvalidInput (with field paths), Invalid
-//   - Not found / conflict: NotFound, Conflict, JobNotClaimed
+//   - Not found / conflict: NotFound, Conflict, JobNotClaimed, JobCancelled
 //   - Quota:                QuotaExceeded
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
 //     DokployConflict, DokployRateLimited, DokployUnavailable,
@@ -149,6 +149,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
 	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
 	yerr.CodeJobNotClaimed:          {false, MessageSpecific, "the provisioning job outcome was rejected because the worker does not hold the lease"},
+	yerr.CodeJobCancelled:           {false, MessageSpecific, "the provisioning job operation was rejected because the job has been cancelled"},
 	yerr.CodeInvalidStateTransition: {false, MessageSpecific, "the requested lifecycle transition is not allowed by the resource state machine"},
 	yerr.CodeIdempotencyConflict:    {false, MessageSpecific, "an idempotency key was reused for a request that differs from the original"},
 	yerr.CodeQuotaExceeded:          {true, MessageSpecific, "an organization quota or plan limit is exhausted"},
@@ -382,6 +383,15 @@ func Conflict(message string) *yerr.Error {
 func JobNotClaimed() *yerr.Error {
 	return yerr.New(yerr.CodeJobNotClaimed, "the provisioning job is not claimed by this worker").
 		WithHint("claim the job again before recording an outcome")
+}
+
+// JobCancelled builds an E_JOB_CANCELLED error (HTTP 409) for a provisioning
+// job operation rejected because the job has already been cancelled. The
+// public message is fixed and value-free: it must never expose job ids, worker
+// ids, cancellation reasons, actors, or timing details.
+func JobCancelled() *yerr.Error {
+	return yerr.New(yerr.CodeJobCancelled, "the provisioning job has been cancelled").
+		WithHint("do not retry this job; create or retry a new provisioning job if work is still required")
 }
 
 // InvalidStateTransition builds an E_INVALID_STATE_TRANSITION error (HTTP 409)

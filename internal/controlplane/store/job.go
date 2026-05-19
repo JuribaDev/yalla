@@ -477,11 +477,14 @@ func (r *JobRepository) Transition(ctx context.Context, tx *Tx, organizationID, 
 		return ProvisioningJob{}, apierr.StoreUnavailable(err)
 	}
 
+	if mut.ExpectedLeaseOwner != "" && to != JobStatusRunning && current.LeaseOwner != mut.ExpectedLeaseOwner {
+		if current.Status == JobStatusCancelled {
+			return ProvisioningJob{}, apierr.JobCancelled()
+		}
+		return ProvisioningJob{}, apierr.JobNotClaimed()
+	}
 	if !current.Status.CanTransitionTo(to) {
 		return ProvisioningJob{}, apierr.InvalidStateTransition("provisioning_job", current.Status.String(), to.String())
-	}
-	if mut.ExpectedLeaseOwner != "" && to != JobStatusRunning && current.LeaseOwner != mut.ExpectedLeaseOwner {
-		return ProvisioningJob{}, apierr.JobNotClaimed()
 	}
 
 	// Derive the post-transition shape of the mutable columns from the target

@@ -423,6 +423,61 @@ func TestStoreClaimerStaleLeaseOutcomeReturnsJobNotClaimed(t *testing.T) {
 	}
 }
 
+func TestStoreClaimerCancelledLeaseOutcomeReturnsJobCancelled(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQueueStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedQueueOrg(t, db, f, "Acme")
+	stored := enqueueJob(ctx, t, s, repo, queueJobFixture(org.ID, "idem-cancelled-lease"))
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store: s, Owner: "worker-cancelled",
+		Runner: worker.RunnerFunc(func(context.Context, store.ProvisioningJob) error {
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, tErr := repo.Transition(ctx, tx, org.ID, stored.ID, store.JobStatusCancelled, store.JobTransition{
+			ErrorSummary: "operator cancelled token=secret",
+			ActorID:      "usr_cancel",
+			ActorKind:    "user",
+			RequestID:    "req_cancelled",
+		})
+		return tErr
+	}); err != nil {
+		t.Fatalf("cancel job while leased: %v", err)
+	}
+
+	err = lease.Run(ctx)
+	var typed *yerr.Error
+	if !errors.As(err, &typed) || typed.Code != yerr.CodeJobCancelled {
+		t.Fatalf("cancelled lease Run error = %v, want %s", err, yerr.CodeJobCancelled)
+	}
+
+	final := getJob(ctx, t, s, repo, org.ID, stored.ID)
+	if final.Status != store.JobStatusCancelled {
+		t.Fatalf("final status = %q, want cancelled", final.Status)
+	}
+	if strings.Contains(final.ErrorSummary, "token=secret") {
+		t.Fatalf("cancelled error summary leaked secret: %q", final.ErrorSummary)
+	}
+}
+
 // TestStoreClaimerTwoWorkersRunEachJobOnce is the headline guarantee: two
 // workers polling the same queue concurrently run every job exactly once. Each
 // worker has its own StoreClaimer and lease owner; SELECT ... FOR UPDATE SKIP

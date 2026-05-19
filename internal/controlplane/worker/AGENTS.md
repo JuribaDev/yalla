@@ -25,6 +25,10 @@ Background provisioning/metering workers for the control plane.
   been reclaimed by another worker, the stale worker must receive
   `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED` instead of overwriting the new
   lease holder's state.
+- If a claimed job was cancelled through the API/operator path before the
+  worker records its outcome, the outcome write must receive
+  `apierr.JobCancelled()` / `E_JOB_CANCELLED`, not a generic state-machine
+  conflict and not `E_JOB_NOT_CLAIMED`.
 - Recording an outcome (`StoreClaimer.complete`) runs on a context detached
   from cancellation (`context.WithoutCancel` + timeout): once the runner ran,
   the result must reach the database even mid-shutdown.
