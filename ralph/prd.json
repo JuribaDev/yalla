@@ -11302,7 +11302,7 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Documentation topic: worker job authoring."
     },
     {

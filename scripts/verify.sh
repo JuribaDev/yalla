@@ -268,6 +268,12 @@ if ! go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact;
   required_failed=1
 fi
 
+# Required: worker job authoring artifact static tests
+step "go test ./internal/release/... -run TestWorkerJobAuthoringArtifact"
+if ! go test ./internal/release/... -run TestWorkerJobAuthoringArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

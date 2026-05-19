@@ -1,4 +1,16 @@
 ## Codebase Patterns
+- Worker job authoring documentation follows the static-release-gate pattern:
+  keep `docs/development/worker-job-authoring.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, `internal/release/AGENTS.md`, and
+  `internal/release/worker_job_authoring_static_test.go` in lockstep; document
+  `internal/controlplane/worker`, `internal/controlplane/store`,
+  `provisioning_jobs`, `StoreClaimer`, `Provisioner`, `JobRunner`,
+  `store.JobRepository.ClaimNext`, `SELECT ... FOR UPDATE SKIP LOCKED`,
+  `ExpectedLeaseOwner`, `apierr.JobNotClaimed`, `apierr.JobCancelled`,
+  `Terminal`, `RunnerFunc`, fake Dokploy usage, tenant-scoped `dokploy_refs`,
+  exact worker/store/fake-Dokploy verification commands, expected outputs,
+  stable envelopes, isolated Postgres tests, opt-in live Dokploy smoke,
+  failure recovery, and redaction.
 - Quota implementation documentation follows the static-release-gate pattern:
   keep `docs/development/quota-implementation-guide.md`, SECURITY.md, CI,
   `scripts/verify.sh`, `internal/release/AGENTS.md`, and
@@ -690,8 +702,7 @@
   - `go test -race ./internal/controlplane/...`
   - `go test -run TestReconciliation ./...`
   - `golangci-lint run ./...`
-  - `staticcheck ./...` was not run because `staticcheck` is not installed in this environment.
-  - `govulncheck ./...` was not run because `govulncheck` is not installed in this environment.
+  - `scripts/verify.sh --strict --release` ran from the pre-commit hook and included `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
 - Results
   - Required formatting, module cleanup, unit tests, race tests, and vet pass.
   - Focused control-plane and reconciliation suites pass.
@@ -39599,4 +39610,44 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Documentation stories in this sequence should follow the existing static-release-gate pattern: guide, release static test, SECURITY.md gate row and section, CI step, `scripts/verify.sh` step, and `internal/release/AGENTS.md` note.
   - The current quota implementation centers on `quota.Checker` implementing `store.QuotaReserver`; repository services reserve inside `Store.Write`, while `store.QuotaRepository` owns `usage_counters` and `quota_reservations`.
+---
+## 2026-05-19 18:25 +03 - BE-0547
+- What was implemented
+  - Added the production-grade worker job authoring guide at `docs/development/worker-job-authoring.md`.
+  - Added `internal/release/worker_job_authoring_static_test.go` to pin the guide content and release-gate wiring.
+  - Wired the new static test into `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Added the reusable worker-job documentation pattern to the top `## Codebase Patterns` section.
+  - Marked BE-0547 as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/worker-job-authoring.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/worker_job_authoring_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact` failed first on the missing guide/wiring, as expected for TDD.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed in this environment.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed in this environment.
+- Results
+  - All required checks passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - The pre-commit strict release gate passed; `govulncheck` reported no vulnerabilities, `staticcheck` passed, and the GoReleaser snapshot succeeded.
+  - The focused static artifact test now passes and is wired into local and CI gates.
+- Remaining risks or follow-ups
+  - No runtime worker behavior changed in this story.
+  - Remaining documentation stories after BE-0547 still have `passes: false`.
+- **Learnings for future iterations:**
+  - Worker job docs should preserve the queue/lease contract: `StoreClaimer`, `store.JobRepository.ClaimNext`, `SELECT ... FOR UPDATE SKIP LOCKED`, `ExpectedLeaseOwner`, `E_JOB_NOT_CLAIMED`, and `E_JOB_CANCELLED` are public operational behavior, not incidental implementation details.
+  - Worker job documentation should explicitly couple durable job creation to prior auth, policy, quota, idempotency, desired-state write, audit, request ID persistence, fake-Dokploy-by-default tests, and tenant-scoped `dokploy_refs` writes.
 ---

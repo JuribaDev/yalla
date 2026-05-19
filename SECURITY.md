@@ -109,6 +109,7 @@ defined in `.github/workflows/ci.yml`:
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration authoring artifact | `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Worker job authoring artifact | `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -323,6 +324,32 @@ fixes rather than ad hoc SQL.
 
 CI pins the guide and release gate with
 `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact`.
+
+## Worker Job Authoring Artifact
+
+The worker job authoring guide lives at
+`docs/development/worker-job-authoring.md`. It documents how durable
+provisioning work flows from the Yalla API to Postgres source of truth, then
+through `yalla-worker` to the private Dokploy API. The guide covers
+`provisioning_jobs`, `StoreClaimer`, `Provisioner`, `JobRunner`,
+`store.JobRepository.ClaimNext`, `SELECT ... FOR UPDATE SKIP LOCKED`,
+lease-owner outcome checks, terminal failure classification, fake Dokploy
+fixtures, tenant-scoped `dokploy_refs`, and redacted job/audit metadata.
+
+The guide keeps runtime secrets operator-managed and uses only
+`<redacted:...>` placeholders for local environment values. It documents the
+canonical checks: `go test ./internal/controlplane/worker/...`,
+`go test -run TestJobWorkerLease ./...`,
+`go test -run TestFakeDokploy ./...`,
+`go test ./internal/controlplane/store/...`, `go test ./...`,
+`go test -race ./...`, `go vet ./...`, and `scripts/verify.sh`. It also
+documents stable `yalla.output.v1` and `yalla.error.v1` envelopes, request IDs,
+isolated Postgres integration tests, fake-Dokploy-by-default behavior,
+dead-letter recovery, `E_JOB_NOT_CLAIMED`, `E_JOB_CANCELLED`, and the opt-in
+external live-Dokploy smoke test that must never run against production.
+
+CI pins the guide and release gate with
+`go test ./internal/release/... -run TestWorkerJobAuthoringArtifact`.
 
 ## Seed Admin Command Artifact
 

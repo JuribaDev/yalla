@@ -164,6 +164,21 @@ secret redaction. Any future migration-authoring-doc change should update the
 guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
 the same edit.
 
+## Worker job authoring artifact (BE-0547)
+
+`worker_job_authoring_static_test.go` pins the developer-facing worker job
+authoring guide at `docs/development/worker-job-authoring.md`: the guide must
+document `internal/controlplane/worker`, `internal/controlplane/store`,
+`provisioning_jobs`, `StoreClaimer`, `Provisioner`, `JobRunner`,
+`store.JobRepository.ClaimNext`, `SELECT ... FOR UPDATE SKIP LOCKED`,
+`ExpectedLeaseOwner`, `apierr.JobNotClaimed`, `apierr.JobCancelled`,
+`Terminal`, `RunnerFunc`, fake Dokploy usage, tenant-scoped `dokploy_refs`,
+exact worker/store/fake-Dokploy verification commands, expected outputs,
+failure recovery, stable JSON envelopes, isolated Postgres tests, opt-in live
+Dokploy smoke, and secret redaction. Any future worker-job-authoring-doc change
+should update the guide, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command
