@@ -111,6 +111,7 @@ defined in `.github/workflows/ci.yml`:
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -374,6 +375,27 @@ or rendered environment values.
 
 CI pins the command, runbook, and release gate with
 `go test ./internal/release/... -run TestRestoreRehearsalCommand`.
+
+## Config Example Files Artifact
+
+The production configuration example lives at
+`deploy/config/control-plane.env.example` with its operator notes in
+`deploy/config/README.md`. The file is consumed by the deployed
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker` binaries through
+the rendered `/etc/yalla/control-plane.env` copy. Operators install the
+rendered copy as `root:yalla` with mode `0640`, replace every
+`<redacted:...>` placeholder from their secret manager, and keep the rendered
+file outside the repository.
+
+The checked-in example intentionally contains no rendered database URLs,
+signing keys, secret-encryption keys, Dokploy tokens, API keys, cookies, or
+passwords. It documents API `/healthz` and `/readyz` probes, stable
+`yalla.output.v1` and `yalla.error.v1` envelopes, worker no-HTTP-listener
+health expectations, structured JSON logs, and the rule that logs, errors,
+audit metadata, and dry-run output must redact rendered environment values.
+
+CI pins the config example files with
+`go test ./internal/release/... -run TestConfigExamplesArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

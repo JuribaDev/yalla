@@ -150,6 +150,9 @@ jobs:
       - name: Restore rehearsal command artifact static tests
         run: go test ./internal/release/... -run TestRestoreRehearsalCommand
 
+      - name: Config example artifact static tests
+        run: go test ./internal/release/... -run TestConfigExamplesArtifact
+
       - name: Race detector
         run: go test -race ./...
 

@@ -188,6 +188,18 @@ canary to pass, and write only redacted reports. Any future restore-rehearsal
 change should update the script, `deploy/operations` runbook, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Config example files artifact (BE-0418)
+
+`config_examples_static_test.go` pins the canonical production environment
+example under `deploy/config/`: the example must be copyable to
+`/etc/yalla/control-plane.env`, reference both `/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`, keep secret-shaped values as
+`<redacted:...>` placeholders only, document `/healthz` + `/readyz`, stable
+`yalla.output.v1` / `yalla.error.v1` probe envelopes, worker no-HTTP-listener
+health expectations, and structured JSON log redaction. Any future config
+example change should update `deploy/config/README.md`, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing
