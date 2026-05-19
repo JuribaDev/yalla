@@ -132,10 +132,11 @@ automatically.
 
 ## Container Image Hardening
 
-The production `Dockerfile` ships the `yalla-api` binary inside a
+The production `Dockerfile` ships the `yalla-api` binary and
+`Dockerfile.worker` ships the `yalla-worker` binary inside a
 `gcr.io/distroless/static-debian12:nonroot` runtime so a leaked or
 compromised image carries no shell, no package manager, no busybox,
-and no setuid binaries — only the API binary and the system CA
+and no setuid binaries — only the service binary and the system CA
 bundle. The hardening posture is part of the public contract and is
 pinned by `internal/release/container_hardening_static_test.go`; a
 regression in any one of the following is caught at build time:
@@ -173,10 +174,19 @@ regression in any one of the following is caught at build time:
 - **Explicit `ENTRYPOINT`.** The runtime stage MUST declare an
   `ENTRYPOINT` (not just `CMD`) so `docker run -- <args>` cannot
   replace the binary at launch.
+- **Worker image contract.** `Dockerfile.worker` MUST build
+  `./cmd/yalla-worker`, copy `/out/yalla-worker` to
+  `/usr/local/bin/yalla-worker`, and use that binary as the
+  entrypoint. The worker has no HTTP listener, so orchestrators
+  should use process liveness, non-zero exit restarts, durable
+  provisioning job state, dead-letter alerts, worker queue metrics,
+  and structured `service=yalla-worker` logs instead of an in-image
+  HTTP health probe.
 
 Operators are expected to run the image with `--read-only`,
 `--cap-drop=ALL`, and a non-host network. The Dockerfile's header
-comment documents the canonical `docker run` invocation.
+comment documents the canonical `docker run` invocation; the worker
+Dockerfile documents the corresponding no-port runtime contract.
 
 The local integration-test stack (`docker-compose.yml`) MUST pin
 the Postgres image to a major version tag (`postgres:16`, not

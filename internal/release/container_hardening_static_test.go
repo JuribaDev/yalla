@@ -86,6 +86,13 @@ import (
 // reference this exact location.
 const dockerfilePath = "Dockerfile"
 
+// workerDockerfilePath is the production worker image definition.
+// Keeping it separate from the API Dockerfile lets operators build,
+// scan, tag, and roll the background job runner independently from
+// the customer-facing listener while preserving the same hardened
+// runtime posture.
+const workerDockerfilePath = "Dockerfile.worker"
+
 // dockerComposePath is the relative path of the local dependency
 // stack used by integration tests (`docker compose up -d postgres`).
 // CONTRIBUTING.md and the package's `internal/release/AGENTS.md`
@@ -504,6 +511,71 @@ func TestDockerfileCopyUsesChown(t *testing.T) {
 	}
 }
 
+func TestWorkerDockerfileBuildsWorkerBinary(t *testing.T) {
+	t.Parallel()
+	model := loadDockerfilePath(t, workerDockerfilePath)
+	if err := matchMultiStageBuild(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchRuntimeBaseImage(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchRuntimeUser(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchBuilderBuildFlags(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchNoAddFromURL(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchNoBakedSecrets(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchNoRuntimePackageInstall(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchRuntimeCopyUsesChown(model); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchBuildsGoPackage(model, "./cmd/yalla-worker"); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchRuntimeCopiesArtifact(model, "/out/yalla-worker", "/usr/local/bin/yalla-worker"); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+	if err := matchRuntimeEntrypoint(model, "/usr/local/bin/yalla-worker"); err != nil {
+		t.Fatalf("%s: %v", workerDockerfilePath, err)
+	}
+}
+
+func TestWorkerDockerfileDocumentsOperationsContract(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(projectRoot(t), workerDockerfilePath)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", workerDockerfilePath, err)
+	}
+	src := string(b)
+	required := []string{
+		"yalla-worker production container",
+		"docker build",
+		"YALLA_DATABASE_URL",
+		"YALLA_DOKPLOY_BASE_URL",
+		"YALLA_DOKPLOY_TOKEN",
+		"Health / readiness",
+		"no HTTP listener",
+		"structured JSON to stdout",
+		"service=yalla-worker",
+		"never appear in logs",
+	}
+	for _, want := range required {
+		if !strings.Contains(src, want) {
+			t.Errorf("%s: missing required operations note %q", workerDockerfilePath, want)
+		}
+	}
+}
+
 // TestDockerComposePostgresImageIsPinned asserts the local
 // `docker-compose.yml` pins the Postgres image to a major-tag
 // reference such as `postgres:16` and never `postgres`,
@@ -545,6 +617,9 @@ func TestSecurityPolicyDocumentsContainerHardening(t *testing.T) {
 	src := string(b)
 	required := []string{
 		"## Container Image Hardening",
+		"Dockerfile.worker",
+		"yalla-worker",
+		"no HTTP listener",
 		"distroless",
 		"nonroot",
 		"Multi-stage build",
@@ -808,6 +883,68 @@ func TestContainerHardeningStaticAnalyzerDetectsRegressions(t *testing.T) {
 		runMatcherCases(t, cases, matchRuntimeCopyUsesChown)
 	})
 
+	t.Run("go package matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []analyzerCase{
+			{
+				name:    "canonical: worker package built",
+				input:   minimalCanonicalWorkerDockerfile(),
+				wantErr: false,
+			},
+			{
+				name:    "regression: API package built instead",
+				input:   minimalCanonicalDockerfile(),
+				wantErr: true,
+			},
+		}
+		runMatcherCases(t, cases, func(model dockerfileModel) error {
+			return matchBuildsGoPackage(model, "./cmd/yalla-worker")
+		})
+	})
+
+	t.Run("runtime artifact matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []analyzerCase{
+			{
+				name:    "canonical: worker artifact copied",
+				input:   minimalCanonicalWorkerDockerfile(),
+				wantErr: false,
+			},
+			{
+				name:    "regression: wrong source artifact",
+				input:   strings.ReplaceAll(minimalCanonicalWorkerDockerfile(), "/out/yalla-worker", "/out/yalla-api"),
+				wantErr: true,
+			},
+			{
+				name:    "regression: wrong destination artifact",
+				input:   strings.ReplaceAll(minimalCanonicalWorkerDockerfile(), "/usr/local/bin/yalla-worker", "/usr/local/bin/yalla-api"),
+				wantErr: true,
+			},
+		}
+		runMatcherCases(t, cases, func(model dockerfileModel) error {
+			return matchRuntimeCopiesArtifact(model, "/out/yalla-worker", "/usr/local/bin/yalla-worker")
+		})
+	})
+
+	t.Run("runtime entrypoint target matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []analyzerCase{
+			{
+				name:    "canonical: worker entrypoint",
+				input:   minimalCanonicalWorkerDockerfile(),
+				wantErr: false,
+			},
+			{
+				name:    "regression: API entrypoint",
+				input:   strings.ReplaceAll(minimalCanonicalWorkerDockerfile(), "/usr/local/bin/yalla-worker", "/usr/local/bin/yalla-api"),
+				wantErr: true,
+			},
+		}
+		runMatcherCases(t, cases, func(model dockerfileModel) error {
+			return matchRuntimeEntrypoint(model, "/usr/local/bin/yalla-worker")
+		})
+	})
+
 	t.Run("postgres pinned matcher", func(t *testing.T) {
 		t.Parallel()
 		cases := []analyzerComposeCase{
@@ -945,15 +1082,32 @@ func minimalCanonicalDockerfile() string {
 	}, "\n")
 }
 
+func minimalCanonicalWorkerDockerfile() string {
+	return strings.Join([]string{
+		"FROM golang:1.23 AS builder",
+		"RUN CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w\" -o /out/yalla-worker ./cmd/yalla-worker",
+		"FROM gcr.io/distroless/static-debian12:nonroot",
+		"USER nonroot:nonroot",
+		"COPY --from=builder --chown=nonroot:nonroot /out/yalla-worker /usr/local/bin/yalla-worker",
+		"ENTRYPOINT [\"/usr/local/bin/yalla-worker\"]",
+		"",
+	}, "\n")
+}
+
 // loadDockerfile reads and parses the production Dockerfile. A
 // missing file fails the test — the container image is non-optional
 // for the deployment story.
 func loadDockerfile(t *testing.T) dockerfileModel {
 	t.Helper()
-	path := filepath.Join(projectRoot(t), dockerfilePath)
+	return loadDockerfilePath(t, dockerfilePath)
+}
+
+func loadDockerfilePath(t *testing.T, rel string) dockerfileModel {
+	t.Helper()
+	path := filepath.Join(projectRoot(t), rel)
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", dockerfilePath, err)
+		t.Fatalf("read %s: %v", rel, err)
 	}
 	return parseDockerfile(string(b))
 }
@@ -1170,6 +1324,42 @@ func matchRuntimeCopyUsesChown(model dockerfileModel) error {
 		}
 	}
 	return nil
+}
+
+func matchBuildsGoPackage(model dockerfileModel, wantPackage string) error {
+	payload := stageRunPayload(builderStage(model))
+	if !strings.Contains(payload, wantPackage) {
+		return fmt.Errorf("builder stage RUN payload does not build %s", wantPackage)
+	}
+	return nil
+}
+
+func matchRuntimeCopiesArtifact(model dockerfileModel, wantSource, wantDestination string) error {
+	rt := runtimeStage(model)
+	for _, ins := range rt.Instructions {
+		if ins.Cmd != "COPY" {
+			continue
+		}
+		args := strings.TrimSpace(ins.Args)
+		if strings.Contains(args, wantSource) && strings.Contains(args, wantDestination) {
+			return nil
+		}
+	}
+	return fmt.Errorf("runtime stage does not copy %s to %s", wantSource, wantDestination)
+}
+
+func matchRuntimeEntrypoint(model dockerfileModel, wantBinary string) error {
+	rt := runtimeStage(model)
+	for _, ins := range rt.Instructions {
+		if ins.Cmd != "ENTRYPOINT" {
+			continue
+		}
+		if strings.Contains(ins.Args, wantBinary) {
+			return nil
+		}
+		return fmt.Errorf("runtime stage ENTRYPOINT is %q — must execute %s", ins.Args, wantBinary)
+	}
+	return fmt.Errorf("runtime stage has no ENTRYPOINT — `docker run` could replace the binary at launch")
 }
 
 // composeFile is the YAML subset the test asserts on. We model

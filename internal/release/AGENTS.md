@@ -58,7 +58,7 @@ through) are both caught at the AST.
 `container_hardening_static_test.go` pins the production container
 posture across three surfaces:
 
-- **`Dockerfile`** — parsed by a small in-test Dockerfile parser
+- **`Dockerfile` / `Dockerfile.worker`** — parsed by a small in-test Dockerfile parser
   (`parseDockerfile`) that joins backslash continuations, resolves
   global ARG defaults, and groups instructions under their owning
   FROM stage. The matchers assert: (1) multi-stage build present,
@@ -90,6 +90,15 @@ runtime base image), update the constants at the top of the test
 file AND the regression-fixture catalogue in the same edit. The
 package's existing `projectRoot` helper is reused so the test stays
 location-independent.
+
+Worker image changes must preserve the dedicated `Dockerfile.worker`
+contract pinned by `TestWorkerDockerfileBuildsWorkerBinary`: build
+`./cmd/yalla-worker`, copy `/out/yalla-worker` to
+`/usr/local/bin/yalla-worker`, keep `ENTRYPOINT` on that binary, and
+document the no-HTTP-listener health model plus `service=yalla-worker`
+structured logs in the Dockerfile header. Do not collapse API and
+worker image entrypoints into one runtime image unless the static
+contract and SECURITY.md are deliberately updated in the same edit.
 
 ## TLS and proxy header trust (BE-0356)
 
