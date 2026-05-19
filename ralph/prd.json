@@ -11663,8 +11663,8 @@
       ],
       "type": "pricing-api",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-only backoffice subscription APIs: PUT /v1/admin/organizations/{org_id}/subscription and PUT /v1/admin/organizations/{org_id}/subscription/entitlements/{entitlement_key}. Added audited store.AdminSubscriptionService for subscription assignment lifecycle changes and effective-windowed organization overrides/add-ons. The service verifies the support actor org, target organization, plan, and subscription scope in one Store.Write transaction, then appends immutable audit events. Subscription/override metadata is redacted before persistence and response rendering; resolver cache invalidation follows the existing EntitlementRevision updated_at token. Tests cover HTTP success, validation failure, authorization failure, not found, redaction, trial/active/past_due/canceled lifecycle, override, resolver expiration coverage, and audit paths."
     },
     {
       "id": "BE-0567",

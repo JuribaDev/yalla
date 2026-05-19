@@ -289,6 +289,13 @@ Postgres persistence for control-plane source-of-truth state.
   expose reset windows without leaking provider ids, plan ids, subscription ids,
   override ids, or override reasons. Keep future resolver/cache services aligned
   with this ordering.
+- Backoffice subscription mutations should go through `AdminSubscriptionService`,
+  not bare repository calls: verify the support actor organization, target
+  organization, plan/subscription scope, mutate `subscriptions` or
+  `subscription_entitlements`, and append the immutable `audit_events` row in
+  one `Store.Write` transaction. `subscriptions.updated_at` and
+  `subscription_entitlements.updated_at` are the runtime entitlement cache
+  invalidation tokens through `SubscriptionRepository.EntitlementRevision`.
 - `quota_policies` holds **one limit per (scope, resource)**. A row is *either*
   a `plan_default` (keyed by the text `plan` column — there is **no FK to a
   plans table yet**) *or* an `organization` override (keyed by

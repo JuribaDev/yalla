@@ -172,6 +172,14 @@ top-level response fields. Rename and delete endpoints must require a nonblank
 `impact_validation_id` before delegating, because entitlement keys are runtime
 quota/billing compatibility contracts.
 
+## Backoffice subscriptions
+
+Backoffice subscription routes use `AdminSubscriptionManager` and the same
+support-only `policy.ActionAdminPlansManage` gate until finer pricing roles
+land. Keep handlers thin: validate the subscription or override payload, redact
+secret-shaped metadata keys before delegation, pass the `{org_id}` path scope
+through `organizationIDResolver`, and render only through `apienvelope`.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an

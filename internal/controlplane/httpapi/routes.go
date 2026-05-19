@@ -204,6 +204,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminDokployImporter AdminDokployImporter
 	var adminConfigDryRunner AdminConfigDryRunner
 	var adminPlanManager AdminPlanManager
+	var adminSubscriptionManager AdminSubscriptionManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
@@ -235,6 +236,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminPlanManager); ok {
 			adminPlanManager = v
+		}
+		if v, ok := opt.(AdminSubscriptionManager); ok {
+			adminSubscriptionManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -549,6 +553,38 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The entitlement was deleted.",
 			},
 			handler: deleteAdminPlanEntitlementHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/organizations/{org_id}/subscription",
+				OperationID:        "setAdminOrganizationSubscription",
+				Summary:            "Set organization subscription",
+				Description:        "Creates or replaces the current subscription assignment for one organization. Support operators can change the accepted immutable plan id, lifecycle status, current period, trial and cancellation state, billing provider identifiers, and redacted metadata. Runtime entitlement cache entries are invalidated by the subscription row revision used by the resolver.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				PathParams:         []openapi.PathParam{{Name: "org_id", Description: "The organization whose subscription assignment is changed."}},
+				SuccessDescription: "The organization subscription was persisted and audited.",
+			},
+			handler:  setAdminSubscriptionHandler(adminSubscriptionManager),
+			resolver: organizationIDResolver,
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/organizations/{org_id}/subscription/entitlements/{entitlement_key}",
+				OperationID:        "upsertAdminOrganizationSubscriptionEntitlement",
+				Summary:            "Upsert subscription entitlement",
+				Description:        "Creates or replaces an organization-specific subscription override or emergency-admin add-on with effective dates and an audited reason. Secret-looking metadata keys are redacted before persistence and response rendering.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				PathParams:         []openapi.PathParam{{Name: "org_id", Description: "The organization whose entitlement override is changed."}, {Name: "entitlement_key", Description: "The entitlement key to override."}},
+				SuccessDescription: "The organization entitlement override was persisted and audited.",
+			},
+			handler:  upsertAdminSubscriptionEntitlementHandler(adminSubscriptionManager),
+			resolver: organizationIDResolver,
 		},
 		{
 			endpoint: openapi.Endpoint{

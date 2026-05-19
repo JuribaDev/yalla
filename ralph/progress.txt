@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice subscription-management APIs use `AdminSubscriptionService`, not bare repositories: support-only HTTP routes currently share `admin.plans.manage`, route auth scopes `{org_id}` through `organizationIDResolver`, handlers redact secret-shaped metadata before delegation, and the store service verifies actor org + target org + plan/subscription scope before mutating `subscriptions` / `subscription_entitlements` and appending audit in one `Store.Write`; entitlement resolver cache invalidation comes from the existing `EntitlementRevision` updated_at token.
 - Backoffice plan-entitlement APIs share the audited `AdminPlanService` surface with plan lifecycle APIs: support-only HTTP routes use `admin.plans.manage`, handlers validate metadata into `plan_entitlements.metadata` (`unit`, `warning_threshold`, `upgrade_hint`, `overage_behavior`), service methods verify the admin actor org and target plan before mutating, and rename/delete require a nonblank impact-validation id because entitlement keys are runtime quota/billing contracts.
 - Backoffice plan-management APIs use a store service over `PricingPlanRepository` for lifecycle changes: edits create draft successor rows without archiving the current active row, publish archives the previous active row and promotes the draft in one transaction, rollback copies a historical row into a new active version, and every mutation appends an allowed `audit_events` row with actor/request/correlation identity.
 - Backoffice config mutations should use a service layer over `AdminConfigRepository` when auditability matters: verify the admin actor organization, mutate `admin_config_sets`/`admin_config_versions`, and append the immutable `audit_events` row in one `Store.Write` transaction. Audit metadata should carry redacted JSON `before`/`after` snapshots, sorted `changed_fields`, operator `reason`, `effective_at`, and rollback target where applicable.
@@ -37590,4 +37591,56 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Backoffice entitlement keys should be treated like public compatibility contracts, so rename/delete must be gated before the store mutation and audited with the impact-validation id.
   - Updating `plan_entitlements` for an accepted active plan is immediately visible to `SubscriptionRepository.ResolveEntitlements` because runtime resolution reads the plan row directly when no override wins.
+---
+## 2026-05-19 09:16 +03 - BE-0604
+- What was implemented
+  - Added support-only backoffice subscription management APIs:
+    - `PUT /v1/admin/organizations/{org_id}/subscription`
+    - `PUT /v1/admin/organizations/{org_id}/subscription/entitlements/{entitlement_key}`
+  - Added `store.AdminSubscriptionService` to verify the support actor organization, target organization, plan/subscription scope, perform the subscription or override mutation, and append immutable audit events in one `Store.Write` transaction.
+  - Extended `SubscriptionRepository` with tenant-scoped `Get`, `CurrentForOrganization`, and `Update` methods so assignment updates reuse the active current row and reactivation after cancellation creates a new current row.
+  - Wired the new manager through `httpapi.NewHandler`, route metadata/OpenAPI generation, and `cmd/yalla-api`.
+  - Redacted secret-shaped metadata keys before persistence and response rendering; override free-text reasons still use the repository redactor.
+  - Updated `ralph/prd.json` to mark BE-0604 passing and added reusable AGENTS/progress patterns.
+- Files changed
+  - `cmd/yalla-api/main.go`
+  - `internal/controlplane/httpapi/admin_subscriptions.go`
+  - `internal/controlplane/httpapi/admin_subscriptions_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/AGENTS.md`
+  - `internal/controlplane/store/admin_subscription_service.go`
+  - `internal/controlplane/store/admin_subscription_service_test.go`
+  - `internal/controlplane/store/subscription.go`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .` -> pass
+  - `goimports -w .` -> not run; `goimports` is not installed
+  - `go mod tidy` -> pass
+  - `go test ./...` -> pass
+  - `go test -race ./...` -> pass
+  - `go vet ./...` -> pass
+  - `go test ./internal/controlplane/...` -> pass
+  - `go test -race ./internal/controlplane/...` -> pass
+  - `go test -run TestMigrations ./...` -> pass
+  - `go test -run TestPolicyMatrix ./...` -> pass
+  - `go test -run TestQuotaConcurrency ./...` -> pass
+  - `go test -run TestFakeDokploy ./...` -> pass
+  - `golangci-lint run ./...` -> pass, 0 issues
+  - Direct `staticcheck ./...` -> not run; `staticcheck` was not on the interactive shell PATH
+  - Direct `govulncheck ./...` -> not run; `govulncheck` was not on the interactive shell PATH
+  - Pre-commit `scripts/verify.sh --strict --release` -> pass; also ran `govulncheck`, `staticcheck`, GoReleaser check, snapshot release build, and additional focused smoke suites
+- Results
+  - New HTTP contract tests cover success, validation failure, authentication failure, authorization failure, not found, stable envelopes, and metadata redaction.
+  - New store integration tests cover trialing, active, past_due, canceled, reactivation, override/audit paths, validation, and not-found behavior against migrated isolated Postgres when `YALLA_TEST_DATABASE_URL` is configured; otherwise they skip through the shared harness like other store tests.
+  - Existing subscription repository tests continue to cover resolver precedence, expiration, status handling, tenant isolation, and reason redaction.
+- Remaining risks or follow-ups
+  - The new routes use the existing `admin.plans.manage` support-only action until BE-0613 introduces finer backoffice roles.
+  - No live Dokploy smoke was needed; this story only touches Yalla source-of-truth subscription state and resolver inputs.
+- **Learnings for future iterations:**
+  - HTTP static CSRF tests reject the literal cookie header name in non-test code, even inside unrelated redaction marker lists; split the string if a redaction marker must include it inside `httpapi`.
+  - Subscription resolver cache invalidation is already data-driven: touching `subscriptions.updated_at` or `subscription_entitlements.updated_at` changes `EntitlementRevision`, so no explicit cache bust hook is needed.
+  - Backoffice subscription assignment should update the current active/trialing/past_due row; after moving it to canceled, a later active assignment creates a fresh current row because the partial unique index no longer covers the canceled historical row.
 ---

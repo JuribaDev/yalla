@@ -192,6 +192,109 @@ func (r *SubscriptionRepository) Create(ctx context.Context, tx *Tx, in CreateSu
 	return sub, nil
 }
 
+// Get reads one tenant-scoped subscription by id.
+func (r *SubscriptionRepository) Get(ctx context.Context, q Querier, organizationID, id string) (Subscription, error) {
+	var sub Subscription
+	err := q.QueryRow(ctx,
+		`SELECT `+subscriptionColumns+`
+		   FROM subscriptions
+		  WHERE organization_id = $1
+		    AND id = $2`,
+		strings.TrimSpace(organizationID), strings.TrimSpace(id),
+	).Scan(
+		&sub.ID, &sub.OrganizationID, &sub.PlanID, &sub.Status, &sub.CurrentPeriodStart, &sub.CurrentPeriodEnd,
+		&sub.Provider, &sub.ProviderCustomerID, &sub.ProviderSubscriptionID, &sub.CancelAtPeriodEnd,
+		&sub.CanceledAt, &sub.TrialEndsAt, &sub.Metadata, &sub.CreatedAt, &sub.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Subscription{}, apierr.NotFound("subscription", id)
+	}
+	if err != nil {
+		return Subscription{}, apierr.StoreUnavailable(err)
+	}
+	return sub, nil
+}
+
+// CurrentForOrganization reads the current runtime subscription for an
+// organization. Canceled and out-of-period rows are historical and do not
+// count as current for this helper.
+func (r *SubscriptionRepository) CurrentForOrganization(ctx context.Context, q Querier, organizationID string, at time.Time) (Subscription, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var sub Subscription
+	err := q.QueryRow(ctx,
+		`SELECT `+subscriptionColumns+`
+		   FROM subscriptions
+		  WHERE organization_id = $1
+		    AND status IN ('trialing', 'active', 'past_due')
+		    AND current_period_start <= $2
+		    AND current_period_end > $2
+		  ORDER BY current_period_start DESC, created_at DESC, id DESC
+		  LIMIT 1`,
+		strings.TrimSpace(organizationID), at,
+	).Scan(
+		&sub.ID, &sub.OrganizationID, &sub.PlanID, &sub.Status, &sub.CurrentPeriodStart, &sub.CurrentPeriodEnd,
+		&sub.Provider, &sub.ProviderCustomerID, &sub.ProviderSubscriptionID, &sub.CancelAtPeriodEnd,
+		&sub.CanceledAt, &sub.TrialEndsAt, &sub.Metadata, &sub.CreatedAt, &sub.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Subscription{}, apierr.NotFound("subscription", organizationID)
+	}
+	if err != nil {
+		return Subscription{}, apierr.StoreUnavailable(err)
+	}
+	return sub, nil
+}
+
+// Update replaces mutable subscription assignment fields on a tenant-scoped
+// row. The accepted plan row remains an immutable plan version; this method
+// only changes which plan version the organization is assigned to.
+func (r *SubscriptionRepository) Update(ctx context.Context, tx *Tx, id string, in CreateSubscriptionInput) (Subscription, error) {
+	if tx == nil {
+		return Subscription{}, apierr.Internal(errors.New("store: SubscriptionRepository.Update called with a nil transaction"))
+	}
+	sub, err := buildSubscriptionToCreate(in)
+	if err != nil {
+		return Subscription{}, err
+	}
+	sub.ID = strings.TrimSpace(id)
+	if sub.ID == "" {
+		return Subscription{}, apierr.InvalidInput(apierr.FieldViolation{Field: "subscription_id", Reason: "must not be blank"})
+	}
+	err = tx.QueryRow(ctx,
+		`UPDATE subscriptions
+		    SET plan_id = $3,
+		        status = $4,
+		        current_period_start = $5,
+		        current_period_end = $6,
+		        provider = $7,
+		        provider_customer_id = $8,
+		        provider_subscription_id = $9,
+		        cancel_at_period_end = $10,
+		        canceled_at = $11,
+		        trial_ends_at = $12,
+		        metadata = $13
+		  WHERE organization_id = $1
+		    AND id = $2
+		 RETURNING `+subscriptionColumns,
+		sub.OrganizationID, sub.ID, sub.PlanID, sub.Status, sub.CurrentPeriodStart, sub.CurrentPeriodEnd,
+		sub.Provider, sub.ProviderCustomerID, sub.ProviderSubscriptionID, sub.CancelAtPeriodEnd,
+		sub.CanceledAt, sub.TrialEndsAt, sub.Metadata,
+	).Scan(
+		&sub.ID, &sub.OrganizationID, &sub.PlanID, &sub.Status, &sub.CurrentPeriodStart, &sub.CurrentPeriodEnd,
+		&sub.Provider, &sub.ProviderCustomerID, &sub.ProviderSubscriptionID, &sub.CancelAtPeriodEnd,
+		&sub.CanceledAt, &sub.TrialEndsAt, &sub.Metadata, &sub.CreatedAt, &sub.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Subscription{}, apierr.NotFound("subscription", id)
+	}
+	if err != nil {
+		return Subscription{}, mapWriteError(err, "update subscription")
+	}
+	return sub, nil
+}
+
 // UpsertEntitlement creates or replaces one override row by id.
 func (r *SubscriptionRepository) UpsertEntitlement(ctx context.Context, tx *Tx, in UpsertSubscriptionEntitlementInput) (SubscriptionEntitlement, error) {
 	if tx == nil {
