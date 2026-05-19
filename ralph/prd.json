@@ -11454,8 +11454,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: break-glass playbook."
+      "passes": true,
+      "notes": "Added docs/operations/break-glass-playbook.md with the support-only break-glass workflow, exact commands, redacted environment variables, expected outputs, and failure recovery. Added internal/release/break_glass_playbook_static_test.go to pin the artifact. Wired into scripts/verify.sh, .github/workflows/ci.yml, SECURITY.md, and internal/release/AGENTS.md. All required and focused checks passed."
     },
     {
       "id": "BE-0556",

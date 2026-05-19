@@ -416,6 +416,23 @@ the opt-in live-Dokploy smoke warning. Any future tenant-import playbook change
 should update the playbook, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Break-glass playbook artifact (BE-0555)
+
+`break_glass_playbook_static_test.go` pins the production break-glass playbook
+at `docs/operations/break-glass-playbook.md`: the playbook must document the
+support-only break-glass workflow for time-bounded cross-tenant access through
+`POST /v1/organizations/{org_id}/break-glass` and `POST /v1/admin/break-glass`,
+`DELETE /v1/organizations/{org_id}/break-glass/{session_id}` and
+`DELETE /v1/admin/break-glass/{session_id}`, immutable audit evidence with
+`elevated_access=true`, the access-only (no credential mint) guarantee,
+`CapSupport`, `RoleSupport`, `admin.break_glass`, exact redacted environment
+variables, exact verification commands, stable `yalla.output.v1` /
+`yalla.error.v1` envelopes, session revocation, break-glass recovery, worker
+pause/resume recovery, no ad hoc write SQL, no raw Dokploy repair calls, and
+the opt-in live-Dokploy smoke warning. Any future break-glass playbook change
+should update the playbook, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## On-call dashboard artifact (BE-0421)
 
 `on_call_dashboard_artifact_static_test.go` pins the production on-call

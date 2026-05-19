@@ -129,6 +129,7 @@ defined in `.github/workflows/ci.yml`:
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release checklist artifact | `go test ./internal/release/... -run TestReleaseChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Rollback checklist artifact | `go test ./internal/release/... -run TestRollbackChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Break-glass playbook artifact | `go test ./internal/release/... -run TestBreakGlassPlaybookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -820,6 +821,38 @@ live-Dokploy smoke test that must never run against production.
 
 CI pins the rollback checklist artifact with
 `go test ./internal/release/... -run TestRollbackChecklistArtifact`.
+
+## Break-Glass Playbook Artifact
+
+The production break-glass playbook lives at
+`docs/operations/break-glass-playbook.md`. It documents the support-only
+break-glass workflow for time-bounded cross-tenant access through
+`POST /v1/organizations/{org_id}/break-glass` and
+`POST /v1/admin/break-glass`, immutable audit evidence with
+`elevated_access=true`, and the access-only (no credential mint) guarantee.
+
+The playbook preserves the production boundary: customer, agent, and CI traffic
+goes through the Yalla API; Postgres owns source of truth; `yalla-worker`
+performs provisioning; and Dokploy remains a private dependency. Customers must
+never receive Dokploy API tokens.
+
+The artifact requires operator-managed runtime configuration in
+`/etc/yalla/control-plane.env` or `YALLA_CONTROL_PLANE_ENV_FILE`; documents the
+required redacted variables (`YALLA_API_BASE_URL`, `YALLA_ADMIN_API_KEY`,
+`YALLA_BREAK_GLASS_TARGET_ORG_ID`); and pins exact verification commands
+including `go test -run TestBreakGlass ./...`, the playbook static test,
+`go test ./...`, `go test -race ./...`, `go vet ./...`, and
+`scripts/verify.sh`.
+
+The playbook explains expected `yalla.output.v1` / `yalla.error.v1` envelopes
+with `request_id`, `correlation_id`, and session `id`, plus failure recovery
+for validation errors, authorization errors, session revocation, worker
+pause/resume, and the prohibition on ad hoc write SQL or raw Dokploy repair
+calls. It also documents the opt-in external live-Dokploy smoke test and states
+that it must never run against production.
+
+CI pins the break-glass playbook with
+`go test ./internal/release/... -run TestBreakGlassPlaybookArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 
