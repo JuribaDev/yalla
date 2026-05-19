@@ -6723,8 +6723,8 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
-      "notes": "Drift coverage for application-drop-artifact."
+      "passes": true,
+      "notes": "Added internal/controlplane/reconcile/application_drop_artifact_test.go to pin application-drop-artifact drift behavior: changed ArtifactURL is a safe update_build_config repair routed only through Repairer.DesiredBuild; deleted upstream application remains dangerous review_missing_service; missing managed domains are safe ensure_domain; unmanaged extra Dokploy applications are quarantined via mark_unmanaged; service-type changes short-circuit to review_service_type_change without safe repairs. Tests assert signed artifact URLs/tokens never enter classification fields. Focused go test ./internal/controlplane/reconcile passes."
     },
     {
       "id": "BE-0307",
