@@ -12,7 +12,7 @@
 //   - Auth / policy:        AuthenticationRequired, AuthInvalid, AuthExpired,
 //     Unauthenticated, Forbidden, ScopeRequired
 //   - Validation:           InvalidInput (with field paths), Invalid
-//   - Not found / conflict: NotFound, Conflict
+//   - Not found / conflict: NotFound, Conflict, JobNotClaimed
 //   - Quota:                QuotaExceeded
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
 //     DokployConflict, DokployRateLimited, DokployUnavailable,
@@ -148,6 +148,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeScopeRequired:          {false, MessageSpecific, "the request did not supply the organization or resource scope required for authorization"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
 	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
+	yerr.CodeJobNotClaimed:          {false, MessageSpecific, "the provisioning job outcome was rejected because the worker does not hold the lease"},
 	yerr.CodeInvalidStateTransition: {false, MessageSpecific, "the requested lifecycle transition is not allowed by the resource state machine"},
 	yerr.CodeIdempotencyConflict:    {false, MessageSpecific, "an idempotency key was reused for a request that differs from the original"},
 	yerr.CodeQuotaExceeded:          {true, MessageSpecific, "an organization quota or plan limit is exhausted"},
@@ -372,6 +373,15 @@ func Conflict(message string) *yerr.Error {
 		message = "request conflicts with the current resource state"
 	}
 	return yerr.New(yerr.CodeConflict, message)
+}
+
+// JobNotClaimed builds an E_JOB_NOT_CLAIMED error (HTTP 409) for a
+// provisioning-job outcome write attempted by a worker that no longer holds
+// the job lease. The public message is fixed and value-free: it must never
+// expose worker ids, job ids, lease owners, or timing details.
+func JobNotClaimed() *yerr.Error {
+	return yerr.New(yerr.CodeJobNotClaimed, "the provisioning job is not claimed by this worker").
+		WithHint("claim the job again before recording an outcome")
 }
 
 // InvalidStateTransition builds an E_INVALID_STATE_TRANSITION error (HTTP 409)

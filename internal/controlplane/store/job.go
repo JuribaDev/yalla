@@ -186,6 +186,11 @@ type JobTransition struct {
 	// JobStatusRunning (a worker claiming the job) and ignored otherwise.
 	LeaseOwner    string
 	LeaseDuration time.Duration
+	// ExpectedLeaseOwner, when set, requires the currently locked job row to
+	// still be leased by that worker before recording a non-running outcome.
+	// Worker completion paths set it so an expired lease reclaimed by another
+	// worker cannot be overwritten by a stale original lease.
+	ExpectedLeaseOwner string
 	// NextRunAt schedules when the job next becomes eligible to claim. It is
 	// honoured for JobStatusRetrying (backoff); a zero value defaults to Now.
 	NextRunAt time.Time
@@ -474,6 +479,9 @@ func (r *JobRepository) Transition(ctx context.Context, tx *Tx, organizationID, 
 
 	if !current.Status.CanTransitionTo(to) {
 		return ProvisioningJob{}, apierr.InvalidStateTransition("provisioning_job", current.Status.String(), to.String())
+	}
+	if mut.ExpectedLeaseOwner != "" && to != JobStatusRunning && current.LeaseOwner != mut.ExpectedLeaseOwner {
+		return ProvisioningJob{}, apierr.JobNotClaimed()
 	}
 
 	// Derive the post-transition shape of the mutable columns from the target

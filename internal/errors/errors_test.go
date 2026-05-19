@@ -27,6 +27,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeScopeRequired, 2},
 		{CodeNotFound, 5},
 		{CodeConflict, 6},
+		{CodeJobNotClaimed, 6},
 		{CodeInvalidStateTransition, 6},
 		{CodeIdempotencyConflict, 6},
 		{CodeRateLimited, 7},
@@ -55,6 +56,22 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		if got := tc.code.ExitCode(); got != tc.want {
 			t.Errorf("Code(%q).ExitCode() = %d, want %d", tc.code, got, tc.want)
 		}
+	}
+}
+
+func TestJobNotClaimedDescriptionNamesLeaseOwnership(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeJobNotClaimed) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "provisioning job outcome rejected because the worker does not hold the lease"
+	if got != want {
+		t.Fatalf("E_JOB_NOT_CLAIMED description = %q, want %q", got, want)
 	}
 }
 

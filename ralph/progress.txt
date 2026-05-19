@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Provisioning job outcome writes should prove lease ownership at commit time: `worker.StoreClaimer.complete` sets `store.JobTransition.ExpectedLeaseOwner`, and `JobRepository.Transition` returns typed `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED` when the locked row is no longer leased by that worker. This prevents stale workers from overwriting a job already reclaimed after lease expiry.
 - Reconciliation-service-type stories should pin the subtype with a focused `internal/controlplane/reconcile/*_test.go` matrix while updating the canonical closed-set table when a new `ActionType` / `DriftReason` is introduced. Build/source config drift is value-bearing like env vars: route desired values only through Repairer-only fields (`Action.DesiredBuild`), keep `Type`/`Kind`/`Reason`/IDs value-free, and normalize build settings before diffing so renderer defaults (blank builder => dockerfile, blank dockerfile path => `Dockerfile`) do not create false positives.
 - `apierr.MigrationRequired` is the migration-gating public contract: it returns `E_MIGRATION_REQUIRED` (HTTP 503, non-retryable, generic message, fixed operator-action hint, exit code 3) and wraps schema/migrator causes only for server-side diagnostics. Use it when Postgres is reachable but the applied schema is behind the application contract; keep raw DSNs, SQL, migration filenames, and schema internals off the wire.
 - Postgres datastore outages now have their own public error contract: `apierr.StoreUnavailable` returns `E_DB_UNAVAILABLE` (HTTP 503, retryable, generic-message, dependency-tagged as `postgres`) and must preserve raw pgx/driver causes only for server-side logging. Durable queue outages continue to use `apierr.QueueUnavailable` / `E_UNAVAILABLE`, so new store-backed handler contract tests should assert `E_DB_UNAVAILABLE` for wrapped datastore failures.
@@ -36185,4 +36186,14 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `E_MIGRATION_REQUIRED` is for reachable Postgres with schema drift/operator action required, not a transient datastore outage. Keep it separate from `E_DB_UNAVAILABLE`.
   - The envelope redactor is a defence-in-depth backstop, not permission to attach raw DSNs to public hints. Constructors for generic-message codes should own fixed public hints and wrap raw details as causes only.
+---
+## 2026-05-19 03:38 +03 - BE-0534
+- What was implemented: Added the `E_JOB_NOT_CLAIMED` public error contract with stable shared error code, backend taxonomy entry, HTTP 409 mapping, typed `apierr.JobNotClaimed()` constructor, envelope redaction/docs-link tests, and worker queue lease-ownership enforcement for stale outcome writes.
+- Files changed: `internal/errors/errors.go`, `internal/errors/errors_test.go`, `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`, `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `internal/controlplane/store/job.go`, `internal/controlplane/worker/queue.go`, `internal/controlplane/worker/queue_test.go`, `internal/controlplane/worker/AGENTS.md`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`.
+- Results: All verification commands passed. `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups: None for this story. Adjacent error-contract stories remain unfinished in `ralph/prd.json`.
+- **Learnings for future iterations:**
+  - Worker queue outcome commits must verify the current lease owner inside the locked repository transition, not only rely on the stale in-memory lease object returned by `Claim`.
+  - `E_JOB_NOT_CLAIMED` is a 409 conflict-class queue coordination error; use it when a stale worker no longer owns the job lease and should not record success/failure/retry over a newer owner.
 ---

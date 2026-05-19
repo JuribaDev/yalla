@@ -391,6 +391,7 @@ func (l *storeLease) Release(ctx context.Context) error {
 // store's bookkeeping matches the claimer's clock under test.
 func (c *StoreClaimer) complete(ctx context.Context, job store.ProvisioningJob, to store.JobStatus, mut store.JobTransition) error {
 	mut.Now = c.now()
+	mut.ExpectedLeaseOwner = c.owner
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.completeTimeout)
 	defer cancel()
 	return c.store.Write(writeCtx, func(ctx context.Context, tx *store.Tx) error {

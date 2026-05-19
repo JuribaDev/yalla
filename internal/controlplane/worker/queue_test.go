@@ -361,6 +361,68 @@ func TestStoreClaimerReleaseRequeuesJob(t *testing.T) {
 	}
 }
 
+func TestStoreClaimerStaleLeaseOutcomeReturnsJobNotClaimed(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQueueStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedQueueOrg(t, db, f, "Acme")
+	stored := enqueueJob(ctx, t, s, repo, queueJobFixture(org.ID, "idem-stale-lease"))
+	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+
+	first, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store: s, Owner: "worker-stale-a",
+		Runner:        worker.RunnerFunc(func(context.Context, store.ProvisioningJob) error { return nil }),
+		LeaseDuration: time.Second,
+		Now:           func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer(first): %v", err)
+	}
+	firstLease, err := first.Claim(ctx)
+	if err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+	if firstLease == nil {
+		t.Fatal("first Claim returned nil lease")
+	}
+
+	now = now.Add(2 * time.Second)
+	second, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store: s, Owner: "worker-stale-b",
+		Runner:        worker.RunnerFunc(func(context.Context, store.ProvisioningJob) error { return nil }),
+		LeaseDuration: time.Minute,
+		Now:           func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer(second): %v", err)
+	}
+	secondLease, err := second.Claim(ctx)
+	if err != nil {
+		t.Fatalf("second Claim: %v", err)
+	}
+	if secondLease == nil {
+		t.Fatal("second Claim did not reclaim the expired lease")
+	}
+
+	err = firstLease.Run(ctx)
+	var typed *yerr.Error
+	if !errors.As(err, &typed) || typed.Code != yerr.CodeJobNotClaimed {
+		t.Fatalf("stale lease Run error = %v, want %s", err, yerr.CodeJobNotClaimed)
+	}
+
+	if err := secondLease.Run(ctx); err != nil {
+		t.Fatalf("second lease Run: %v", err)
+	}
+	final := getJob(ctx, t, s, repo, org.ID, stored.ID)
+	if final.Status != store.JobStatusSucceeded {
+		t.Fatalf("final status = %q, want succeeded", final.Status)
+	}
+}
+
 // TestStoreClaimerTwoWorkersRunEachJobOnce is the headline guarantee: two
 // workers polling the same queue concurrently run every job exactly once. Each
 // worker has its own StoreClaimer and lease owner; SELECT ... FOR UPDATE SKIP

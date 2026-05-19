@@ -58,6 +58,11 @@ const (
 	CodeScopeRequired Code = "E_SCOPE_REQUIRED"
 	CodeNotFound      Code = "E_NOT_FOUND"
 	CodeConflict      Code = "E_CONFLICT"
+	// CodeJobNotClaimed marks a provisioning-job outcome write attempted by a
+	// worker that no longer holds the job lease. It is distinct from generic
+	// conflict so worker supervisors and agents can treat stale lease ownership
+	// as a queue coordination failure instead of a resource precondition.
+	CodeJobNotClaimed Code = "E_JOB_NOT_CLAIMED"
 	// CodeInvalidStateTransition marks a lifecycle transition that is not
 	// allowed by the resource's documented state machine. It is distinct from
 	// CodeConflict so agents can tell "retry with a fresh version" apart from
@@ -166,6 +171,7 @@ var codeDescriptions = map[Code]string{
 	CodeScopeRequired:          "required organization or resource scope was not supplied",
 	CodeNotFound:               "resource, operationId, or schema does not exist",
 	CodeConflict:               "request rejected because of a precondition or state conflict",
+	CodeJobNotClaimed:          "provisioning job outcome rejected because the worker does not hold the lease",
 	CodeInvalidStateTransition: "requested lifecycle transition is not allowed by the resource state machine",
 	CodeIdempotencyConflict:    "idempotency key reused for a request that differs from the original",
 	CodeRateLimited:            "request rejected because the caller exceeded a request rate limit",
@@ -199,7 +205,7 @@ func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeValidation, CodeInvalidInput,
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
-		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
+		CodeConflict, CodeJobNotClaimed, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug,
 		CodeNetwork, CodeDBUnavailable, CodeMigrationRequired, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
@@ -242,7 +248,7 @@ func (c Code) ExitCode() int {
 		return 4
 	case CodeNotFound:
 		return 5
-	case CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict:
+	case CodeConflict, CodeJobNotClaimed, CodeInvalidStateTransition, CodeIdempotencyConflict:
 		return 6
 	case CodeRateLimited, CodeQuotaExceeded:
 		return 7

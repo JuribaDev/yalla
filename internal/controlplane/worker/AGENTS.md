@@ -20,6 +20,11 @@ Background provisioning/metering workers for the control plane.
   dead_letter) is **committed** — the loop must not release it. It returns
   non-nil **only** when shutdown interrupted the job before it finished, so the
   loop releases the lease for another worker.
+- Outcome writes from `StoreClaimer.complete` set
+  `store.JobTransition.ExpectedLeaseOwner`; if an expired lease has already
+  been reclaimed by another worker, the stale worker must receive
+  `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED` instead of overwriting the new
+  lease holder's state.
 - Recording an outcome (`StoreClaimer.complete`) runs on a context detached
   from cancellation (`context.WithoutCancel` + timeout): once the runner ran,
   the result must reach the database even mid-shutdown.

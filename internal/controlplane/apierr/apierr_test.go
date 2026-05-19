@@ -57,7 +57,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 	}
 	required := []yerr.Code{
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
-		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
+		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
@@ -96,6 +96,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"scope required", ScopeRequired("organization"), yerr.CodeScopeRequired, 400},
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
+		{"job not claimed", JobNotClaimed(), yerr.CodeJobNotClaimed, 409},
 		{"invalid state transition", InvalidStateTransition("deployment", "queued", "succeeded"), yerr.CodeInvalidStateTransition, 409},
 		{"idempotency conflict", IdempotencyConflict(""), yerr.CodeIdempotencyConflict, 409},
 		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeValidation, 400},
@@ -181,6 +182,50 @@ func TestMigrationRequiredContract(t *testing.T) {
 	}
 	if strings.Contains(body, "postgres://") || strings.Contains(body, "pass@") || strings.Contains(body, "127.0.0.1") {
 		t.Errorf("migration-required envelope leaked datastore details: %s", body)
+	}
+}
+
+func TestJobNotClaimedContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_job_not_claimed_secret_token_value"
+	err := JobNotClaimed().WithHint("retry " + leaked)
+	if err.Code != yerr.CodeJobNotClaimed {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeJobNotClaimed)
+	}
+	if err.Message != "the provisioning job is not claimed by this worker" {
+		t.Fatalf("message = %q, want fixed lease-ownership message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_JOB_NOT_CLAIMED must not be retryable by replaying the same outcome write")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-job-not-claimed", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-job-not-claimed"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeJobNotClaimed)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_job_not_claimed_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("job-not-claimed envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in job-not-claimed envelope: %s", output.Sentinel, body)
 	}
 }
 
