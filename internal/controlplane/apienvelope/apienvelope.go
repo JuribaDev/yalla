@@ -47,11 +47,33 @@ const DocsBaseURL = "https://docs.yalla.dev/api/errors"
 // successEnvelope is the wire shape of a yalla.output.v1 response. It is
 // unexported so no handler can hand-roll one outside this package.
 type successEnvelope struct {
-	SchemaVersion string   `json:"schema_version"`
-	OK            bool     `json:"ok"`
-	Data          any      `json:"data"`
-	RequestID     string   `json:"request_id"`
-	Warnings      []string `json:"warnings,omitempty"`
+	SchemaVersion string    `json:"schema_version"`
+	OK            bool      `json:"ok"`
+	Data          any       `json:"data"`
+	RequestID     string    `json:"request_id"`
+	Warnings      []Warning `json:"warnings,omitempty"`
+}
+
+// Warning is a structured, non-fatal advisory carried by a success envelope.
+// Codes are stable public contracts. Entitlement warnings populate the
+// machine-readable fields so callers can warn, upgrade, or retry without
+// parsing Message or Hint.
+type Warning struct {
+	Code           string         `json:"code"`
+	Message        string         `json:"message,omitempty"`
+	EntitlementKey string         `json:"entitlement_key,omitempty"`
+	Usage          int64          `json:"usage,omitempty"`
+	Threshold      int            `json:"threshold,omitempty"`
+	Limit          int64          `json:"limit,omitempty"`
+	Period         *WarningPeriod `json:"period,omitempty"`
+	Hint           string         `json:"hint,omitempty"`
+}
+
+// WarningPeriod is the reset or billing period a warning applies to.
+type WarningPeriod struct {
+	Kind  string `json:"kind"`
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 // errorEnvelope is the wire shape of a yalla.error.v1 response.
@@ -164,12 +186,26 @@ func DocURLForCode(code yerr.Code) string {
 // included (empty until request-ID middleware lands). warnings is optional and
 // omitted from the wire when empty; warning strings are redacted defensively.
 func WriteData(w http.ResponseWriter, status int, requestID string, data any, warnings ...string) {
+	structured := make([]Warning, 0, len(warnings))
+	for _, warning := range warnings {
+		structured = append(structured, Warning{
+			Code:    "WARNING",
+			Message: warning,
+		})
+	}
+	WriteDataWithWarnings(w, status, requestID, data, structured)
+}
+
+// WriteDataWithWarnings renders a yalla.output.v1 success envelope with
+// structured non-fatal warnings. Warning text is redacted defensively at the
+// renderer boundary.
+func WriteDataWithWarnings(w http.ResponseWriter, status int, requestID string, data any, warnings []Warning) {
 	writeJSON(w, status, successEnvelope{
 		SchemaVersion: SuccessSchema,
 		OK:            true,
 		Data:          data,
 		RequestID:     requestID,
-		Warnings:      redactAll(warnings),
+		Warnings:      redactWarnings(warnings),
 	})
 }
 
@@ -248,15 +284,24 @@ func errorCode(err *yerr.Error) yerr.Code {
 	return err.Code
 }
 
-// redactAll returns a redacted copy of the supplied strings, or nil when the
-// input is empty so the omitempty tag drops the field from the wire.
-func redactAll(in []string) []string {
+func redactWarnings(in []Warning) []Warning {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = envelopeRedactor.Redact(s)
+	out := make([]Warning, 0, len(in))
+	for _, warning := range in {
+		warning.Code = envelopeRedactor.Redact(warning.Code)
+		warning.Message = envelopeRedactor.Redact(warning.Message)
+		warning.EntitlementKey = envelopeRedactor.Redact(warning.EntitlementKey)
+		warning.Hint = envelopeRedactor.Redact(warning.Hint)
+		if warning.Period != nil {
+			period := *warning.Period
+			period.Kind = envelopeRedactor.Redact(period.Kind)
+			period.Start = envelopeRedactor.Redact(period.Start)
+			period.End = envelopeRedactor.Redact(period.End)
+			warning.Period = &period
+		}
+		out = append(out, warning)
 	}
 	return out
 }

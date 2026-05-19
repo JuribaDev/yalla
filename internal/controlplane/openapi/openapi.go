@@ -342,9 +342,32 @@ func standardSchemas() SchemaMap {
 				"ok":             {Type: "boolean", Description: "Always true for a success envelope."},
 				"data":           {Description: "Operation-specific payload. Its shape depends on the endpoint."},
 				"request_id":     {Type: "string", Description: "Correlates this response with logs and audit records."},
-				"warnings":       {Type: "array", Description: "Optional non-fatal advisories.", Items: &Schema{Type: "string"}},
+				"warnings":       {Type: "array", Description: "Optional non-fatal advisories. Entitlement warnings include entitlement_key, usage, threshold, limit, period, and hint.", Items: &Schema{Ref: schemaRef("SuccessWarning")}},
 			},
 			Example: json.RawMessage(`{"schema_version":"` + output.SuccessSchema + `","ok":true,"data":{"api_key":"yalla_sk_live_` + output.Sentinel + `"},"request_id":"req_2f9c1a7b"}`),
+		},
+		"SuccessWarning": {
+			Type:        "object",
+			Description: "Structured non-fatal warning carried by a success envelope.",
+			Required:    []string{"code"},
+			Properties: SchemaMap{
+				"code":            {Type: "string", Description: "Stable warning code, for example ENTITLEMENT_THRESHOLD_WARNING or ENTITLEMENT_LIMIT_EXCEEDED."},
+				"message":         {Type: "string", Description: "Human-readable non-secret warning text."},
+				"entitlement_key": {Type: "string", Description: "Stable entitlement or usage key the warning applies to."},
+				"usage":           {Type: "integer", Description: "Current usage observed for the entitlement period."},
+				"threshold":       {Type: "integer", Description: "Reached warning threshold percentage."},
+				"limit":           {Type: "integer", Description: "Configured entitlement limit."},
+				"period": {
+					Type:        "object",
+					Description: "Billing or reset period the warning applies to.",
+					Properties: SchemaMap{
+						"kind":  {Type: "string", Description: "Period kind, usually billing_period."},
+						"start": {Type: "string", Description: "Inclusive period start as RFC3339."},
+						"end":   {Type: "string", Description: "Exclusive period end as RFC3339."},
+					},
+				},
+				"hint": {Type: "string", Description: "Recovery or upgrade guidance."},
+			},
 		},
 		SchemaErrorEnvelope: {
 			Type:        "object",

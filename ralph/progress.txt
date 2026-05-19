@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Success-envelope soft-limit alerts are structured `yalla.output.v1.warnings`, not endpoint `data`: emit them through `apienvelope.WriteDataWithWarnings` with stable codes plus `entitlement_key`, `usage`, `threshold`, `limit`, optional `period`, and recovery/upgrade `hint`; derive usage warnings only from already-authorized tenant-scoped rows so denied or cross-tenant responses never leak warning metadata.
 - Local Docker Compose is both a Postgres integration-test dependency stack and an opt-in `control-plane` operations profile: keep `postgres` profile-free with a pinned major image and healthcheck; put `yalla-api` and `yalla-worker` behind `profiles: [control-plane]`; build them from `Dockerfile` / `Dockerfile.worker`; require secret-shaped environment values through `${VAR:?message}` interpolation; wait on `postgres.condition=service_healthy`; harden API/worker services with `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `/tmp` tmpfs, explicit JSON logging, and `restart: unless-stopped`; publish only the API's `8080:8080` for `/healthz` and `/readyz`.
 - Production worker container artifacts use a dedicated `Dockerfile.worker` rather than overloading the API image: keep the same distroless/nonroot/no-secrets hardening, build `./cmd/yalla-worker`, copy `/out/yalla-worker` to `/usr/local/bin/yalla-worker`, keep the entrypoint on that binary, document that the worker has no HTTP listener, and pin the contract through `internal/release/container_hardening_static_test.go` plus `SECURITY.md`.
 - Container resource metering uses the same source/attribution/emission split as Traefik and storage metrics: source adapters normalize bounded windows into `ContainerMetricSample` values, `StoreContainerResolver` requires a live service-level `dokploy_refs` mapping before attribution, ambiguous or deleted services are quarantined before billing, and `ContainerUsageEmitter` writes only fully scoped billing-grade samples to append-only `usage_events`.
@@ -38522,4 +38523,43 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Storage and backup GB-month metering should separate period math from usage_event emission: source helpers clip byte-size windows to period/resource/retention lifetimes, while emitters only write attributed billing-grade `usage_events`.
   - Explicit correction events should set `EventType: store.UsageEventTypeAdjusted`; the default remains `consumed` for normal scanner samples.
+---
+
+## 2026-05-19 14:04 +03 - BE-0578
+- What was implemented
+  - Added structured `yalla.output.v1` success-envelope warnings through `apienvelope.Warning` and `WriteDataWithWarnings`.
+  - Added usage-derived entitlement warnings on `GET /v1/organizations/{org_id}/usage` for `http_bandwidth_total`, `http_requests`, `build_minutes`, `backup_storage_gb_month`, and `monthly_deployments`.
+  - Warnings include stable code, entitlement key, usage, reached threshold, limit, billing period, and recovery/upgrade hint without changing the endpoint `data` schema.
+  - Updated OpenAPI success-envelope warning schema and handler guidance.
+  - Marked BE-0578 as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `internal/controlplane/httpapi/usage.go`
+  - `internal/controlplane/httpapi/usage_test.go`
+  - `internal/controlplane/openapi/openapi.go`
+  - `internal/controlplane/httpapi/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` not run: `goimports` is not installed on PATH.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/apienvelope ./internal/controlplane/httpapi ./internal/controlplane/openapi`
+  - `go test ./internal/controlplane/httpapi -run 'TestListUsage|TestOpenAPI|TestEveryRegisteredRouteIsDocumented'`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test -run TestOpenAPI ./...`
+  - `go test -run TestRedaction ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+- Results
+  - All executed checks passed.
+- Remaining risks or follow-ups
+  - Warnings currently surface on the organization usage endpoint because that is the customer-visible surface with tenant-scoped usage plus limits; future endpoints can reuse `WriteDataWithWarnings` when they have the same already-authorized usage context.
+- **Learnings for future iterations:**
+  - Keep soft-limit warning metadata at the success-envelope layer to avoid endpoint data-schema churn.
+  - Generate warnings only from rows the caller is already authorized to see; this preserves tenant isolation and prevents warning metadata from revealing cross-tenant resource existence.
+  - `goimports` is still absent from PATH in this runner; document that explicitly when running the required quality loop.
 ---

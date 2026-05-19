@@ -119,7 +119,21 @@ func decodeUsageList(t *testing.T, body []byte) usageEnvelope {
 type usageEnvelope struct {
 	SchemaVersion string `json:"schema_version"`
 	RequestID     string `json:"request_id"`
-	Data          struct {
+	Warnings      []struct {
+		Code           string `json:"code"`
+		Message        string `json:"message"`
+		EntitlementKey string `json:"entitlement_key"`
+		Usage          int64  `json:"usage"`
+		Threshold      int    `json:"threshold"`
+		Limit          int64  `json:"limit"`
+		Hint           string `json:"hint"`
+		Period         *struct {
+			Kind  string `json:"kind"`
+			Start string `json:"start"`
+			End   string `json:"end"`
+		} `json:"period"`
+	} `json:"warnings"`
+	Data struct {
 		Usage []struct {
 			Resource  string `json:"resource"`
 			UsedValue int64  `json:"used_value"`
@@ -191,12 +205,82 @@ func TestListUsageReturnsCurrentUsageAndLimits(t *testing.T) {
 	if first.Limit.LimitValue != 10 || first.Limit.EnforcementMode != "hard" || first.Limit.Source != "organization" {
 		t.Errorf("[0].limit = %+v, want {10, hard, organization}", first.Limit)
 	}
+	if len(env.Warnings) != 0 {
+		t.Errorf("warnings = %+v, want none for non-metered resource rows below warning scope", env.Warnings)
+	}
 	second := env.Data.Usage[1]
 	if second.Resource != "domains" || second.UsedValue != 5 {
 		t.Errorf("[1] = %+v, want domains with used_value=5", second)
 	}
 	if second.Limit != nil {
 		t.Errorf("[1].limit = %+v, want nil for an unconstrained resource", second.Limit)
+	}
+}
+
+func TestListUsageEmitsEntitlementWarningsInSuccessEnvelope(t *testing.T) {
+	t.Parallel()
+
+	const orgID = "org_acme"
+	start := mustParseTime(t, "2026-05-01T00:00:00Z")
+	end := mustParseTime(t, "2026-06-01T00:00:00Z")
+	mode := store.EnforcementModeSoft
+	scope := store.QuotaScopePlan
+	limit100 := int64(100)
+	limit10 := int64(10)
+	reader := fakeUsageReader{
+		usage: []store.OrganizationResourceUsage{
+			{Resource: store.QuotaResourceHTTPBandwidthTotal, UsedValue: 80, LimitValue: &limit100, EnforcementMode: &mode, Scope: &scope, PeriodStart: &start, PeriodEnd: &end, WarningThresholds: []int{80, 90, 100}},
+			{Resource: store.QuotaResourceHTTPRequests, UsedValue: 91, LimitValue: &limit100, EnforcementMode: &mode, Scope: &scope, PeriodStart: &start, PeriodEnd: &end, WarningThresholds: []int{80, 90, 100}},
+			{Resource: store.QuotaResourceBuildMinutes, UsedValue: 101, LimitValue: &limit100, EnforcementMode: &mode, Scope: &scope, PeriodStart: &start, PeriodEnd: &end, WarningThresholds: []int{80, 90, 100}},
+			{Resource: store.QuotaResourceBackupStorageGBMonth, UsedValue: 10, LimitValue: &limit10, EnforcementMode: &mode, Scope: &scope, PeriodStart: &start, PeriodEnd: &end, WarningThresholds: []int{80, 90, 100}},
+			{Resource: store.QuotaResourceMonthlyDeployments, UsedValue: 9, LimitValue: &limit10, EnforcementMode: &mode, Scope: &scope, PeriodStart: &start, PeriodEnd: &end, WarningThresholds: []int{80, 90, 100}},
+		},
+	}
+
+	handler := listUsageHandlerFor(usageActorIdentity(orgID, "usr_owner"), nil, reader)
+	rec := getUsage(handler, orgID, "a-valid-session-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	env := decodeUsageList(t, rec.Body.Bytes())
+	if len(env.Warnings) != 5 {
+		t.Fatalf("warnings len = %d, want 5; body=%s", len(env.Warnings), rec.Body.String())
+	}
+	got := map[string]struct {
+		code      string
+		usage     int64
+		threshold int
+		limit     int64
+	}{}
+	for _, warning := range env.Warnings {
+		got[warning.EntitlementKey] = struct {
+			code      string
+			usage     int64
+			threshold int
+			limit     int64
+		}{warning.Code, warning.Usage, warning.Threshold, warning.Limit}
+		if warning.Hint == "" {
+			t.Errorf("warning for %s has empty hint", warning.EntitlementKey)
+		}
+		if warning.Period == nil || warning.Period.Kind != "billing_period" || warning.Period.Start != "2026-05-01T00:00:00Z" || warning.Period.End != "2026-06-01T00:00:00Z" {
+			t.Errorf("warning period for %s = %+v, want billing period", warning.EntitlementKey, warning.Period)
+		}
+	}
+	want := map[string]struct {
+		code      string
+		usage     int64
+		threshold int
+		limit     int64
+	}{
+		"http_bandwidth_total":    {"ENTITLEMENT_THRESHOLD_WARNING", 80, 80, 100},
+		"http_requests":           {"ENTITLEMENT_THRESHOLD_WARNING", 91, 90, 100},
+		"build_minutes":           {"ENTITLEMENT_LIMIT_EXCEEDED", 101, 100, 100},
+		"backup_storage_gb_month": {"ENTITLEMENT_LIMIT_EXCEEDED", 10, 100, 10},
+		"monthly_deployments":     {"ENTITLEMENT_THRESHOLD_WARNING", 9, 90, 10},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("warnings = %+v, want %+v", got, want)
 	}
 }
 
@@ -378,6 +462,9 @@ func TestListUsageDeniesCrossTenantPrincipal(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "used_value") {
 		t.Errorf("body leaked usage data on a denied request: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "warnings") {
+		t.Errorf("body leaked success-envelope warnings on a denied request: %s", rec.Body.String())
 	}
 }
 

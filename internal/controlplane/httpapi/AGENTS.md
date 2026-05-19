@@ -268,6 +268,11 @@ rule meets its configured confidence threshold.
   override reasons. Keep empty collection fields as `[]` for agents; for
   example, `trend_summaries` remains a non-nil empty array until usage-event
   aggregation is implemented.
+- Usage-derived soft-limit alerts belong in the top-level
+  `yalla.output.v1.warnings` array via `apienvelope.WriteDataWithWarnings`, not
+  inside endpoint-specific `data`. Keep warning objects structured with stable
+  codes plus `entitlement_key`, `usage`, `threshold`, `limit`, optional
+  `period`, and a recovery/upgrade `hint`.
 
 ## Self endpoints (`/v1/me*`)
 

@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -71,6 +73,14 @@ type usageTrend struct {
 	Delta    int64  `json:"delta"`
 }
 
+var envelopeWarningResources = map[store.QuotaResource]struct{}{
+	store.QuotaResourceHTTPBandwidthTotal:   {},
+	store.QuotaResourceHTTPRequests:         {},
+	store.QuotaResourceBuildMinutes:         {},
+	store.QuotaResourceBackupStorageGBMonth: {},
+	store.QuotaResourceMonthlyDeployments:   {},
+}
+
 // resourceUsageCap is the limit half of a resourceUsage: the numeric
 // ceiling, the enforcement mode, and the source scope that produced the
 // value. The three fields always travel together — they are projected from
@@ -105,6 +115,70 @@ func resourceUsageOf(u store.OrganizationResourceUsage) resourceUsage {
 		out.WarningThresholds = warningThresholds(u.WarningThresholds, *u.LimitValue)
 	}
 	return out
+}
+
+func usageEnvelopeWarnings(usage []store.OrganizationResourceUsage) []apienvelope.Warning {
+	warnings := make([]apienvelope.Warning, 0)
+	for _, row := range usage {
+		if _, ok := envelopeWarningResources[row.Resource]; !ok {
+			continue
+		}
+		if row.LimitValue == nil || *row.LimitValue <= 0 || row.EnforcementMode == nil || *row.EnforcementMode == store.EnforcementModeDisabled {
+			continue
+		}
+		thresholds := warningThresholds(row.WarningThresholds, *row.LimitValue)
+		threshold := highestReachedThreshold(row.UsedValue, *row.LimitValue, thresholds)
+		if threshold == 0 {
+			continue
+		}
+		code := "ENTITLEMENT_THRESHOLD_WARNING"
+		message := fmt.Sprintf("%s usage reached %d%% of its configured limit", row.Resource, threshold)
+		if row.UsedValue >= *row.LimitValue {
+			code = "ENTITLEMENT_LIMIT_EXCEEDED"
+			message = fmt.Sprintf("%s usage exceeded its configured limit", row.Resource)
+		}
+		warning := apienvelope.Warning{
+			Code:           code,
+			Message:        message,
+			EntitlementKey: row.Resource.String(),
+			Usage:          row.UsedValue,
+			Threshold:      threshold,
+			Limit:          *row.LimitValue,
+			Hint:           "reduce usage before the period resets or upgrade the organization's entitlement",
+		}
+		if row.PeriodStart != nil && row.PeriodEnd != nil {
+			warning.Period = warningPeriodOf(*row.PeriodStart, *row.PeriodEnd)
+		}
+		warnings = append(warnings, warning)
+	}
+	return warnings
+}
+
+func highestReachedThreshold(used, limit int64, thresholds []int) int {
+	if limit <= 0 || used <= 0 {
+		return 0
+	}
+	highest := 0
+	for _, threshold := range thresholds {
+		if threshold <= 0 {
+			continue
+		}
+		if threshold > 100 {
+			threshold = 100
+		}
+		if used*100 >= limit*int64(threshold) && threshold > highest {
+			highest = threshold
+		}
+	}
+	return highest
+}
+
+func warningPeriodOf(start, end time.Time) *apienvelope.WarningPeriod {
+	return &apienvelope.WarningPeriod{
+		Kind:  "billing_period",
+		Start: start.UTC().Format(time.RFC3339),
+		End:   end.UTC().Format(time.RFC3339),
+	}
 }
 
 // listUsageHandler builds the GET /v1/organizations/{org_id}/usage handler.
@@ -152,10 +226,10 @@ func listUsageHandler(reader UsageReader) http.HandlerFunc {
 			resources = append(resources, resourceUsageOf(u))
 		}
 
-		apienvelope.WriteData(w, http.StatusOK, requestID(r), listUsagePayload{
+		apienvelope.WriteDataWithWarnings(w, http.StatusOK, requestID(r), listUsagePayload{
 			Period:         period,
 			Usage:          resources,
 			TrendSummaries: []usageTrend{},
-		})
+		}, usageEnvelopeWarnings(usage))
 	}
 }

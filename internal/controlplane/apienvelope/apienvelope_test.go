@@ -18,7 +18,7 @@ type decodedSuccess struct {
 	OK            bool           `json:"ok"`
 	Data          map[string]any `json:"data"`
 	RequestID     string         `json:"request_id"`
-	Warnings      []string       `json:"warnings"`
+	Warnings      []Warning      `json:"warnings"`
 }
 
 // decodedError mirrors the yalla.error.v1 wire shape for assertions.
@@ -79,8 +79,8 @@ func TestWriteDataIncludesWarnings(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(env.Warnings) != 1 || env.Warnings[0] != "deprecated field used" {
-		t.Errorf("warnings = %v, want [deprecated field used]", env.Warnings)
+	if len(env.Warnings) != 1 || env.Warnings[0].Code != "WARNING" || env.Warnings[0].Message != "deprecated field used" {
+		t.Errorf("warnings = %v, want one structured WARNING", env.Warnings)
 	}
 }
 
