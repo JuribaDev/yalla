@@ -235,6 +235,23 @@ error handling guidance, and failure recovery. Any future frontend-handoff-guide
 change should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Pricing and usage tracking architecture artifact (BE-0582)
+
+`pricing_and_usage_tracking_architecture_static_test.go` pins the operator-facing
+pricing and usage tracking architecture runbook at
+`docs/operations/pricing-and-usage-tracking-architecture.md`: the runbook must
+document why Dokploy monitoring is not the billing source of truth, Traefik
+metrics attribution through tenant-scoped `dokploy_refs`, the append-only
+`usage_events` and `usage_counters` pipeline, provider-neutral `billing.ExportBatch`
+exports, entitlement resolution through `internal/controlplane/entitlements`,
+hard-limit / soft-limit / metered / observability metric keys, exact verification
+commands, expected output shapes, failure recovery, stable `yalla.output.v1` /
+`yalla.error.v1` envelopes, isolated Postgres integration tests,
+fake-Dokploy-by-default behavior, and secret redaction. Any future
+pricing-and-usage-tracking-architecture change should update the runbook,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the same
+edit.
+
 ## Production config reference artifact (BE-0557)
 
 `production_config_reference_static_test.go` pins the operator-facing

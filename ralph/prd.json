@@ -11967,8 +11967,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created docs/operations/pricing-and-usage-tracking-architecture.md with Dokploy-not-billing-source-of-truth explanation, Traefik metrics attribution diagrams, hard/soft/metered usage key tables, entitlement resolution, metering pipeline, verification commands, and failure recovery. Created internal/release/pricing_and_usage_tracking_architecture_static_test.go pinning the document. Wired into CI, verify.sh, SECURITY.md, and internal/release/AGENTS.md. All checks pass."
     },
     {
       "id": "BE-0583",

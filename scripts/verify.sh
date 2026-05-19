@@ -436,6 +436,12 @@ if ! go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact; t
   required_failed=1
 fi
 
+# Required: pricing and usage tracking architecture artifact static tests
+step "go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact"
+if ! go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact; then
+  required_failed=1
+fi
+
 # 33. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then

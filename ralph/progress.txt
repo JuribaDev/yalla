@@ -40239,3 +40239,43 @@ change that widened Reason to caller-supplied data.
   - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase.
   - When documenting auth schemes that include `Bearer`, remove `Bearer ` from the forbidden-string check in the static test so the legitimate documentation substring does not fail the redaction gate.
 ---
+
+## 2026-05-19 22:43 +03 - BE-0582
+- What was implemented
+  - Created `docs/operations/pricing-and-usage-tracking-architecture.md` documenting why Dokploy monitoring is not the billing source of truth, Traefik metrics attribution diagrams, hard-limit/soft-limit/metered/observability usage key tables, entitlement resolution through `internal/controlplane/entitlements`, the metering source/attribution/emission pipeline, provider-neutral `billing.ExportBatch` exports, usage aggregation via `UsageCounterRepository.AggregateUsageEvents`, required environment variables with redacted placeholders, exact verification commands, expected output shapes, failure recovery guidance, and stable JSON envelope contracts.
+  - Created `internal/release/pricing_and_usage_tracking_architecture_static_test.go` to pin the runbook contents and verify wiring through `SECURITY.md`, `.github/workflows/ci.yml`, and `scripts/verify.sh`.
+  - Wired the new static artifact gate into CI, `scripts/verify.sh`, `SECURITY.md` (verification-gates table row plus dedicated section), and `internal/release/AGENTS.md`.
+  - Updated `ralph/prd.json` to mark `BE-0582` as passing.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/operations/pricing-and-usage-tracking-architecture.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/pricing_and_usage_tracking_architecture_static_test.go`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` skipped because `goimports` is not installed.
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact`
+- Results
+  - All required and focused checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment; noted in progress.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - Documentation artifacts should use the existing static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase. Line-wrapped Markdown bullet continuations can break substring matches.
+  - The `observability_dashboard_guide_static_test.go` pattern (multiple focused test functions: ReviewScope, Diagrams, UsageKeys, RequiredVariables, VerificationCommands, ExpectedOutputs, RedactionAndRecovery, ContractsAndSafety, WiredIntoReleaseGates) is a good template for future documentation artifact static tests.
+---

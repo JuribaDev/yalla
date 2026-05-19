@@ -134,6 +134,7 @@ defined in `.github/workflows/ci.yml`:
 | Rollback checklist artifact | `go test ./internal/release/... -run TestRollbackChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Break-glass playbook artifact | `go test ./internal/release/... -run TestBreakGlassPlaybookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Frontend handoff API guide artifact | `go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Pricing and usage tracking architecture artifact | `go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -982,6 +983,31 @@ lists expected output shapes instead of full command transcripts.
 
 CI pins the frontend handoff API guide with
 `go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact`.
+
+## Pricing and Usage Tracking Architecture Artifact
+
+The pricing and usage tracking architecture runbook lives at
+`docs/operations/pricing-and-usage-tracking-architecture.md`. It documents why
+Dokploy monitoring is not the billing source of truth, how Traefik metrics are
+attributed to tenant-scoped services through `dokploy_refs`, how usage aggregates
+into append-only `usage_events` and deterministic `usage_counters`, and how
+billing exports are provider-neutral snapshots consumed by Stripe, manual
+invoicing, or future adapters.
+
+The runbook preserves the production boundary: customers, agents, CI, and
+frontend traffic all reach Dokploy only through the Yalla API; Postgres remains
+the source of truth; `yalla-worker` performs provisioning; and Dokploy remains a
+private dependency. Customers must never receive Dokploy API tokens.
+
+The artifact requires runtime secrets to stay in operator-managed configuration
+such as `/etc/yalla/control-plane.env`, uses only `<redacted:...>` placeholders
+for secret-shaped values, documents exact verification commands including
+`go test ./...`, `go test -race ./...`, `go vet ./...`, `scripts/verify.sh`, and
+`go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact`,
+and lists expected output shapes instead of full command transcripts.
+
+CI pins the pricing and usage tracking architecture runbook with
+`go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 
