@@ -221,6 +221,20 @@ secret redaction, and failure recovery. Any future security-review-doc change
 should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Frontend handoff API guide artifact (BE-0562)
+
+`frontend_handoff_api_guide_static_test.go` pins the developer-facing frontend
+handoff API guide at `docs/development/frontend-handoff-api-guide.md`: the guide
+must document the stable public API contract for frontend, mobile, and external
+integrations, including base URL and versioning (`/v1`, `/v1/admin`),
+authentication schemes (Yalla API key and session/JWT bearer), stable
+`yalla.output.v1` / `yalla.error.v1` envelopes with `request_id`, the
+Organization -> Project -> Environment -> Service hierarchy, stable ID prefixes,
+cursor-based pagination, common mutating endpoint patterns, frontend-specific
+error handling guidance, and failure recovery. Any future frontend-handoff-guide
+change should update the guide, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Production config reference artifact (BE-0557)
 
 `production_config_reference_static_test.go` pins the operator-facing

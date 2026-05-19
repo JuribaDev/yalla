@@ -424,6 +424,12 @@ if ! go test ./internal/release/... -run TestBreakGlassPlaybookArtifact; then
   required_failed=1
 fi
 
+# Required: frontend handoff API guide artifact static tests
+step "go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact"
+if ! go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact; then
+  required_failed=1
+fi
+
 # Required: agent story execution guide artifact static tests
 step "go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact"
 if ! go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact; then

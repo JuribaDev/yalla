@@ -133,6 +133,7 @@ defined in `.github/workflows/ci.yml`:
 | Release checklist artifact | `go test ./internal/release/... -run TestReleaseChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Rollback checklist artifact | `go test ./internal/release/... -run TestRollbackChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Break-glass playbook artifact | `go test ./internal/release/... -run TestBreakGlassPlaybookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Frontend handoff API guide artifact | `go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -955,6 +956,32 @@ that it must never run against production.
 
 CI pins the break-glass playbook with
 `go test ./internal/release/... -run TestBreakGlassPlaybookArtifact`.
+
+## Frontend Handoff API Guide Artifact
+
+The developer-facing frontend handoff API guide lives at
+`docs/development/frontend-handoff-api-guide.md`. It documents the stable public
+API contract for frontend, mobile, and external integrations: base URL and
+versioning (`/v1`, `/v1/admin`), authentication schemes (Yalla API key and
+session/JWT bearer), stable `yalla.output.v1` / `yalla.error.v1` envelopes with
+`request_id`, the Organization -> Project -> Environment -> Service hierarchy,
+stable ID prefixes, cursor-based pagination, common mutating endpoint patterns,
+frontend-specific error handling guidance, and failure recovery.
+
+The guide preserves the production boundary: customers, agents, CI, and frontend
+traffic all reach Dokploy only through the Yalla API; Postgres remains the
+source of truth; `yalla-worker` performs provisioning; and Dokploy remains a
+private dependency. Customers must never receive Dokploy API tokens.
+
+The artifact requires runtime secrets to stay in operator-managed configuration
+such as `/etc/yalla/control-plane.env`, uses only `<redacted:...>` placeholders
+for secret-shaped values, documents exact verification commands including
+`go test ./...`, `go test -race ./...`, `go vet ./...`, `scripts/verify.sh`, and
+`go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact`, and
+lists expected output shapes instead of full command transcripts.
+
+CI pins the frontend handoff API guide with
+`go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

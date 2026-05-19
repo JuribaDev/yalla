@@ -11587,8 +11587,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: frontend handoff API guide."
+      "passes": true,
+      "notes": "Added docs/development/frontend-handoff-api-guide.md with the stable public API contract for frontend consumers: base URL/versioning, auth schemes, JSON envelopes, resource hierarchy, stable ID prefixes, pagination, error handling matrix, local development environment, verification commands, redaction checks, and failure recovery. Added internal/release/frontend_handoff_api_guide_static_test.go pinning the artifact content and wiring into scripts/verify.sh, .github/workflows/ci.yml, SECURITY.md, and internal/release/AGENTS.md. All required and focused checks passed."
     },
     {
       "id": "BE-0563",

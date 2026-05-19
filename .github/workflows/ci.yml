@@ -222,6 +222,9 @@ jobs:
       - name: Break-glass playbook artifact static tests
         run: go test ./internal/release/... -run TestBreakGlassPlaybookArtifact
 
+      - name: Frontend handoff API guide artifact static tests
+        run: go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact
+
       - name: Agent story execution guide artifact static tests
         run: go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact
 
