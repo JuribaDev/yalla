@@ -395,6 +395,68 @@ func TestUsageReaderIncludesBillingGradeUsageCountersForCurrentPeriod(t *testing
 	}
 }
 
+func TestUsageReaderIncludesHTTPBandwidthTotalCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "HTTPBandwidthUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-bandwidth")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "http_bandwidth_total", store.EntitlementSourceSubscriptionOverride, 4096, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceHTTPBandwidthTotal,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       1536,
+		Unit:           "byte",
+		Source:         "traefik",
+		IdempotencyKey: "http_bandwidth_total:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var bandwidth store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceHTTPBandwidthTotal {
+			bandwidth = row
+			break
+		}
+	}
+	if bandwidth.Resource == "" {
+		t.Fatalf("usage rows %+v missing http_bandwidth_total counter", got)
+	}
+	if bandwidth.UsedValue != 1536 {
+		t.Fatalf("http_bandwidth_total UsedValue = %d, want aggregated counter 1536", bandwidth.UsedValue)
+	}
+	if bandwidth.LimitValue == nil || *bandwidth.LimitValue != 4096 {
+		t.Fatalf("http_bandwidth_total limit = %+v, want subscription entitlement 4096", bandwidth)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

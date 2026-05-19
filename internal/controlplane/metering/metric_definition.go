@@ -47,6 +47,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"http_bandwidth_total": {
+		Key:          "http_bandwidth_total",
+		Unit:         "byte",
+		Source:       "traefik",
+		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.

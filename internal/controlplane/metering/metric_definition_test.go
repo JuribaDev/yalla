@@ -37,3 +37,15 @@ func TestHTTPRequestBytesMetricDefinition(t *testing.T) {
 		t.Fatalf("http_request_bytes definition = %+v, want byte/traefik/metered/billing-grade", def)
 	}
 }
+
+func TestHTTPBandwidthTotalMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("http_bandwidth_total")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(http_bandwidth_total) missing")
+	}
+	if def.Key != "http_bandwidth_total" || def.Unit != "byte" || def.Source != "traefik" || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("http_bandwidth_total definition = %+v, want byte/traefik/metered/billing-grade", def)
+	}
+}

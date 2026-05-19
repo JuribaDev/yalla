@@ -222,6 +222,76 @@ func TestTraefikUsageEmitterWritesHTTPRequestBytesUsageEventsIdempotently(t *tes
 	assertUsageEventCount(t, db, seed.OrganizationID, 1)
 }
 
+func TestTraefikUsageEmitterWritesHTTPBandwidthTotalUsageEventsIdempotently(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	sample := metering.AttributedTraefikSample{
+		TraefikMetricSample: metering.TraefikMetricSample{
+			Name:              "http_bandwidth_total",
+			Service:           "customer-yalla-" + seed.ServiceID,
+			Value:             3584,
+			Unit:              "byte",
+			WindowStart:       start,
+			WindowEnd:         start.Add(time.Minute),
+			QueryVersion:      "traefik-prom-v1",
+			RawSampleChecksum: "bandwidthabcdef123456",
+			Labels:            map[string]string{"authorization": "Bearer should-not-leak"},
+		},
+		OrganizationID:    seed.OrganizationID,
+		ProjectID:         seed.ProjectID,
+		EnvironmentID:     seed.EnvironmentID,
+		ServiceID:         seed.ServiceID,
+		AttributionSource: metering.TraefikAttributionSourceLabel,
+		Confidence:        metering.TraefikAttributionConfidenceHigh,
+		Metadata:          map[string]string{"api_key": "must-redact", "route": "/download"},
+	}
+
+	first, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_bandwidth_total",
+	})
+	if err != nil {
+		t.Fatalf("first Emit: %v", err)
+	}
+	second, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_bandwidth_total",
+	})
+	if err != nil {
+		t.Fatalf("second Emit: %v", err)
+	}
+	if len(first.Events) != 1 || len(second.Events) != 1 {
+		t.Fatalf("events len first/second = %d/%d, want 1/1", len(first.Events), len(second.Events))
+	}
+	event := first.Events[0]
+	if event.ID != second.Events[0].ID {
+		t.Fatalf("duplicate window wrote a new event id %q, want existing %q", second.Events[0].ID, event.ID)
+	}
+	if event.Resource != store.QuotaResourceHTTPBandwidthTotal || event.Unit != "byte" || event.Source != metering.TraefikUsageSource || event.Quantity != 3584 {
+		t.Fatalf("usage event = %+v, want http_bandwidth_total byte traefik quantity=3584", event)
+	}
+	if event.OrganizationID != seed.OrganizationID || event.ProjectID != seed.ProjectID || event.EnvironmentID != seed.EnvironmentID || event.ServiceID != seed.ServiceID {
+		t.Fatalf("usage event scope = %+v, want full attributed service scope", event)
+	}
+	if event.RequestID != "req_http_bandwidth_total" {
+		t.Fatalf("RequestID = %q, want req_http_bandwidth_total", event.RequestID)
+	}
+	if event.Metadata["api_key"] != "[REDACTED]" {
+		t.Fatalf("api_key metadata = %q, want redacted", event.Metadata["api_key"])
+	}
+	assertUsageEventCount(t, db, seed.OrganizationID, 1)
+}
+
 func TestTraefikUsageEmitterSkipsNonBillingOrUnsafeSamples(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
@@ -331,6 +401,45 @@ func TestTraefikUsageEmitterKeepsHTTPRequestBytesTenantScoped(t *testing.T) {
 			Confidence:        metering.TraefikAttributionConfidenceHigh,
 		}},
 		RequestID: "req_cross_tenant_request_bytes",
+	})
+	assertYallaCode(t, err, yerr.CodeNotFound)
+	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
+	assertUsageEventCount(t, db, bravo.OrganizationID, 0)
+}
+
+func TestTraefikUsageEmitterKeepsHTTPBandwidthTotalTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	alpha := seedMeteringHierarchy(t, db, f)
+	bravo := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	_, err = emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples: []metering.AttributedTraefikSample{{
+			TraefikMetricSample: metering.TraefikMetricSample{
+				Name:              "http_bandwidth_total",
+				Service:           "customer-yalla-" + bravo.ServiceID,
+				Value:             4096,
+				Unit:              "byte",
+				WindowStart:       start,
+				WindowEnd:         start.Add(time.Minute),
+				RawSampleChecksum: "cross-tenant-bandwidth-total",
+			},
+			OrganizationID:    alpha.OrganizationID,
+			ProjectID:         bravo.ProjectID,
+			EnvironmentID:     bravo.EnvironmentID,
+			ServiceID:         bravo.ServiceID,
+			AttributionSource: metering.TraefikAttributionSourceLabel,
+			Confidence:        metering.TraefikAttributionConfidenceHigh,
+		}},
+		RequestID: "req_cross_tenant_bandwidth_total",
 	})
 	assertYallaCode(t, err, yerr.CodeNotFound)
 	assertUsageEventCount(t, db, alpha.OrganizationID, 0)

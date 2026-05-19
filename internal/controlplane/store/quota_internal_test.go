@@ -20,6 +20,7 @@ func TestQuotaResourceValid(t *testing.T) {
 		QuotaResourceConcurrentDeployments, QuotaResourceMonthlyDeployments,
 		QuotaResourceDeployments, QuotaResourceFailedDeployments, QuotaResourceBuildMinutes,
 		QuotaResourceHTTPRequests, QuotaResourceHTTPResponseBytes, QuotaResourceHTTPRequestBytes,
+		QuotaResourceHTTPBandwidthTotal,
 	}
 	if len(valid) != len(quotaResources) {
 		t.Fatalf("constant count = %d, membership set size = %d; keep them in lockstep", len(valid), len(quotaResources))
