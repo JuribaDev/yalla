@@ -113,6 +113,7 @@ defined in `.github/workflows/ci.yml`:
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -419,6 +420,30 @@ durable job state, metrics, dead-letter alerts, and structured JSON logs.
 
 CI pins the deployment runbook with
 `go test ./internal/release/... -run TestDeploymentRunbookArtifact`.
+
+## Incident Response Runbook Artifact
+
+The production incident response runbook lives at
+`docs/operations/incident-response.md`. It ties emergency operations to the
+versioned backend binaries (`/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`), the Postgres source-of-truth boundary, durable
+job state, the private Dokploy API dependency, and the public response envelope
+contract. Operators use the runbook to classify incident severity, contain
+customer-impacting API incidents, worker incidents, Postgres incidents, Dokploy
+dependency incidents, and secret exposure incidents without bypassing Yalla
+authorization, policy, quota, idempotency, audit, or redaction controls.
+
+The runbook requires runtime secrets to stay in operator-managed configuration
+such as `/etc/yalla/control-plane.env`, keeps customer-facing incident evidence
+limited to stable IDs (`request_id`, `correlation_id`, resource IDs, and job
+IDs), and documents `/healthz`, `/readyz`, `/version`, stable
+`yalla.output.v1` / `yalla.error.v1` envelopes, structured JSON logs,
+readiness degradation metrics, policy decision metrics, audit event metrics,
+dead-letter alerts, and opt-in external live-Dokploy smoke tests that must
+never target production.
+
+CI pins the incident response runbook with
+`go test ./internal/release/... -run TestIncidentResponseRunbookArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

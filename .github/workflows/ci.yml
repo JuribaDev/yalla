@@ -156,6 +156,9 @@ jobs:
       - name: Deployment runbook artifact static tests
         run: go test ./internal/release/... -run TestDeploymentRunbookArtifact
 
+      - name: Incident response runbook artifact static tests
+        run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
+
       - name: Race detector
         run: go test -race ./...
 

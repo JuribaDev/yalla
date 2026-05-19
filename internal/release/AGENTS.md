@@ -213,6 +213,19 @@ verification. Any future deployment-runbook change should update the runbook,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Incident response runbook artifact (BE-0420)
+
+`incident_response_runbook_static_test.go` pins the production incident
+response runbook at `docs/operations/incident-response.md`: the runbook must
+reference both `/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`,
+document the Yalla API -> Postgres source of truth -> worker -> private
+Dokploy API boundary, keep runtime secrets in operator-managed configuration,
+describe `/healthz`, `/readyz`, `/version`, stable JSON envelopes, structured
+log redaction, support break-glass access, incident-specific triage paths, and
+explicit verification including the opt-in live-Dokploy smoke test warning. Any
+future incident-response runbook change should update the runbook, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

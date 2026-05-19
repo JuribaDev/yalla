@@ -1,4 +1,13 @@
 ## Codebase Patterns
+- Incident-response operations artifacts follow the static-release-gate pattern:
+  keep `docs/operations/incident-response.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and `internal/release/incident_response_runbook_static_test.go`
+  in lockstep; reference both `/usr/local/bin/yalla-api` and
+  `/usr/local/bin/yalla-worker`, document the Yalla API -> Postgres source of
+  truth -> worker -> private Dokploy API boundary, pin `/healthz`, `/readyz`,
+  `/version`, stable JSON envelopes, structured log redaction,
+  support break-glass access, incident-specific triage paths, and the opt-in
+  external Dokploy smoke warning.
 - Deployment runbooks follow the same static-release-gate pattern as other
   production operations artifacts: keep `docs/operations/deployment.md`,
   SECURITY.md, CI, `scripts/verify.sh`, and
@@ -39211,4 +39220,14 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Deployment runbooks are release artifacts: pin them with a dedicated static test and wire the test into SECURITY.md, CI, and `scripts/verify.sh`.
   - Static documentation tests should assert short, line-wrap-resistant substrings; long Markdown phrases are brittle once prose wraps naturally.
+---
+## 2026-05-19 17:19:43 +03 - BE-0420
+- What was implemented: added the production incident response runbook for Yalla Control Plane API/worker incidents; pinned it with release static tests; wired the static gate into CI, `scripts/verify.sh`, and SECURITY.md; updated internal release guidance and marked the PRD story passing.
+- Files changed: `docs/operations/incident-response.md`; `internal/release/incident_response_runbook_static_test.go`; `.github/workflows/ci.yml`; `scripts/verify.sh`; `SECURITY.md`; `internal/release/AGENTS.md`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run: red test `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` failed before the runbook/gate existed; `gofmt -w .`; `go mod tidy`; focused `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run ./...`.
+- Results: all run checks passed. `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups: this story adds static documentation/release-gate coverage only; future on-call dashboard and SLO document stories should link to the incident response runbook once those artifacts exist.
+- **Learnings for future iterations:**
+  - Operations runbook stories should follow the existing static-release-gate template: add the runbook, a focused `internal/release` static test, SECURITY.md gate row/section, CI step, and `scripts/verify.sh` step together.
+  - Avoid line-wrapped substrings in static Markdown tests when the exact wording matters; pin short stable phrases or keep the required phrase on one line in the document.
 ---
