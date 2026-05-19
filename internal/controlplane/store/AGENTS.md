@@ -228,6 +228,13 @@ Postgres persistence for control-plane source-of-truth state.
 - Config version changes should create new rows or archive existing rows. Do
   not mutate a published payload in place. `admin_config_sets.revision` is the
   cache invalidation token and should be bumped by every version mutation.
+- Backoffice config mutations that need an audit trail should go through
+  `AdminConfigService`, not `AdminConfigRepository` directly. The service
+  verifies the admin actor organization, performs the config mutation, and
+  appends the immutable audit row in one `Store.Write` transaction. Audit
+  metadata stores redacted JSON `before`/`after` snapshots plus sorted
+  `changed_fields`; secret-shaped keys are replaced with the canonical
+  redaction sentinel before persistence.
 
 ## Usage counters (`0052_usage_counters`)
 

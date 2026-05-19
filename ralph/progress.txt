@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice config mutations should use a service layer over `AdminConfigRepository` when auditability matters: verify the admin actor organization, mutate `admin_config_sets`/`admin_config_versions`, and append the immutable `audit_events` row in one `Store.Write` transaction. Audit metadata should carry redacted JSON `before`/`after` snapshots, sorted `changed_fields`, operator `reason`, `effective_at`, and rollback target where applicable.
 - Backoffice dry-run validation is a side-effect-free `internal/controlplane/backoffice` service with optional read ports for existence/impact checks: malformed request shape returns typed API errors, while candidate configuration defects return a successful `yalla.output.v1` report with stable `warnings`, `blocking_errors`, and `simulated_organizations` arrays. Secret-looking credential values are rejected without echoing the submitted value.
 - Backoffice runtime configuration uses global `admin_config_sets` plus `admin_config_versions`, not tenant tables: create editable drafts, publish immutable effective-at versions, archive instead of deleting, and make runtime readers select only `status='published'` rows whose `effective_at` has passed. Bump the set `revision` on version mutations so future cache layers have a monotonic invalidation token.
 - Worker queue metrics follow the HTTP metrics collector shape: aggregate series by low-cardinality dimensions only (`event`, `job_type`, `status`, `status_class`), keep job/request/correlation/org/project/environment/service identifiers as latest-sample log-join hints, and emit worker events only after successful claim/outcome commits so metrics reflect durable queue state.
@@ -37432,11 +37433,12 @@ change that widened Reason to caller-supplied data.
   - `go test -race ./...`
   - `go vet ./...`
   - `golangci-lint run ./...`
-  - `staticcheck ./...` attempted; `staticcheck` is not installed.
-  - `govulncheck ./...` attempted; `govulncheck` is not installed.
+  - Direct `staticcheck ./...` attempted; `staticcheck` was not on the interactive shell PATH.
+  - Direct `govulncheck ./...` attempted; `govulncheck` was not on the interactive shell PATH.
+  - Pre-commit `scripts/verify.sh --strict --release` ran successfully, including `go test ./...`, `go test -race ./...`, focused backend suites, `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release build.
 - Results
-  - Required formatting, tests, race detector, vet, focused backend suites, and `golangci-lint` passed.
-  - Optional `goimports`, `staticcheck`, and `govulncheck` could not be run because the binaries are not installed.
+  - Required formatting, tests, race detector, vet, focused backend suites, `golangci-lint`, `govulncheck`, `staticcheck`, and release snapshot checks passed.
+  - `goimports` could not be run because the binary is not installed.
 - Remaining risks or follow-ups
   - BE-0600+ should layer dry-run validation and admin HTTP APIs on top of this repository; this story intentionally added the versioned persistence/runtime-read foundation only.
 - **Learnings for future iterations:**
@@ -37458,4 +37460,38 @@ change that widened Reason to caller-supplied data.
   - Backoffice dry-run candidate defects should be data in a successful report, not one-error-at-a-time HTTP failures, so operators and agents can fix the entire candidate in one loop.
   - Route-option dependencies avoid sweeping the large `NewHandler` positional argument list for optional admin surfaces.
   - Impact simulation can stay Dokploy-free by using Yalla's current-period `usage_counters` and tenant-existence checks from Postgres.
+---
+
+## 2026-05-19 08:39 +03 - BE-0601
+- Implemented audited backoffice config mutations with redacted before/after diffs.
+- Added `AdminConfigService` to compose `AdminConfigRepository` changes with immutable `audit_events` rows in one `Store.Write` transaction.
+- Added denied-action audit support for backoffice config actions and metadata fields for admin principal, request/correlation IDs, operator reason, effective time, and rollback target.
+- Added integration tests covering publish diff redaction, rollback target metadata, denied action audit rows, required audit reason validation, and audit append-only immutability.
+- Files changed: `internal/controlplane/store/admin_config_service.go`; `internal/controlplane/store/admin_config_service_test.go`; `internal/controlplane/store/AGENTS.md`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run:
+  - `gofmt -w .`
+  - `goimports -w .` attempted; `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/store -run 'TestAdminConfigService|TestAdminConfigRepository'`
+  - `go test ./internal/controlplane/...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; `staticcheck` is not installed.
+  - `govulncheck ./...` attempted; `govulncheck` is not installed.
+- Results
+  - Required formatting, tests, race detector, vet, focused backend suites, and `golangci-lint` passed.
+  - Optional `goimports`, `staticcheck`, and `govulncheck` could not be run because the binaries are not installed.
+- Remaining risks or follow-ups
+  - Future BE-0602+ HTTP APIs should call `AdminConfigService` rather than the raw repository for mutating publish/archive/rollback flows so audit diffs remain mandatory.
+- **Learnings for future iterations:**
+  - Backoffice config is global runtime state, but audit rows are tenant-scoped under the admin actor's organization so support/audit readers keep their existing organization-rooted shape.
+  - The audit metadata column is `map[string]string`; store structured before/after/diff details as deterministic JSON strings inside that map and redact before marshaling.
+  - A rollback audit should distinguish the source payload copied into the new version from the target version being rolled back, using `rollback_target_version_id`.
 ---
