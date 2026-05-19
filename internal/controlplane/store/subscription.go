@@ -319,6 +319,58 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 	return out, nil
 }
 
+// EntitlementRevision returns a deterministic change token for the rows that
+// can affect organizationID's resolved entitlement snapshot. The resolver uses
+// it to validate its cache before replaying a snapshot.
+func (r *SubscriptionRepository) EntitlementRevision(ctx context.Context, q Querier, organizationID string, at time.Time) (string, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var revision string
+	err := q.QueryRow(ctx,
+		`WITH current_subscription AS (
+		    SELECT id, plan_id, updated_at
+		      FROM subscriptions
+		     WHERE organization_id = $1
+		       AND status IN ('trialing', 'active', 'past_due')
+		       AND current_period_start <= $2
+		       AND current_period_end > $2
+		     ORDER BY current_period_start DESC, created_at DESC, id DESC
+		     LIMIT 1
+		 ),
+		 stamps AS (
+		    SELECT updated_at FROM current_subscription
+		    UNION ALL
+		    SELECT p.updated_at
+		      FROM current_subscription cs
+		      JOIN plans p ON p.id = cs.plan_id
+		    UNION ALL
+		    SELECT pe.updated_at
+		      FROM current_subscription cs
+		      JOIN plan_entitlements pe ON pe.plan_id = cs.plan_id
+		    UNION ALL
+		    SELECT se.updated_at
+		      FROM current_subscription cs
+		      JOIN subscription_entitlements se
+		        ON se.organization_id = $1
+		       AND (
+		            (se.source = 'subscription_override' AND se.subscription_id = cs.id)
+		         OR (se.source = 'emergency_admin' AND se.subscription_id IS NULL)
+		       )
+		 )
+		 SELECT COALESCE(
+		        to_char(max(updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || ':' || count(*)::text,
+		        'no-current-subscription:0'
+		    )
+		   FROM stamps`,
+		strings.TrimSpace(organizationID), at,
+	).Scan(&revision)
+	if err != nil {
+		return "", apierr.StoreUnavailable(err)
+	}
+	return revision, nil
+}
+
 // PlanLookup returns the accepted plan slug for the organization at read time.
 func (r *SubscriptionRepository) PlanLookup(ctx context.Context, q Querier, organizationID string) (string, error) {
 	var slug string

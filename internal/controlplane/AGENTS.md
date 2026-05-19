@@ -189,6 +189,15 @@ do not mix customer API handlers into CLI packages.
   typed status (a 5xx) and is never collapsed into a 401. The middleware is not
   yet wired into `newRouteTable` — the bootstrap routes are all public; the
   endpoint stories that add authenticated routes wrap them with `RequireAuth`.
+- Runtime entitlement resolution lives in `internal/controlplane/entitlements`.
+  Build it over `store.SubscriptionRepository`; it layers plan defaults,
+  subscription overrides, and emergency-admin overrides through the store
+  resolver, returns a keyed snapshot with source/explanation fields, and
+  validates its cache with `SubscriptionRepository.EntitlementRevision`.
+  Code already inside a `Store.Write` unit of work should call
+  `Resolver.ResolveWithQuerier(ctx, tx, orgID, at)` so quota checks observe the
+  same transaction snapshot as the desired-state write. Standalone API/read
+  paths may call `Resolver.Resolve`, which opens its own read transaction.
 - Idempotency for mutating endpoints is `httpapi.RequireIdempotency(store, ttl)`
   — middleware installed **inside** `RequireAuth` (it reads
   `policy.PrincipalFromContext` to scope the `Idempotency-Key` to a principal

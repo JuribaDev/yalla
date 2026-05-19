@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 )
 
@@ -38,6 +39,14 @@ const DefaultPlan = "default"
 // reports one plan name for every organization.
 type PlanResolver interface {
 	Plan(ctx context.Context, q store.Querier, organizationID string) (string, error)
+}
+
+// PlanResolverFunc adapts a function to PlanResolver.
+type PlanResolverFunc func(context.Context, store.Querier, string) (string, error)
+
+// Plan resolves the organization's plan.
+func (f PlanResolverFunc) Plan(ctx context.Context, q store.Querier, organizationID string) (string, error) {
+	return f(ctx, q, organizationID)
 }
 
 // StaticPlanResolver reports the same plan name for every organization. It is
@@ -80,10 +89,11 @@ func DetailOf(err error) (ExceededDetail, bool) {
 
 // Checker is Yalla's quota checker service. It satisfies store.QuotaReserver.
 type Checker struct {
-	repo  *store.QuotaRepository
-	plans PlanResolver
-	ttl   time.Duration
-	now   func() time.Time
+	repo         *store.QuotaRepository
+	plans        PlanResolver
+	entitlements *entitlements.Resolver
+	ttl          time.Duration
+	now          func() time.Time
 }
 
 // Compile-time proof that *Checker is a usable QuotaReserver for the store
@@ -103,6 +113,14 @@ func WithReservationTTL(d time.Duration) Option {
 // tests; production callers should leave the default of time.Now.
 func WithClock(now func() time.Time) Option {
 	return func(c *Checker) { c.now = now }
+}
+
+// WithEntitlementResolver makes the checker prefer pricing entitlements over
+// legacy quota_policies for dimensions whose entitlement key matches the quota
+// resource. If no entitlement exists for a resource, the checker falls back to
+// quota_policies so older deployments keep their existing behaviour.
+func WithEntitlementResolver(resolver *entitlements.Resolver) Option {
+	return func(c *Checker) { c.entitlements = resolver }
 }
 
 // NewChecker wires a Checker from its dependencies. It returns a typed error if
@@ -185,12 +203,7 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 
 	requested := amount
 
-	plan, err := c.plans.Plan(ctx, tx, orgID)
-	if err != nil {
-		return err
-	}
-
-	limit, found, err := c.repo.EffectiveLimit(ctx, tx, orgID, plan, res)
+	limit, found, err := c.effectiveLimit(ctx, tx, orgID, res)
 	if err != nil {
 		return err
 	}
@@ -233,6 +246,35 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 		return err
 	}
 	return nil
+}
+
+func (c *Checker) effectiveLimit(ctx context.Context, tx *store.Tx, orgID string, res store.QuotaResource) (store.QuotaLimit, bool, error) {
+	if c.entitlements != nil {
+		snapshot, err := c.entitlements.ResolveWithQuerier(ctx, tx, orgID, c.now())
+		if err != nil {
+			return store.QuotaLimit{}, false, err
+		}
+		if ent, ok := snapshot.Get(res.String()); ok {
+			if ent.EnforcementMode == store.EnforcementModeHard && ent.Value == nil {
+				return store.QuotaLimit{}, false, apierr.Internal(fmt.Errorf("quota: hard entitlement %q has no limit value", res))
+			}
+			limit := int64(0)
+			if ent.Value != nil {
+				limit = *ent.Value
+			}
+			return store.QuotaLimit{
+				Resource:        res,
+				LimitValue:      limit,
+				EnforcementMode: ent.EnforcementMode,
+			}, true, nil
+		}
+	}
+
+	plan, err := c.plans.Plan(ctx, tx, orgID)
+	if err != nil {
+		return store.QuotaLimit{}, false, err
+	}
+	return c.repo.EffectiveLimit(ctx, tx, orgID, plan, res)
 }
 
 // quotaExceeded builds the typed rejection error for an exhausted hard limit:

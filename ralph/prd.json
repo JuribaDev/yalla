@@ -11644,8 +11644,8 @@
       ],
       "type": "pricing",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added internal/controlplane/entitlements Resolver service over SubscriptionRepository. It returns keyed effective entitlement snapshots with value, enforcement mode, source, plan/subscription/override ids, and stable explanation text; validates cache entries with EntitlementRevision; supports Resolve for standalone API reads and ResolveWithQuerier for in-transaction quota/worker/billing paths. Quota.Checker now accepts WithEntitlementResolver and prefers entitlement keys matching quota resources, falling back to legacy quota_policies when no entitlement exists. cmd/yalla-api wires the resolver into quotaChecker and subscription PlanLookup into limits/usage responses. Tests cover map shape/explanations, cache invalidation, missing-subscription empty fallback, validation, source error propagation, and entitlement-backed quota rejection. gofmt, go mod tidy, go test ./..., go test -race ./..., go vet ./..., backend focused suites, TestMigrations, TestPolicyMatrix, TestQuotaConcurrency, TestFakeDokploy, and golangci-lint all passed; goimports/staticcheck/govulncheck were not installed."
     },
     {
       "id": "BE-0566",

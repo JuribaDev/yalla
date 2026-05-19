@@ -15,8 +15,10 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
 	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
+	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
+	"github.com/JuribaDev/yalla/internal/controlplane/quota"
 	"github.com/JuribaDev/yalla/internal/controlplane/ratelimit"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
@@ -95,6 +97,22 @@ func main() {
 	auditRepo := store.NewAuditRepository()
 	serviceAccountRepo := store.NewServiceAccountRepository()
 	apiKeyRepo := store.NewAPIKeyRepository()
+	subscriptionRepo := store.NewSubscriptionRepository()
+	entitlementResolver, err := entitlements.NewResolver(dataStore, subscriptionRepo)
+	if err != nil {
+		logger.Error("failed to initialize the entitlement resolver", "error", err.Error())
+		os.Exit(1)
+	}
+	planLookup := store.PlanLookup(subscriptionRepo.PlanLookup)
+	quotaChecker, err := quota.NewChecker(
+		store.NewQuotaRepository(),
+		quota.PlanResolverFunc(subscriptionRepo.PlanLookup),
+		quota.WithEntitlementResolver(entitlementResolver),
+	)
+	if err != nil {
+		logger.Error("failed to initialize the quota checker", "error", err.Error())
+		os.Exit(1)
+	}
 	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
@@ -107,30 +125,26 @@ func main() {
 	}
 	// Defense-in-depth ports for the add-member unit of work. The HTTP
 	// RequireAuth middleware authorizes action members.manage before the
-	// handler is reached; the in-transaction QuotaReserver is the
-	// dimension-level guard whose real adapter is quota.Checker — it lands
-	// with the cross-cutting members quota plan-resolver story. Until then
-	// this placeholder never rejects, mirroring the api_keys / project /
-	// environment / service wiring so a misconfigured limit cannot block
-	// production traffic before the real plan resolver is wired.
-	membersQuota := noopQuotaReserver{}
+	// handler is reached; quotaChecker is the in-transaction entitlement-aware
+	// dimension-level guard.
+	membersQuota := quotaChecker
 	membershipService, err := store.NewMembershipService(dataStore, orgRepo, membershipRepo, membersQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the membership service", "error", err.Error())
 		os.Exit(1)
 	}
-	limits, err := store.NewLimitsReader(dataStore, nil)
+	limits, err := store.NewLimitsReader(dataStore, planLookup)
 	if err != nil {
 		logger.Error("failed to initialize the limits reader", "error", err.Error())
 		os.Exit(1)
 	}
 	quotaRepo := store.NewQuotaRepository()
-	limitsService, err := store.NewLimitsService(dataStore, orgRepo, quotaRepo, auditRepo, nil)
+	limitsService, err := store.NewLimitsService(dataStore, orgRepo, quotaRepo, auditRepo, planLookup)
 	if err != nil {
 		logger.Error("failed to initialize the limits service", "error", err.Error())
 		os.Exit(1)
 	}
-	usage, err := store.NewUsageReader(dataStore, nil)
+	usage, err := store.NewUsageReader(dataStore, planLookup)
 	if err != nil {
 		logger.Error("failed to initialize the usage reader", "error", err.Error())
 		os.Exit(1)
@@ -161,13 +175,8 @@ func main() {
 		logger.Error("failed to initialize the api key reader", "error", err.Error())
 		os.Exit(1)
 	}
-	// Defense-in-depth quota port for the api-key mint unit of work. The
-	// real adapter is quota.Checker; it lands with the cross-cutting
-	// api_keys quota plan-resolver story. Until then this placeholder
-	// never rejects, mirroring the project/environment/service wiring
-	// above so a misconfigured limit cannot block production traffic
-	// before the real plan resolver is wired.
-	apiKeysQuota := noopQuotaReserver{}
+	// Defense-in-depth quota port for the api-key mint unit of work.
+	apiKeysQuota := quotaChecker
 	apiKeyService, err := store.NewAPIKeyService(dataStore, orgRepo, serviceAccountRepo, apiKeyRepo, apiKeysQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the api key service", "error", err.Error())
@@ -180,17 +189,12 @@ func main() {
 	}
 	// Defense-in-depth ports for the project creation unit of work. The HTTP
 	// RequireAuth middleware is the authoritative gate for action
-	// project.create; the in-transaction Authorizer is a redundant check whose
-	// real adapter (a policy.Engine-driven port that reads grant rows from
-	// the same *Tx as the desired-state write) lands with the quota and jobs
-	// adapters in later stories. Until those land, the placeholder always
-	// allows — the policy boundary at the HTTP layer is what protects the
-	// tenant boundary — and the quota and jobs ports record no-ops. A nil
-	// dependency at the store-service construction site is rejected by
-	// store.NewProjectService, so the placeholders also guard the contract
-	// that ProjectService never runs with an unwired dependency.
+	// project.create; the in-transaction Authorizer is still a redundant
+	// placeholder until the policy.Engine-driven store adapter lands. The
+	// quota port is the entitlement-aware checker; jobs still use the no-op
+	// enqueuer until durable provisioning is wired for this path.
 	projectAuthz := alwaysAllowAuthorizer{}
-	projectQuota := noopQuotaReserver{}
+	projectQuota := quotaChecker
 	projectJobs := noopJobEnqueuer{}
 	projectService, err := store.NewProjectService(dataStore, store.NewProjectRepository(), projectAuthz, projectQuota, projectJobs, auditRepo)
 	if err != nil {
@@ -226,15 +230,11 @@ func main() {
 	// HTTP RequireAuth middleware is the authoritative gate for action
 	// environment.create; the in-transaction Authorizer is a redundant check
 	// whose real adapter (a policy.Engine-driven port that reads grant rows
-	// from the same *Tx as the desired-state write) lands with the quota and
-	// jobs adapters in later stories. Until those land, the placeholder always
-	// allows — the policy boundary at the HTTP layer is what protects the
-	// tenant boundary — and the quota and jobs ports record no-ops. A nil
-	// dependency at the store-service construction site is rejected by
-	// store.NewEnvironmentService, so the placeholders also guard the
-	// contract that EnvironmentService never runs with an unwired dependency.
+	// from the same *Tx as the desired-state write) lands later. Quota is the
+	// entitlement-aware checker; jobs still use the no-op enqueuer until
+	// durable provisioning is wired for this path.
 	environmentAuthz := alwaysAllowAuthorizer{}
-	environmentQuota := noopQuotaReserver{}
+	environmentQuota := quotaChecker
 	environmentJobs := noopJobEnqueuer{}
 	environmentService, err := store.NewEnvironmentService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), environmentAuthz, environmentQuota, environmentJobs, auditRepo)
 	if err != nil {
@@ -277,16 +277,10 @@ func main() {
 	// action service.create; the in-transaction Authorizer is a
 	// redundant check whose real adapter (a policy.Engine-driven port
 	// that reads grant rows from the same *Tx as the desired-state
-	// write) lands with the quota and jobs adapters in later stories.
-	// Until those land, the placeholder always allows — the policy
-	// boundary at the HTTP layer is what protects the tenant boundary
-	// — and the quota and jobs ports record no-ops. A nil dependency
-	// at the store-service construction site is rejected by
-	// store.NewServiceService, so the placeholders also guard the
-	// contract that ServiceService never runs with an unwired
-	// dependency.
+	// write) lands later. Quota is the entitlement-aware checker; jobs still
+	// use the no-op enqueuer until durable provisioning is wired for this path.
 	serviceAuthz := alwaysAllowAuthorizer{}
-	serviceQuota := noopQuotaReserver{}
+	serviceQuota := quotaChecker
 	serviceJobs := noopJobEnqueuer{}
 	serviceService, err := store.NewServiceService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), store.NewServiceRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
 	if err != nil {
@@ -333,13 +327,13 @@ func main() {
 		logger.Error("failed to initialize the service variable service", "error", err.Error())
 		os.Exit(1)
 	}
-	// DeploymentService composes the same placeholder authorizer / quota
-	// reserver / job enqueuer triple ServiceService uses today. The HTTP
+	// DeploymentService composes the same authorizer / quota reserver / job
+	// enqueuer triple ServiceService uses today. The HTTP
 	// boundary is the authoritative authorization gate for
 	// deployment.create; the in-tx Authorize is the defense-in-depth
 	// re-check whose real adapter (a policy.Engine-driven port that
 	// reads grant rows from the same *Tx as the desired-state write)
-	// lands with the quota and jobs adapters in later stories.
+	// lands in a later story.
 	deploymentService, err := store.NewDeploymentService(dataStore, store.NewServiceRepository(), store.NewDeploymentRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the deployment service", "error", err.Error())
@@ -564,19 +558,6 @@ func (missingSecretKeysErr) Error() string {
 type alwaysAllowAuthorizer struct{}
 
 func (alwaysAllowAuthorizer) Authorize(context.Context, store.Querier, string, string) error {
-	return nil
-}
-
-// noopQuotaReserver is a placeholder store.QuotaReserver for the project
-// creation unit of work. The real adapter is quota.Checker; it lands with
-// the project-quota plan-resolver story. Until then, this placeholder never
-// rejects — a misconfigured limit cannot block production traffic before
-// the real plan resolver is wired.
-type noopQuotaReserver struct{}
-
-func (noopQuotaReserver) Reserve(context.Context, *store.Tx, string, string) error { return nil }
-
-func (noopQuotaReserver) ReserveAmount(context.Context, *store.Tx, string, string, int64) error {
 	return nil
 }
 

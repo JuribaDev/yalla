@@ -9,6 +9,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/quota"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
@@ -501,6 +502,52 @@ func TestCheckerReserveTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestCheckerReserveUsesEntitlementResolverWhenConfigured(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQuotaStore(t, db)
+	subscriptions := store.NewSubscriptionRepository()
+	resolver, err := entitlements.NewResolver(s, subscriptions)
+	if err != nil {
+		t.Fatalf("entitlements.NewResolver: %v", err)
+	}
+	checker, err := quota.NewChecker(
+		store.NewQuotaRepository(),
+		quota.StaticPlanResolver(quota.DefaultPlan),
+		quota.WithEntitlementResolver(resolver),
+		quota.WithClock(func() time.Time { return time.Date(2026, 5, 19, 15, 0, 0, 0, time.UTC) }),
+	)
+	if err != nil {
+		t.Fatalf("quota.NewChecker: %v", err)
+	}
+	ctx := context.Background()
+	orgID := seedQuotaOrg(t, db)
+	seedCurrentSubscription(t, db, orgID, "plan_starter_monthly_v1")
+
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return checker.Reserve(ctx, tx, orgID, "projects")
+	}); err != nil {
+		t.Fatalf("first Reserve from entitlement resolver: %v", err)
+	}
+
+	err = s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return checker.Reserve(ctx, tx, orgID, "projects")
+	})
+	if err == nil {
+		t.Fatal("second Reserve error = nil, want entitlement-backed quota rejection")
+	}
+	if yerr.From(err).Code != yerr.CodeQuotaExceeded {
+		t.Fatalf("second Reserve code = %s, want %s (err=%v)", yerr.From(err).Code, yerr.CodeQuotaExceeded, err)
+	}
+	detail, ok := quota.DetailOf(err)
+	if !ok {
+		t.Fatal("quota rejection carried no recoverable ExceededDetail")
+	}
+	if detail.Resource != "projects" || detail.Limit != 1 || detail.Reserved != 1 || detail.Requested != 1 {
+		t.Fatalf("quota detail = %+v, want projects limit 1 from starter entitlement", detail)
+	}
+}
+
 // --- test helpers ---
 
 // mustChecker builds a Checker over a fresh QuotaRepository and the static
@@ -548,6 +595,20 @@ func seedOrgQuotaPolicy(t *testing.T, db *testutil.DB, orgID, resource string, l
 		 VALUES ($1, 'organization', $2, $3, $4, $5)`,
 		id, orgID, resource, limit, mode); err != nil {
 		t.Fatalf("seed org quota policy %q: %v", id, err)
+	}
+}
+
+func seedCurrentSubscription(t *testing.T, db *testutil.DB, orgID, planID string) {
+	t.Helper()
+	id := "sub_" + orgID[len(orgID)-12:]
+	if _, err := db.Exec(context.Background(),
+		`INSERT INTO subscriptions
+		    (id, organization_id, plan_id, status, current_period_start, current_period_end)
+		 VALUES ($1, $2, $3, 'active', $4, $5)`,
+		id, orgID, planID,
+		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("seed current subscription: %v", err)
 	}
 }
 
