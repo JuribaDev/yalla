@@ -1,4 +1,15 @@
 ## Codebase Patterns
+- On-call dashboard operations artifacts follow the same static-release-gate
+  pattern as runbook artifacts: keep `docs/operations/on-call-dashboard.md`,
+  SECURITY.md, CI, `scripts/verify.sh`, and
+  `internal/release/on_call_dashboard_artifact_static_test.go` in lockstep;
+  reference both `/usr/local/bin/yalla-api` and
+  `/usr/local/bin/yalla-worker`, point the operator surface at
+  `GET /dashboards/control-plane.json` plus `GET /metrics`, use
+  least-privilege read-only dashboard credentials, keep high-cardinality IDs as
+  incident join hints only, and document `/healthz`, `/readyz`, `/version`,
+  stable JSON envelopes, structured log redaction, break-glass support access,
+  and the opt-in external Dokploy smoke warning.
 - Incident-response operations artifacts follow the static-release-gate pattern:
   keep `docs/operations/incident-response.md`, SECURITY.md, CI,
   `scripts/verify.sh`, and `internal/release/incident_response_runbook_static_test.go`
@@ -39230,4 +39241,39 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Operations runbook stories should follow the existing static-release-gate template: add the runbook, a focused `internal/release` static test, SECURITY.md gate row/section, CI step, and `scripts/verify.sh` step together.
   - Avoid line-wrapped substrings in static Markdown tests when the exact wording matters; pin short stable phrases or keep the required phrase on one line in the document.
+---
+## 2026-05-19 17:25 +03 - BE-0421
+- What was implemented
+  - Added the production on-call dashboard artifact at `docs/operations/on-call-dashboard.md`.
+  - Added release static tests for the dashboard runtime contract, least-privilege/read-only access, panel set, health/readiness/log expectations, verification commands, and release-gate wiring.
+  - Wired the static suite into CI and `scripts/verify.sh`.
+  - Updated SECURITY.md and `internal/release/AGENTS.md` with the reusable artifact contract.
+  - Marked BE-0421 as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/operations/on-call-dashboard.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/on_call_dashboard_artifact_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `go test ./internal/release/... -run TestOnCallDashboardArtifact` (RED first: failed because the artifact and wiring were missing; GREEN after implementation: passed)
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All required checks passed.
+  - `golangci-lint run ./...` passed with `0 issues.`
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed locally.
+- Remaining risks or follow-ups
+  - This story adds the versioned operator artifact and static gate only; it does not change the existing dashboard JSON endpoint implementation.
+- **Learnings for future iterations:**
+  - The on-call dashboard artifact is a documentation/static-release-gate story like BE-0419 and BE-0420, but it should explicitly bind to both `GET /dashboards/control-plane.json` and `GET /metrics`.
+  - Dashboard credentials should be documented as least-privilege and read-only; tenant, principal, resource, service, and job IDs remain incident join hints, not labels.
+  - Exact static-test substrings should avoid Markdown wrapping surprises when they pin operator-facing contract sentences.
 ---

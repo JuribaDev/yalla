@@ -114,6 +114,7 @@ defined in `.github/workflows/ci.yml`:
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -444,6 +445,33 @@ never target production.
 
 CI pins the incident response runbook with
 `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact`.
+
+## On-Call Dashboard Artifact
+
+The production on-call dashboard artifact lives at
+`docs/operations/on-call-dashboard.md`. It ties dashboard rendering to the
+versioned backend binaries (`/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`), the `GET /dashboards/control-plane.json`
+`yalla.dashboard.v1` export, the `GET /metrics` snapshot, the Postgres
+source-of-truth boundary, durable job state, and the private Dokploy API
+dependency. The dashboard is a read-only operator surface: customer and agent
+traffic still flows through Yalla, and customers never receive Dokploy
+credentials or raw private dependency access.
+
+The artifact requires runtime secrets to stay in operator-managed
+configuration such as `/etc/yalla/control-plane.env`, keeps panels grouped by
+low-cardinality fields only, and treats `request_id`, `correlation_id`,
+organization, principal, resource, service, and job IDs as incident join hints
+rather than labels. It documents `/healthz`, `/readyz`, `/version`, stable
+`yalla.output.v1` / `yalla.error.v1` envelopes, structured JSON logs, readiness
+degradation metrics, SLO burn-rate metrics, policy decision metrics, audit
+event metrics, dead-letter alerts, reconciliation drift alerts,
+secret-redaction canaries, slow-query metrics, trace spans, support
+break-glass with `support.manage`, and opt-in external live-Dokploy smoke tests
+that must never target production.
+
+CI pins the on-call dashboard artifact with
+`go test ./internal/release/... -run TestOnCallDashboardArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

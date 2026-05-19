@@ -226,6 +226,20 @@ explicit verification including the opt-in live-Dokploy smoke test warning. Any
 future incident-response runbook change should update the runbook, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## On-call dashboard artifact (BE-0421)
+
+`on_call_dashboard_artifact_static_test.go` pins the production on-call
+dashboard artifact at `docs/operations/on-call-dashboard.md`: the artifact must
+reference both `/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`,
+document the `GET /dashboards/control-plane.json` `yalla.dashboard.v1` export,
+point panels at `GET /metrics`, keep dashboard credentials least-privilege and
+read-only, preserve operator-managed secrets in `/etc/yalla/control-plane.env`,
+describe `/healthz`, `/readyz`, `/version`, stable JSON envelopes, structured
+log redaction, core incident panels, support break-glass access, and explicit
+verification including the opt-in live-Dokploy smoke test warning. Any future
+dashboard artifact change should update the artifact, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

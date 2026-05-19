@@ -298,6 +298,12 @@ if ! go test ./internal/release/... -run TestIncidentResponseRunbookArtifact; th
   required_failed=1
 fi
 
+# Required: on-call dashboard artifact static tests
+step "go test ./internal/release/... -run TestOnCallDashboardArtifact"
+if ! go test ./internal/release/... -run TestOnCallDashboardArtifact; then
+  required_failed=1
+fi
+
 # 33. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then
