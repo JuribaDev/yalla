@@ -81,6 +81,14 @@ type errorPayload struct {
 // token in an error message or warning never escapes the renderer.
 var envelopeRedactor = output.NewRedactor()
 
+// errorCodeRecorder is implemented by HTTP middleware that wants to observe
+// the stable public error code without parsing the response body. Keeping this
+// as a structural interface avoids a package dependency from the envelope
+// renderer back into telemetry.
+type errorCodeRecorder interface {
+	RecordErrorCode(string)
+}
+
 // StatusForCode maps a stable error Code to the HTTP status the API returns
 // for it. The mapping is deterministic and part of the public contract:
 // agents and scripts may rely on these pairings.
@@ -182,6 +190,9 @@ func WriteError(w http.ResponseWriter, requestID string, err *yerr.Error) {
 // are pending). Prefer WriteError everywhere else.
 func WriteErrorStatus(w http.ResponseWriter, status int, requestID string, err *yerr.Error) {
 	code := errorCode(err)
+	if recorder, ok := w.(errorCodeRecorder); ok {
+		recorder.RecordErrorCode(string(code))
+	}
 	message := "an unexpected internal error occurred"
 	hint := ""
 	var details map[string]string

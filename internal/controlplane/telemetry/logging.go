@@ -19,9 +19,13 @@ import (
 // SetPrincipalID; the middleware reads it back when it emits the final
 // per-request log record.
 type requestFields struct {
-	mu          sync.Mutex
-	orgID       string
-	principalID string
+	mu           sync.Mutex
+	orgID        string
+	principalID  string
+	resourceKind string
+	resourceID   string
+	jobID        string
+	errorCode    string
 }
 
 // fieldsKey is an unexported context-key type so the logging holder cannot
@@ -64,10 +68,52 @@ func SetPrincipalID(ctx context.Context, principalID string) {
 	}
 }
 
+// SetResource records the tenant-scoped resource that the current request is
+// operating on. Callers should pass only stable resource kind names and IDs
+// already authorized or resolved by the control plane; blank values are
+// omitted from the final log record.
+func SetResource(ctx context.Context, kind, id string) {
+	if f := fieldsFromContext(ctx); f != nil {
+		f.mu.Lock()
+		f.resourceKind = kind
+		f.resourceID = id
+		f.mu.Unlock()
+	}
+}
+
+// SetJobID records the durable job associated with the current request, when a
+// request enqueues or observes one.
+func SetJobID(ctx context.Context, jobID string) {
+	if f := fieldsFromContext(ctx); f != nil {
+		f.mu.Lock()
+		f.jobID = jobID
+		f.mu.Unlock()
+	}
+}
+
+// RecordErrorCode lets envelope renderers attach the stable public error code
+// to the request log without exposing response bodies or importing telemetry.
+func (s *statusRecorder) RecordErrorCode(code string) {
+	if s == nil {
+		return
+	}
+	if f := fieldsFromContext(s.ctx); f != nil {
+		f.mu.Lock()
+		f.errorCode = code
+		f.mu.Unlock()
+	}
+}
+
 func (f *requestFields) snapshot() (orgID, principalID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.orgID, f.principalID
+}
+
+func (f *requestFields) logSnapshot() (orgID, principalID, resourceKind, resourceID, jobID, errorCode string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.orgID, f.principalID, f.resourceKind, f.resourceID, f.jobID, f.errorCode
 }
 
 // logRedactor scrubs well-known secret transport patterns (Authorization
@@ -82,6 +128,7 @@ var logRedactor = output.NewRedactor()
 // report them after the handler returns.
 type statusRecorder struct {
 	http.ResponseWriter
+	ctx    context.Context
 	status int
 	bytes  int
 	wrote  bool
@@ -132,10 +179,9 @@ func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-
 			ctx := withRequestFields(r.Context())
 			r = r.WithContext(ctx)
+			rec := &statusRecorder{ResponseWriter: w, ctx: ctx, status: http.StatusOK}
 
 			next.ServeHTTP(rec, r)
 
@@ -154,17 +200,31 @@ func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("route", logRedactor.Redact(route)),
 				slog.String("target", logRedactor.Redact(r.URL.RequestURI())),
 				slog.Int("status", rec.status),
+				slog.String("status_class", statusClass(rec.status)),
+				slog.String("outcome", outcome(rec.status)),
 				slog.Int64("latency_ms", latency.Milliseconds()),
 				slog.Int("bytes", rec.bytes),
 			}
 			attrs = append(attrs, LogAttrs(ctx)...)
 			if f := fieldsFromContext(ctx); f != nil {
-				orgID, principalID := f.snapshot()
+				orgID, principalID, resourceKind, resourceID, jobID, errorCode := f.logSnapshot()
 				if orgID != "" {
 					attrs = append(attrs, slog.String("org_id", orgID))
 				}
 				if principalID != "" {
 					attrs = append(attrs, slog.String("principal_id", principalID))
+				}
+				if resourceKind != "" {
+					attrs = append(attrs, slog.String("resource_kind", resourceKind))
+				}
+				if resourceID != "" {
+					attrs = append(attrs, slog.String("resource_id", resourceID))
+				}
+				if jobID != "" {
+					attrs = append(attrs, slog.String("job_id", jobID))
+				}
+				if errorCode != "" {
+					attrs = append(attrs, slog.String("error_code", errorCode))
 				}
 			}
 
@@ -178,4 +238,28 @@ func RequestLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 			logger.Log(ctx, level, "http request handled", attrs...)
 		})
 	}
+}
+
+func statusClass(status int) string {
+	switch status / 100 {
+	case 1:
+		return "1xx"
+	case 2:
+		return "2xx"
+	case 3:
+		return "3xx"
+	case 4:
+		return "4xx"
+	case 5:
+		return "5xx"
+	default:
+		return "unknown"
+	}
+}
+
+func outcome(status int) string {
+	if status >= http.StatusBadRequest {
+		return "failure"
+	}
+	return "success"
 }

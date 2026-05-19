@@ -3,27 +3,39 @@ package telemetry
 import (
 	"bytes"
 	"encoding/json"
+	stderrors "errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
 // logRecord is the decoded shape of a single per-request structured log line.
 type logRecord struct {
-	Time        string `json:"time"`
-	Level       string `json:"level"`
-	Msg         string `json:"msg"`
-	Method      string `json:"method"`
-	Route       string `json:"route"`
-	Target      string `json:"target"`
-	Status      int    `json:"status"`
-	LatencyMS   int64  `json:"latency_ms"`
-	Bytes       int    `json:"bytes"`
-	RequestID   string `json:"request_id"`
-	OrgID       string `json:"org_id"`
-	PrincipalID string `json:"principal_id"`
+	Time          string `json:"time"`
+	Level         string `json:"level"`
+	Msg           string `json:"msg"`
+	Method        string `json:"method"`
+	Route         string `json:"route"`
+	Target        string `json:"target"`
+	Status        int    `json:"status"`
+	StatusClass   string `json:"status_class"`
+	Outcome       string `json:"outcome"`
+	ErrorCode     string `json:"error_code"`
+	LatencyMS     int64  `json:"latency_ms"`
+	Bytes         int    `json:"bytes"`
+	RequestID     string `json:"request_id"`
+	CorrelationID string `json:"correlation_id"`
+	OrgID         string `json:"org_id"`
+	PrincipalID   string `json:"principal_id"`
+	ResourceKind  string `json:"resource_kind"`
+	ResourceID    string `json:"resource_id"`
+	JobID         string `json:"job_id"`
 }
 
 // serveLogged runs handler through Correlate -> RequestLogging at the given
@@ -91,6 +103,16 @@ func TestRequestLoggingEmitsOneRecordPerOutcome(t *testing.T) {
 			if record.Status != tc.status {
 				t.Errorf("log status = %d, want %d", record.Status, tc.status)
 			}
+			if record.StatusClass != statusClass(tc.status) {
+				t.Errorf("log status_class = %q, want %q", record.StatusClass, statusClass(tc.status))
+			}
+			wantOutcome := "success"
+			if tc.status >= http.StatusBadRequest {
+				wantOutcome = "failure"
+			}
+			if record.Outcome != wantOutcome {
+				t.Errorf("log outcome = %q, want %q", record.Outcome, wantOutcome)
+			}
 			if record.Method != http.MethodGet {
 				t.Errorf("log method = %q, want GET", record.Method)
 			}
@@ -110,11 +132,55 @@ func TestRequestLoggingEmitsOneRecordPerOutcome(t *testing.T) {
 			if !SafeID(record.RequestID) {
 				t.Errorf("log request_id = %q, want a SafeID value", record.RequestID)
 			}
+			if record.CorrelationID == "" {
+				t.Error("log correlation_id is empty")
+			}
 			if record.RequestID != rec.Header().Get(HeaderRequestID) {
 				t.Errorf("log request_id = %q, want it to match the %s response header %q",
 					record.RequestID, HeaderRequestID, rec.Header().Get(HeaderRequestID))
 			}
 		})
+	}
+}
+
+func TestRequestLoggingIncludesStructuredErrorCodeFromEnvelope(t *testing.T) {
+	t.Parallel()
+
+	const secret = "postgres://operator:supersecret@db/yalla"
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetOrgID(r.Context(), "org_error_logs")
+		SetPrincipalID(r.Context(), "usr_error_logs")
+		SetResource(r.Context(), "project", "proj_error_logs")
+		SetJobID(r.Context(), "job_error_logs")
+		apienvelope.WriteError(w, RequestID(r.Context()), apierr.StoreUnavailable(stderrors.New(secret)))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/projects/proj_error_logs?token=secret-query-token", nil)
+	rec, record, raw := serveLogged(t, slog.LevelDebug, req, handler)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if record.Level != "ERROR" {
+		t.Errorf("level = %q, want ERROR for dependency failure", record.Level)
+	}
+	if record.ErrorCode != string(yerr.CodeDBUnavailable) {
+		t.Errorf("error_code = %q, want %s", record.ErrorCode, yerr.CodeDBUnavailable)
+	}
+	if record.Outcome != "failure" || record.StatusClass != "5xx" {
+		t.Errorf("outcome/status_class = %q/%q, want failure/5xx", record.Outcome, record.StatusClass)
+	}
+	if record.OrgID != "org_error_logs" || record.PrincipalID != "usr_error_logs" {
+		t.Errorf("identity fields = org:%q principal:%q", record.OrgID, record.PrincipalID)
+	}
+	if record.ResourceKind != "project" || record.ResourceID != "proj_error_logs" {
+		t.Errorf("resource fields = kind:%q id:%q", record.ResourceKind, record.ResourceID)
+	}
+	if record.JobID != "job_error_logs" {
+		t.Errorf("job_id = %q, want job_error_logs", record.JobID)
+	}
+	if strings.Contains(raw, "supersecret") || strings.Contains(raw, "secret-query-token") {
+		t.Fatalf("structured error log leaked a secret: %s", raw)
 	}
 }
 

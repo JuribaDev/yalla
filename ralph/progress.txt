@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Structured HTTP error logs are a telemetry/envelope bridge: `apienvelope.WriteErrorStatus` records the stable public `error_code` through a structural `RecordErrorCode` interface implemented by telemetry's response recorder, while `RequestLogging` emits low-cardinality `status_class`/`outcome` plus correlation hints (`request_id`, `correlation_id`, org/principal/resource/job IDs) without parsing response bodies or logging headers/bodies.
 - Policy decision metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.PolicyDecisionMetrics` groups by `(action, resource_kind, decision, reason)`, stores request/correlation/org/project/environment/service/resource/principal/job IDs only as latest-sample incident hints, is emitted from `policy.Engine.Authorize` / `AuthorizeCtx`, and `/metrics` exposes the snapshot under `data.policy_decisions`.
 - Backoffice policy is split by operational domain: `pricing.manage`, `metering.manage`, `billing.manage`, `feature_flags.manage`, `support.manage`, and `config.publish`. Draft/edit routes use the domain manage action; production-impacting publish/archive/rollback routes use `config.publish`; support break-glass/import/reconcile/read routes use `support.manage`. Keep the release support-access static guard pinned to `ActionSupportManage -> CapSupport`.
 - Audit event metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.AuditEventMetrics` groups by `(action, resource_kind, decision, outcome, reason, error_code)`, stores request/correlation/org/resource/actor/job IDs only as latest-sample incident hints, is emitted from `store.AuditRepository.Append` for both recorded and failed append attempts, and `/metrics` exposes the snapshot under `data.audit_events`.
@@ -258,6 +259,44 @@
 - Mutating POST endpoints reject organization_id in the request body via the strict JSON decoder (validate.DecodeJSON disallows unknown fields). The handler builds the store *Input.OrganizationID from p.OrganizationID (principal), never from the body, so the tenant boundary is structural — a caller cannot point a create at another tenant even if defense-in-depth were skipped. ActorOrgID on the audit record is also the principal's home org; ResourceID names the created resource.
 - store.ProjectService is the canonical write-port unit-of-work with the full 5-step composition: authorize, reserve quota, INSERT, enqueue provisioning job, append audit — all in one Store.Write transaction. cmd/yalla-api wires placeholder alwaysAllowAuthorizer/noopQuotaReserver/noopJobEnqueuer adapters today (HTTP RequireAuth is the authoritative gate; real adapters land with the plan-resolver and provisioning-worker stories). store.NewProjectService rejects nil dependencies at construction, so placeholders must remain explicit-named values, never nil.
 - Partial-update (PATCH) endpoints: the request DTO and store *Input use *string fields — nil means "field omitted, leave unchanged". The store builds+validates the patch BEFORE opening the transaction (rejecting a patch that names no field as a 400), then inside Store.Write reads the current row, applies the non-nil fields, and Updates. A repository Update using UPDATE ... RETURNING must check errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE mapWriteError (which only classifies constraint-violation vs outage). Never set updated_at in an Update statement — the per-table set_updated_at() BEFORE UPDATE trigger owns it.
+## 2026-05-19 11:10 +03 - BE-0370
+- What was implemented
+  - Added structured HTTP error-log dimensions: `status_class`, `outcome`, stable `error_code`, `resource_kind`, `resource_id`, and `job_id`.
+  - Added a structural `RecordErrorCode` bridge so `apienvelope.WriteErrorStatus` can pass public error codes to telemetry without parsing response bodies or introducing a package cycle.
+  - Extended telemetry tests for success/failure log fields, correlation IDs, safe resource/job identifiers, dependency error-code logging, and secret redaction.
+  - Added operator documentation for structured error-log incident workflow.
+- Files changed
+  - `internal/controlplane/telemetry/logging.go`
+  - `internal/controlplane/telemetry/logging_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `docs/operations/structured-error-logs.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/telemetry`
+  - `go test ./internal/controlplane/apienvelope`
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test -race ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All run checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups
+  - Existing worker logs already include job/request/correlation IDs; this story only added the HTTP request-log error-code bridge.
+- **Learnings for future iterations:**
+  - The envelope renderer can expose telemetry-only metadata via a tiny structural interface on `http.ResponseWriter`; this avoids parsing JSON response bodies and avoids an import cycle from `apienvelope` to `telemetry`.
+  - Keep high-cardinality org/principal/resource/job IDs as log-join hints only; use `method`, `route`, `status_class`, `outcome`, and `error_code` for dashboard filters.
+---
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
 - Optimistic concurrency on mutable customer-data tables: migration 0011 adds a bigint version column (DEFAULT 1, CHECK > 0) + bump_version() BEFORE UPDATE trigger to organizations/projects/environments/services. The trigger overwrites NEW.version with OLD.version+1 on every UPDATE (including no-op data UPDATEs), so the application cannot freeze the sequence. Repository UPDATE methods accept ifMatchVersion *int64: nil = no precondition, non-nil = WHERE id=$1 AND version=$N; on no rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (apierr.ConflictStale carrying the row's current version). Service-layer Update/ScheduleDeletion also pre-check the version after the read so a no-op data patch still surfaces the conflict against the right row. The HTTP layer parses RFC 7232 strong ETag values (`"<n>"`, lenient unquoted form accepted; weak/wildcard/multi-value rejected as 400 E_INVALID_INPUT) from If-Match, mirrors the row's authoritative version into the ETag response header on every success path (GET/POST/PATCH/DELETE), and surfaces stale writes as 409 E_CONFLICT carrying current_version under the new structured error.details map (apierr.DetailKeyCurrentVersion). yerr.Error.Details (map[string]string, set by WithDetail) is the agent-friendly counterpart to Hint; apienvelope renders it through the same regex redaction backstop used for Message/Hint.
 - Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.

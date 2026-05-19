@@ -7939,8 +7939,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: structured error logs."
+      "passes": true,
+      "notes": "Implemented structured HTTP error log dimensions with outcome/status_class/error_code, request/correlation/resource/job identifiers, envelope-to-logger error-code propagation, redaction coverage, and operator documentation."
     },
     {
       "id": "BE-0371",

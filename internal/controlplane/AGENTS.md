@@ -92,10 +92,13 @@ do not mix customer API handlers into CLI packages.
 - `telemetry.RequestLogging(logger)` is the per-request structured-log
   middleware. `httpapi.NewHandler` wraps the routed mux in it, just inside
   `Correlate`, so every served request emits exactly one JSON record with
-  `method`, `route`, `target`, `status`, `latency_ms`, `bytes`, `request_id`,
-  and `correlation_id` (plus `org_id` / `principal_id` once resolved). It never
-  logs headers or bodies, and the request target is run through a redactor.
-  Level follows the outcome: 5xx → error, 4xx → warn, else info; the logger's
+  `method`, `route`, `target`, `status`, `status_class`, `outcome`,
+  `latency_ms`, `bytes`, `request_id`, and `correlation_id` (plus `org_id` /
+  `principal_id`, `resource_kind` / `resource_id`, `job_id`, and `error_code`
+  once safely resolved). Error envelopes pass the stable public error code to
+  the middleware through `RecordErrorCode`; do not parse response bodies for
+  logging. It never logs headers or bodies, and the request target is run
+  through a redactor. Level follows the outcome: 5xx → error, 4xx → warn, else info; the logger's
   threshold (from `YALLA_LOG_LEVEL`) decides what is actually written. The
   auth/policy layers must call `telemetry.SetOrgID(ctx, …)` /
   `telemetry.SetPrincipalID(ctx, …)` once they resolve those values so they
