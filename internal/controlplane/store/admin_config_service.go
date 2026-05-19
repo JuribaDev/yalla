@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
@@ -242,6 +243,161 @@ func (svc *AdminConfigService) Archive(ctx context.Context, id string, auditCtx 
 	return out, nil
 }
 
+// Export returns a deterministic, non-secret manifest for every admin config
+// set and version. The manifest omits source IDs so imports always create new
+// target-environment history.
+func (svc *AdminConfigService) Export(ctx context.Context, in AdminConfigExportInput, auditCtx AdminConfigAuditContext) (AdminConfigExportManifest, error) {
+	auditCtx, err := validateAdminConfigAuditContext(auditCtx)
+	if err != nil {
+		return AdminConfigExportManifest{}, err
+	}
+	sourceEnvironment := cleanConfigPromotionEnvironment(in.SourceEnvironment)
+	if sourceEnvironment == "" {
+		return AdminConfigExportManifest{}, apierr.InvalidInput(apierr.FieldViolation{Field: "source_environment", Reason: "must not be blank"})
+	}
+
+	manifest := AdminConfigExportManifest{
+		SchemaVersion:     AdminConfigExportSchemaVersion,
+		SourceEnvironment: sourceEnvironment,
+		ExportedAt:        time.Now().UTC(),
+		ConfigSets:        []AdminConfigExportSet{},
+	}
+	err = svc.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		sets, err := svc.repo.listSets(ctx, q)
+		if err != nil {
+			return err
+		}
+		for _, set := range sets {
+			versions, err := svc.repo.listVersionsForSet(ctx, q, set.ID)
+			if err != nil {
+				return err
+			}
+			versionByID := make(map[string]int, len(versions))
+			for _, version := range versions {
+				versionByID[version.ID] = version.Version
+			}
+			exportSet := AdminConfigExportSet{
+				Slug:        set.Slug,
+				Domain:      set.Domain,
+				Name:        set.Name,
+				Description: set.Description,
+				Versions:    make([]AdminConfigExportVersion, 0, len(versions)),
+			}
+			for _, version := range versions {
+				payload, err := sanitizeAdminConfigExportPayload(version.Payload)
+				if err != nil {
+					return err
+				}
+				exportVersion := AdminConfigExportVersion{
+					Version:        version.Version,
+					Status:         version.Status,
+					Payload:        payload,
+					RollbackReason: version.RollbackReason,
+					CreatedAt:      version.CreatedAt,
+					UpdatedAt:      version.UpdatedAt,
+				}
+				if version.EffectiveAt != nil {
+					effectiveAt := version.EffectiveAt.UTC()
+					exportVersion.EffectiveAt = &effectiveAt
+				}
+				if version.PublishedBy != nil {
+					exportVersion.PublishedBy = *version.PublishedBy
+				}
+				if version.RollbackOfVersionID != nil {
+					exportVersion.RollbackOfVersion = versionByID[*version.RollbackOfVersionID]
+				}
+				if version.ArchivedAt != nil || version.Status == AdminConfigStatusArchived {
+					exportVersion.Archived = true
+				}
+				exportSet.Versions = append(exportSet.Versions, exportVersion)
+			}
+			manifest.ConfigSets = append(manifest.ConfigSets, exportSet)
+		}
+		return nil
+	})
+	if err != nil {
+		return AdminConfigExportManifest{}, err
+	}
+	if err := svc.auditAdminConfigPromotion(ctx, auditCtx, "admin.config.export", "export", sourceEnvironment, "", len(manifest.ConfigSets), nil); err != nil {
+		return AdminConfigExportManifest{}, err
+	}
+	return manifest, nil
+}
+
+// Import validates and optionally applies an exported manifest. Applying an
+// import creates new config-set/version rows in the target environment history
+// rather than rewriting source IDs or mutating historical versions.
+func (svc *AdminConfigService) Import(ctx context.Context, in AdminConfigImportInput, auditCtx AdminConfigAuditContext) (AdminConfigImportReport, error) {
+	auditCtx, err := validateAdminConfigAuditContext(auditCtx)
+	if err != nil {
+		return AdminConfigImportReport{}, err
+	}
+	normalized, err := normalizeAdminConfigImportInput(in)
+	if err != nil {
+		return AdminConfigImportReport{}, err
+	}
+
+	report, err := svc.planAdminConfigImport(ctx, normalized)
+	if err != nil {
+		return AdminConfigImportReport{}, err
+	}
+	if !report.Valid {
+		return report, nil
+	}
+	if normalized.DryRun {
+		return report, nil
+	}
+
+	err = svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.orgs.Get(ctx, tx, auditCtx.ActorOrgID); err != nil {
+			return err
+		}
+		for _, manifestSet := range normalized.Manifest.ConfigSets {
+			targetSet, err := svc.repo.getSetByDomainSlug(ctx, tx, manifestSet.Domain, manifestSet.Slug)
+			if err != nil {
+				if yerr := apierrCode(err); yerr != "" && yerr != "E_NOT_FOUND" {
+					return err
+				}
+				targetSet, err = svc.repo.CreateSet(ctx, tx, CreateAdminConfigSetInput{
+					Slug:        manifestSet.Slug,
+					Domain:      manifestSet.Domain,
+					Name:        manifestSet.Name,
+					Description: manifestSet.Description,
+				})
+				if err != nil {
+					return err
+				}
+			}
+			targetVersionByManifestVersion := map[int]string{}
+			for _, manifestVersion := range manifestSet.Versions {
+				rollbackTargetID := ""
+				if manifestVersion.RollbackOfVersion > 0 {
+					rollbackTargetID = targetVersionByManifestVersion[manifestVersion.RollbackOfVersion]
+				}
+				imported, err := svc.repo.importVersion(ctx, tx, targetSet.ID, manifestVersion, rollbackTargetID, auditCtx.ActorID)
+				if err != nil {
+					return err
+				}
+				targetVersionByManifestVersion[manifestVersion.Version] = imported.ID
+			}
+		}
+		meta := map[string]string{
+			"operation":          "import",
+			"source_environment": normalized.Manifest.SourceEnvironment,
+			"target_environment": normalized.TargetEnvironment,
+			"reason":             output.NewRedactor().Redact(auditCtx.Reason),
+			"changes":            mustAuditJSON(report.Changes),
+		}
+		_, err := svc.audit.Append(ctx, tx, adminConfigAuditEvent(auditCtx, "admin.config.import", normalized.TargetEnvironment, meta))
+		return err
+	})
+	if err != nil {
+		return AdminConfigImportReport{}, err
+	}
+	report.Applied = true
+	return report, nil
+}
+
 // AuditAdminConfigDenied records a refused backoffice configuration action.
 func (svc *AdminConfigService) AuditAdminConfigDenied(ctx context.Context, auditCtx AdminConfigAuditContext, action, resourceID, denialReason string) error {
 	auditCtx, err := validateAdminConfigAuditContext(auditCtx)
@@ -278,6 +434,77 @@ func (svc *AdminConfigService) AuditAdminConfigDenied(ctx context.Context, audit
 		})
 		return err
 	})
+}
+
+func (svc *AdminConfigService) planAdminConfigImport(ctx context.Context, in AdminConfigImportInput) (AdminConfigImportReport, error) {
+	report := AdminConfigImportReport{
+		Valid:             true,
+		Applied:           false,
+		TargetEnvironment: in.TargetEnvironment,
+		SourceEnvironment: in.Manifest.SourceEnvironment,
+		Changes:           []AdminConfigImportChange{},
+		MissingSecretRefs: []string{},
+		BlockingErrors:    []AdminConfigImportIssue{},
+	}
+	requiredRefs := adminConfigManifestSecretRefs(in.Manifest)
+	available := map[string]struct{}{}
+	for _, ref := range in.AvailableSecretRefs {
+		available[ref] = struct{}{}
+	}
+	for _, ref := range requiredRefs {
+		if _, ok := available[ref]; !ok {
+			report.MissingSecretRefs = append(report.MissingSecretRefs, ref)
+			report.BlockingErrors = append(report.BlockingErrors, AdminConfigImportIssue{
+				Code:    "missing_secret_ref",
+				Field:   "available_secret_refs",
+				Message: "required secret reference is not available in target environment",
+			})
+		}
+	}
+
+	err := svc.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		for _, manifestSet := range in.Manifest.ConfigSets {
+			importMax := maxManifestVersion(manifestSet.Versions)
+			targetSet, err := svc.repo.getSetByDomainSlug(ctx, q, manifestSet.Domain, manifestSet.Slug)
+			if err != nil {
+				if code := apierrCode(err); code == "E_NOT_FOUND" {
+					report.Changes = append(report.Changes, AdminConfigImportChange{Operation: "create_set", Slug: manifestSet.Slug, Domain: manifestSet.Domain, ToVersion: importMax})
+					continue
+				}
+				return err
+			}
+			versions, err := svc.repo.listVersionsForSet(ctx, q, targetSet.ID)
+			if err != nil {
+				return err
+			}
+			targetMax := maxAdminConfigVersion(versions)
+			if targetMax > importMax && !in.AllowDowngrade {
+				report.BlockingErrors = append(report.BlockingErrors, AdminConfigImportIssue{
+					Code:    "unsafe_downgrade",
+					Field:   "manifest.config_sets",
+					Message: "target environment already has a newer config version",
+				})
+				report.Changes = append(report.Changes, AdminConfigImportChange{Operation: "blocked_downgrade", Slug: manifestSet.Slug, Domain: manifestSet.Domain, FromVersion: targetMax, ToVersion: importMax})
+				continue
+			}
+			report.Changes = append(report.Changes, AdminConfigImportChange{Operation: "append_versions", Slug: manifestSet.Slug, Domain: manifestSet.Domain, FromVersion: targetMax, ToVersion: importMax})
+		}
+		return nil
+	})
+	if err != nil {
+		return AdminConfigImportReport{}, err
+	}
+	if len(report.BlockingErrors) > 0 {
+		report.Valid = false
+	}
+	if !report.Valid && !in.DryRun {
+		for _, issue := range report.BlockingErrors {
+			if issue.Code == "unsafe_downgrade" {
+				return AdminConfigImportReport{}, apierr.Conflict(issue.Message)
+			}
+		}
+	}
+	return report, nil
 }
 
 type adminConfigAuditMetadataInput struct {
@@ -434,6 +661,291 @@ func redactAdminConfigAuditValueAt(path string, v any) any {
 	default:
 		return typed
 	}
+}
+
+func (svc *AdminConfigService) auditAdminConfigPromotion(ctx context.Context, auditCtx AdminConfigAuditContext, action, operation, sourceEnvironment, targetEnvironment string, setCount int, changes []AdminConfigImportChange) error {
+	return svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.orgs.Get(ctx, tx, auditCtx.ActorOrgID); err != nil {
+			return err
+		}
+		meta := map[string]string{
+			"operation":          operation,
+			"source_environment": sourceEnvironment,
+			"target_environment": targetEnvironment,
+			"reason":             output.NewRedactor().Redact(auditCtx.Reason),
+			"config_set_count":   fmt.Sprintf("%d", setCount),
+		}
+		if changes != nil {
+			meta["changes"] = mustAuditJSON(changes)
+		}
+		resourceID := sourceEnvironment
+		if targetEnvironment != "" {
+			resourceID = targetEnvironment
+		}
+		_, err := svc.audit.Append(ctx, tx, adminConfigAuditEvent(auditCtx, action, resourceID, meta))
+		return err
+	})
+}
+
+func normalizeAdminConfigImportInput(in AdminConfigImportInput) (AdminConfigImportInput, error) {
+	out := AdminConfigImportInput{
+		TargetEnvironment:   cleanConfigPromotionEnvironment(in.TargetEnvironment),
+		Manifest:            in.Manifest,
+		DryRun:              in.DryRun,
+		AvailableSecretRefs: cleanStringSet(in.AvailableSecretRefs),
+		AllowDowngrade:      in.AllowDowngrade,
+	}
+	var violations []apierr.FieldViolation
+	if out.TargetEnvironment == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "target_environment", Reason: "must not be blank"})
+	}
+	if out.Manifest.SchemaVersion != AdminConfigExportSchemaVersion {
+		violations = append(violations, apierr.FieldViolation{Field: "manifest.schema_version", Reason: "must be " + AdminConfigExportSchemaVersion})
+	}
+	out.Manifest.SourceEnvironment = cleanConfigPromotionEnvironment(out.Manifest.SourceEnvironment)
+	if out.Manifest.SourceEnvironment == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "manifest.source_environment", Reason: "must not be blank"})
+	}
+	if out.Manifest.ConfigSets == nil {
+		out.Manifest.ConfigSets = []AdminConfigExportSet{}
+	}
+	for i, set := range out.Manifest.ConfigSets {
+		field := fmt.Sprintf("manifest.config_sets[%d]", i)
+		slug, ok := cleanAdminConfigSlug(set.Slug)
+		if !ok {
+			violations = append(violations, apierr.FieldViolation{Field: field + ".slug", Reason: "must be a canonical config slug"})
+		}
+		out.Manifest.ConfigSets[i].Slug = slug
+		if !set.Domain.valid() {
+			violations = append(violations, apierr.FieldViolation{Field: field + ".domain", Reason: "must be pricing, metering, billing, quota, or features"})
+		}
+		if strings.TrimSpace(set.Name) == "" {
+			violations = append(violations, apierr.FieldViolation{Field: field + ".name", Reason: "must not be blank"})
+		}
+		out.Manifest.ConfigSets[i].Name = strings.TrimSpace(set.Name)
+		out.Manifest.ConfigSets[i].Description = strings.TrimSpace(set.Description)
+		if len(set.Versions) == 0 {
+			violations = append(violations, apierr.FieldViolation{Field: field + ".versions", Reason: "must contain at least one version"})
+		}
+		versionNumbers := map[int]struct{}{}
+		for _, version := range set.Versions {
+			if version.Version > 0 {
+				versionNumbers[version.Version] = struct{}{}
+			}
+		}
+		for j, version := range set.Versions {
+			versionField := fmt.Sprintf("%s.versions[%d]", field, j)
+			if version.Version <= 0 {
+				violations = append(violations, apierr.FieldViolation{Field: versionField + ".version", Reason: "must be positive"})
+			}
+			if version.RollbackOfVersion < 0 {
+				violations = append(violations, apierr.FieldViolation{Field: versionField + ".rollback_of_version", Reason: "must be positive"})
+			}
+			if version.RollbackOfVersion > 0 {
+				if _, ok := versionNumbers[version.RollbackOfVersion]; !ok {
+					violations = append(violations, apierr.FieldViolation{Field: versionField + ".rollback_of_version", Reason: "must reference a version in the same config set"})
+				}
+			}
+			switch version.Status {
+			case AdminConfigStatusDraft, AdminConfigStatusPublished, AdminConfigStatusArchived:
+			default:
+				violations = append(violations, apierr.FieldViolation{Field: versionField + ".status", Reason: "must be draft, published, or archived"})
+			}
+			payload, err := normalizeConfigPayload(version.Payload)
+			if err != nil {
+				violations = append(violations, apierr.FieldViolation{Field: versionField + ".payload", Reason: "must be valid JSON"})
+			} else {
+				out.Manifest.ConfigSets[i].Versions[j].Payload = payload
+			}
+			if version.Status != AdminConfigStatusDraft && version.EffectiveAt == nil {
+				violations = append(violations, apierr.FieldViolation{Field: versionField + ".effective_at", Reason: "must be set for published or archived versions"})
+			}
+		}
+	}
+	if len(violations) > 0 {
+		return AdminConfigImportInput{}, apierr.InvalidInput(violations...)
+	}
+	sortAdminConfigManifest(out.Manifest)
+	return out, nil
+}
+
+func cleanConfigPromotionEnvironment(raw string) string {
+	env := strings.TrimSpace(strings.ToLower(raw))
+	if env == "" || len(env) > 64 {
+		return ""
+	}
+	for _, r := range env {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return ""
+	}
+	return env
+}
+
+func cleanStringSet(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		cleaned := strings.TrimSpace(value)
+		if cleaned == "" {
+			continue
+		}
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		out = append(out, cleaned)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sanitizeAdminConfigExportPayload(raw []byte) (json.RawMessage, error) {
+	normalized, err := normalizeConfigPayload(raw)
+	if err != nil {
+		return nil, err
+	}
+	var decoded any
+	if err := json.Unmarshal(normalized, &decoded); err != nil {
+		return nil, apierr.InvalidInput(apierr.FieldViolation{Field: "payload", Reason: "must be valid JSON"})
+	}
+	redacted := redactAdminConfigExportValue("", decoded)
+	out, err := json.Marshal(redacted)
+	if err != nil {
+		return nil, apierr.Internal(err)
+	}
+	return json.RawMessage(out), nil
+}
+
+func redactAdminConfigExportValue(path string, v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			childPath := joinAuditPath(path, key)
+			if isSecretReferenceKey(key) {
+				out[key] = value
+				continue
+			}
+			if isSecretAuditKey(key) {
+				out[key] = output.Sentinel
+				continue
+			}
+			out[key] = redactAdminConfigExportValue(childPath, value)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, value := range typed {
+			out[i] = redactAdminConfigExportValue(fmt.Sprintf("%s[%d]", path, i), value)
+		}
+		return out
+	case string:
+		if isSecretAuditKey(path) && !isSecretReferenceKey(path) {
+			return output.Sentinel
+		}
+		return typed
+	default:
+		return typed
+	}
+}
+
+func isSecretReferenceKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	switch key {
+	case "credential_ref", "credential_refs", "secret_ref", "secret_refs", "auth_reference":
+		return true
+	default:
+		return false
+	}
+}
+
+func adminConfigManifestSecretRefs(manifest AdminConfigExportManifest) []string {
+	seen := map[string]struct{}{}
+	for _, set := range manifest.ConfigSets {
+		for _, version := range set.Versions {
+			var decoded any
+			if err := json.Unmarshal(version.Payload, &decoded); err != nil {
+				continue
+			}
+			collectAdminConfigSecretRefs(decoded, seen)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for ref := range seen {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectAdminConfigSecretRefs(v any, seen map[string]struct{}) {
+	switch typed := v.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "credential_ref", "secret_ref", "auth_reference":
+				if ref, ok := value.(string); ok && strings.TrimSpace(ref) != "" {
+					seen[strings.TrimSpace(ref)] = struct{}{}
+				}
+			case "credential_refs", "secret_refs":
+				if refs, ok := value.([]any); ok {
+					for _, item := range refs {
+						if ref, ok := item.(string); ok && strings.TrimSpace(ref) != "" {
+							seen[strings.TrimSpace(ref)] = struct{}{}
+						}
+					}
+				}
+			}
+			collectAdminConfigSecretRefs(value, seen)
+		}
+	case []any:
+		for _, item := range typed {
+			collectAdminConfigSecretRefs(item, seen)
+		}
+	}
+}
+
+func maxManifestVersion(versions []AdminConfigExportVersion) int {
+	max := 0
+	for _, version := range versions {
+		if version.Version > max {
+			max = version.Version
+		}
+	}
+	return max
+}
+
+func maxAdminConfigVersion(versions []AdminConfigVersion) int {
+	max := 0
+	for _, version := range versions {
+		if version.Version > max {
+			max = version.Version
+		}
+	}
+	return max
+}
+
+func sortAdminConfigManifest(manifest AdminConfigExportManifest) {
+	sort.Slice(manifest.ConfigSets, func(i, j int) bool {
+		if manifest.ConfigSets[i].Domain != manifest.ConfigSets[j].Domain {
+			return manifest.ConfigSets[i].Domain < manifest.ConfigSets[j].Domain
+		}
+		return manifest.ConfigSets[i].Slug < manifest.ConfigSets[j].Slug
+	})
+	for i := range manifest.ConfigSets {
+		sort.Slice(manifest.ConfigSets[i].Versions, func(a, b int) bool {
+			return manifest.ConfigSets[i].Versions[a].Version < manifest.ConfigSets[i].Versions[b].Version
+		})
+	}
+}
+
+func apierrCode(err error) yerr.Code {
+	if err == nil {
+		return ""
+	}
+	return yerr.From(err).Code
 }
 
 func changedAdminConfigFields(before, after any) []string {

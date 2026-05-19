@@ -97,6 +97,18 @@ Postgres persistence for control-plane source-of-truth state.
   `metadata.overage_behavior`, so billing exports inherit the same decision
   through `usage_counters`.
 
+## Admin config promotion
+
+- `AdminConfigService.Export`/`Import` are the generic promotion boundary for
+  `admin_config_sets` and `admin_config_versions`. Export manifests use
+  `yalla.admin_config_export.v1`, omit source row IDs, preserve version order
+  and rollback lineage by manifest version number, redact secret-shaped payload
+  values, and keep credential reference names so target environments can verify
+  their own secret bindings. Imports must dry-run to a deterministic diff,
+  validate required secret references, block unsafe downgrades unless
+  explicitly allowed, and append new target-environment version rows instead of
+  rewriting historical rows.
+
 ## Tenant hierarchy schema
 
 - The `Organization -> Project -> Environment -> Service` chain is in

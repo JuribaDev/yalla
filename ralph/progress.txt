@@ -1,4 +1,12 @@
 ## Codebase Patterns
+- Backoffice config promotion uses the generic `admin_config_sets` /
+  `admin_config_versions` history rather than domain-specific tables:
+  `AdminConfigService.Export` emits `yalla.admin_config_export.v1` manifests
+  with source row IDs omitted, secret-shaped payload values redacted,
+  credential reference names preserved, version order stable, and rollback
+  lineage represented by manifest version number; `Import` dry-runs to a
+  deterministic diff, validates target secret refs, blocks unsafe downgrades
+  unless explicitly allowed, and appends new target-environment version rows.
 - Restore rehearsal operations artifacts follow the same static-release-gate pattern as other operations commands: keep `deploy/operations/restore-rehearsal.sh`, `deploy/operations/README.md`, `docs/operations/backup-restore.md`, SECURITY.md, CI, `scripts/verify.sh`, and `internal/release/*_static_test.go` in lockstep; restore only into `YALLA_REHEARSAL_DATABASE_URL`, reject primary-DSN matches, run `pg_restore` plus `yalla-api --migrate-only`, require canary success, and write redacted reports atomically.
 - Backup operations artifacts follow the static-release-gate pattern:
   keep `deploy/operations/backup-database.sh`,
@@ -39091,4 +39099,16 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Restore rehearsal scripts should source the operator env file before checking the canary executable so an env-file `YALLA_CANARY_BIN` override is honored.
   - Rehearsal reports are operational evidence, so write them only after restore, migrations, and canary pass, and keep snapshot locations plus DSNs redacted even in report files.
+---
+
+## 2026-05-19 16:57:48 +03 - BE-0614
+- What was implemented: added support-gated backoffice configuration export/import endpoints for safe environment promotion; added `yalla.admin_config_export.v1` manifests with source IDs omitted, secret-shaped values redacted, credential reference names preserved, stable version order, and rollback lineage by manifest version number; added import dry-run/apply diffing, required secret-reference validation, unsafe downgrade blocking, append-only target history creation, and audit events for export/import.
+- Files changed: `cmd/yalla-api/main.go`; `internal/controlplane/httpapi/admin_config.go`; `internal/controlplane/httpapi/routes.go`; `internal/controlplane/httpapi/server.go`; `internal/controlplane/httpapi/admin_config_promotion_test.go`; `internal/controlplane/httpapi/AGENTS.md`; `internal/controlplane/store/admin_config.go`; `internal/controlplane/store/admin_config_service.go`; `internal/controlplane/store/admin_config_promotion_service_test.go`; `internal/controlplane/store/AGENTS.md`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`.
+- Results: all required and focused checks passed. `golangci-lint` reported 0 issues. `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups: import currently promotes generic `admin_config_*` history; domain-specific config tables remain owned by their existing APIs and can add dedicated exporters later if operators need a single manifest spanning both generic and specialized backoffice tables.
+- **Learnings for future iterations:**
+  - Config promotion should preserve rollback lineage by manifest version number, not source row ID, because imports intentionally create new target-environment rows.
+  - Credential reference names are promotion metadata and may be exported; secret-shaped payload values still need redaction before they leave the source environment.
+  - Dry-run reports should return blockers as data for well-formed manifests, while apply requests should turn unsafe downgrades into a typed conflict.
 ---

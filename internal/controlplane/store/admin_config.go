@@ -116,6 +116,87 @@ type RollbackAdminConfigInput struct {
 	RollbackReason  string
 }
 
+// AdminConfigExportSchemaVersion is the stable manifest schema for backoffice
+// configuration promotion between environments.
+const AdminConfigExportSchemaVersion = "yalla.admin_config_export.v1"
+
+// AdminConfigExportInput selects the operator environment label attached to an
+// exported backoffice configuration manifest.
+type AdminConfigExportInput struct {
+	SourceEnvironment string
+}
+
+// AdminConfigExportManifest is a deterministic, non-secret backoffice config
+// bundle that can be dry-run or imported into another environment.
+type AdminConfigExportManifest struct {
+	SchemaVersion     string                 `json:"schema_version"`
+	SourceEnvironment string                 `json:"source_environment"`
+	ExportedAt        time.Time              `json:"exported_at"`
+	ConfigSets        []AdminConfigExportSet `json:"config_sets"`
+}
+
+// AdminConfigExportSet is one named config family in an export manifest.
+type AdminConfigExportSet struct {
+	Slug        string                     `json:"slug"`
+	Domain      AdminConfigDomain          `json:"domain"`
+	Name        string                     `json:"name"`
+	Description string                     `json:"description,omitempty"`
+	Versions    []AdminConfigExportVersion `json:"versions"`
+}
+
+// AdminConfigExportVersion is one version in an export manifest. IDs are
+// intentionally omitted so imports create new target-environment history.
+type AdminConfigExportVersion struct {
+	Version           int               `json:"version"`
+	Status            AdminConfigStatus `json:"status"`
+	Payload           json.RawMessage   `json:"payload"`
+	EffectiveAt       *time.Time        `json:"effective_at,omitempty"`
+	PublishedBy       string            `json:"published_by,omitempty"`
+	RollbackOfVersion int               `json:"rollback_of_version,omitempty"`
+	RollbackReason    string            `json:"rollback_reason,omitempty"`
+	Archived          bool              `json:"archived,omitempty"`
+	CreatedAt         time.Time         `json:"created_at,omitempty"`
+	UpdatedAt         time.Time         `json:"updated_at,omitempty"`
+}
+
+// AdminConfigImportInput describes a dry-run or apply request for an exported
+// manifest.
+type AdminConfigImportInput struct {
+	TargetEnvironment   string
+	Manifest            AdminConfigExportManifest
+	DryRun              bool
+	AvailableSecretRefs []string
+	AllowDowngrade      bool
+}
+
+// AdminConfigImportReport is the deterministic diff returned by config import.
+type AdminConfigImportReport struct {
+	Valid             bool                      `json:"valid"`
+	Applied           bool                      `json:"applied"`
+	TargetEnvironment string                    `json:"target_environment"`
+	SourceEnvironment string                    `json:"source_environment"`
+	Changes           []AdminConfigImportChange `json:"changes"`
+	MissingSecretRefs []string                  `json:"missing_secret_refs"`
+	BlockingErrors    []AdminConfigImportIssue  `json:"blocking_errors"`
+}
+
+// AdminConfigImportChange is one planned or applied manifest operation.
+type AdminConfigImportChange struct {
+	Operation   string            `json:"operation"`
+	Slug        string            `json:"slug"`
+	Domain      AdminConfigDomain `json:"domain"`
+	FromVersion int               `json:"from_version,omitempty"`
+	ToVersion   int               `json:"to_version,omitempty"`
+	Status      AdminConfigStatus `json:"status,omitempty"`
+}
+
+// AdminConfigImportIssue is one stable import blocker.
+type AdminConfigImportIssue struct {
+	Code    string `json:"code"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
 // AdminConfigRepository is the persistence surface for backoffice runtime config versioning.
 type AdminConfigRepository struct{}
 
@@ -303,6 +384,71 @@ func (r *AdminConfigRepository) Archive(ctx context.Context, tx *Tx, id string) 
 	return archived, nil
 }
 
+func (r *AdminConfigRepository) importVersion(ctx context.Context, tx *Tx, configSetID string, in AdminConfigExportVersion, rollbackOfVersionID string, publishedBy string) (AdminConfigVersion, error) {
+	if tx == nil {
+		return AdminConfigVersion{}, apierr.Internal(errors.New("store: AdminConfigRepository.importVersion called with a nil transaction"))
+	}
+	payload, err := normalizeConfigPayload(in.Payload)
+	if err != nil {
+		return AdminConfigVersion{}, err
+	}
+	nextVersion, err := r.nextVersion(ctx, tx, configSetID)
+	if err != nil {
+		return AdminConfigVersion{}, err
+	}
+	id, err := newOpaqueStoreID("cfgver")
+	if err != nil {
+		return AdminConfigVersion{}, apierr.Internal(err)
+	}
+	status := in.Status
+	if status == "" {
+		status = AdminConfigStatusDraft
+	}
+	var effectiveAt *time.Time
+	var publishedAt *time.Time
+	var publishedByPtr *string
+	var archivedAt *time.Time
+	now := time.Now().UTC()
+	if status != AdminConfigStatusDraft {
+		if in.EffectiveAt != nil {
+			effective := in.EffectiveAt.UTC()
+			effectiveAt = &effective
+		} else {
+			effectiveAt = &now
+		}
+		publishedAt = &now
+		cleanedPublishedBy := strings.TrimSpace(in.PublishedBy)
+		if cleanedPublishedBy == "" {
+			cleanedPublishedBy = strings.TrimSpace(publishedBy)
+		}
+		publishedByPtr = &cleanedPublishedBy
+	}
+	if status == AdminConfigStatusArchived || in.Archived {
+		status = AdminConfigStatusArchived
+		archivedAt = &now
+	}
+	var rollbackPtr *string
+	if strings.TrimSpace(rollbackOfVersionID) != "" {
+		cleaned := strings.TrimSpace(rollbackOfVersionID)
+		rollbackPtr = &cleaned
+	}
+	var version AdminConfigVersion
+	err = tx.QueryRow(ctx,
+		`INSERT INTO admin_config_versions
+		    (id, config_set_id, version, status, payload, effective_at, published_at, published_by, rollback_of_version_id, rollback_reason, archived_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 RETURNING `+adminConfigVersionColumns,
+		id, configSetID, nextVersion, status, payload, effectiveAt, publishedAt, publishedByPtr, rollbackPtr, strings.TrimSpace(in.RollbackReason), archivedAt,
+	).Scan(adminConfigVersionScanDest(&version)...)
+	if err != nil {
+		return AdminConfigVersion{}, mapWriteError(err, "import admin config version")
+	}
+	if err := r.bumpRevision(ctx, tx, configSetID); err != nil {
+		return AdminConfigVersion{}, err
+	}
+	return version, nil
+}
+
 // Revision returns the monotonic invalidation token for one config set.
 func (r *AdminConfigRepository) Revision(ctx context.Context, q Querier, configSetID string) (int64, error) {
 	var revision int64
@@ -387,6 +533,75 @@ func (r *AdminConfigRepository) ListActivePublishedRuntime(ctx context.Context, 
 		return nil, apierr.StoreUnavailable(err)
 	}
 	return out, nil
+}
+
+func (r *AdminConfigRepository) listSets(ctx context.Context, q Querier) ([]AdminConfigSet, error) {
+	rows, err := q.Query(ctx,
+		`SELECT `+adminConfigSetColumns+`
+		   FROM admin_config_sets
+		  ORDER BY domain, slug, id`,
+	)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	out := make([]AdminConfigSet, 0)
+	for rows.Next() {
+		var set AdminConfigSet
+		if err := rows.Scan(&set.ID, &set.Slug, &set.Domain, &set.Name, &set.Description, &set.Revision, &set.CreatedAt, &set.UpdatedAt); err != nil {
+			return nil, apierr.StoreUnavailable(err)
+		}
+		out = append(out, set)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	return out, nil
+}
+
+func (r *AdminConfigRepository) listVersionsForSet(ctx context.Context, q Querier, configSetID string) ([]AdminConfigVersion, error) {
+	rows, err := q.Query(ctx,
+		`SELECT `+adminConfigVersionColumns+`
+		   FROM admin_config_versions
+		  WHERE config_set_id = $1
+		  ORDER BY version, id`,
+		strings.TrimSpace(configSetID),
+	)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	out := make([]AdminConfigVersion, 0)
+	for rows.Next() {
+		var version AdminConfigVersion
+		if err := rows.Scan(adminConfigVersionScanDest(&version)...); err != nil {
+			return nil, apierr.StoreUnavailable(err)
+		}
+		out = append(out, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	return out, nil
+}
+
+func (r *AdminConfigRepository) getSetByDomainSlug(ctx context.Context, q Querier, domain AdminConfigDomain, slug string) (AdminConfigSet, error) {
+	var set AdminConfigSet
+	err := q.QueryRow(ctx,
+		`SELECT `+adminConfigSetColumns+`
+		   FROM admin_config_sets
+		  WHERE domain = $1 AND slug = $2`,
+		domain, strings.TrimSpace(slug),
+	).Scan(&set.ID, &set.Slug, &set.Domain, &set.Name, &set.Description, &set.Revision, &set.CreatedAt, &set.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AdminConfigSet{}, apierr.NotFound("admin_config_set", string(domain)+"/"+slug)
+	}
+	if err != nil {
+		return AdminConfigSet{}, apierr.StoreUnavailable(err)
+	}
+	return set, nil
 }
 
 func (r *AdminConfigRepository) lockSet(ctx context.Context, tx *Tx, id string) (AdminConfigSet, error) {

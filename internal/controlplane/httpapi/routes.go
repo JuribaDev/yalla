@@ -218,6 +218,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminDokployReconciler AdminDokployReconciler
 	var adminDokployImporter AdminDokployImporter
 	var adminConfigDryRunner AdminConfigDryRunner
+	var adminConfigPromotionManager AdminConfigPromotionManager
 	var adminPlanManager AdminPlanManager
 	var adminSubscriptionManager AdminSubscriptionManager
 	var adminMeteringSourceManager AdminMeteringSourceManager
@@ -266,6 +267,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminConfigDryRunner); ok {
 			adminConfigDryRunner = v
+		}
+		if v, ok := opt.(AdminConfigPromotionManager); ok {
+			adminConfigPromotionManager = v
 		}
 		if v, ok := opt.(AdminPlanManager); ok {
 			adminPlanManager = v
@@ -546,6 +550,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The dry-run validation report.",
 			},
 			handler: dryRunAdminConfigHandler(adminConfigDryRunner),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/config/export",
+				OperationID:        "exportAdminConfig",
+				Summary:            "Export backoffice config",
+				Description:        "Exports non-secret backoffice runtime configuration as a stable yalla.admin_config_export.v1 manifest for promotion between environments. The manifest omits source database IDs, preserves version order, carries credential reference names only, and redacts secret-shaped payload values. Action config.publish is required because the manifest can be imported into a production-impacting runtime configuration.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionConfigPublish),
+				SuccessDescription: "The redacted config export manifest.",
+			},
+			handler: exportAdminConfigHandler(adminConfigPromotionManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/config/import",
+				OperationID:        "importAdminConfig",
+				Summary:            "Import backoffice config",
+				Description:        "Dry-runs or applies a yalla.admin_config_export.v1 backoffice configuration manifest into the target environment. Dry runs return a deterministic diff, missing secret-reference blockers, and unsafe downgrade blockers without mutating state. Applies create new config-set/version history instead of rewriting imported IDs, preserving target-environment auditability and rollback history. Action config.publish is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionConfigPublish),
+				SuccessDescription: "The import validation and diff report.",
+			},
+			handler: importAdminConfigHandler(adminConfigPromotionManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

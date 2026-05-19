@@ -209,6 +209,16 @@ actor/request/correlation data from the authenticated request, delegate to
 `apienvelope`. Evaluation responses may include the configured value, but audit
 metadata must not persist raw evaluated JSON values.
 
+## Backoffice config promotion
+
+Backoffice config export/import routes use `policy.ActionConfigPublish`.
+Exports render a `yalla.admin_config_export.v1` manifest inside the normal
+`yalla.output.v1` envelope; imports accept that manifest through
+`validate.DecodeJSON`, return a deterministic dry-run/apply diff, and delegate
+all version-history, secret-reference, downgrade, and audit behavior to
+`AdminConfigService`. Keep secret values out of manifests; credential reference
+names are allowed because operators must map them in the target environment.
+
 ## Backoffice billing providers
 
 Backoffice billing provider routes use `policy.ActionBillingManage`. Keep

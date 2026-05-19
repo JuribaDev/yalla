@@ -12575,8 +12575,8 @@
       ],
       "type": "backoffice-config",
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-gated backoffice config export/import APIs: GET /v1/admin/config/export and POST /v1/admin/config/import. Added yalla.admin_config_export.v1 manifests that omit source row IDs, redact secret-shaped payload values while preserving credential reference names, preserve version order and rollback lineage by manifest version number, dry-run imports with deterministic diffs, validate required target secret refs, block unsafe downgrades unless explicitly allowed, append new target-environment version history, and audit export/import actions. Added HTTP contract tests and store promotion tests for export, import, missing secret refs, unsafe downgrade, and rollback lineage."
     }
   ],
   "pricingAndUsageTracking": {
