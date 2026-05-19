@@ -89,6 +89,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_AUTHENTICATION_REQUIRED,
 //	E_AUTH_INVALID, E_AUTH_EXPIRED, E_AUTH  -> 401 Unauthorized
 //	E_FORBIDDEN                               -> 403 Forbidden
+//	E_BREAK_GLASS_REQUIRED                    -> 403 Forbidden
 //	E_SCOPE_REQUIRED                          -> 400 Bad Request
 //	E_NOT_FOUND                               -> 404 Not Found
 //	E_CONFLICT, E_JOB_NOT_CLAIMED, E_JOB_CANCELLED,
@@ -112,7 +113,7 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusBadRequest
 	case yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth:
 		return http.StatusUnauthorized
-	case yerr.CodeForbidden:
+	case yerr.CodeForbidden, yerr.CodeBreakGlassRequired:
 		return http.StatusForbidden
 	case yerr.CodeNotFound:
 		return http.StatusNotFound

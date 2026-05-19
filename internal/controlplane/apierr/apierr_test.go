@@ -57,6 +57,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 	}
 	required := []yerr.Code{
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
+		yerr.CodeBreakGlassRequired,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded, yerr.CodeUnsupportedServiceType,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
@@ -93,6 +94,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"auth expired", AuthExpired(), yerr.CodeAuthExpired, 401},
 		{"unauthenticated", Unauthenticated(""), yerr.CodeAuth, 401},
 		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
+		{"break glass required", BreakGlassRequired(stderrors.New("x")), yerr.CodeBreakGlassRequired, 403},
 		{"scope required", ScopeRequired("organization"), yerr.CodeScopeRequired, 400},
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
@@ -335,6 +337,60 @@ func TestDriftReviewRequiredContract(t *testing.T) {
 		!strings.Contains(body, `"request_id":"req-drift-review"`) ||
 		!strings.Contains(body, string(yerr.CodeDriftReviewRequired)) ||
 		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDriftReviewRequired)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+}
+
+func TestBreakGlassRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer yka_break_glass_secret_token"
+	cause := stderrors.New("support attempted cross-tenant admin.read for org_target_123 without active session: " + secret)
+	err := BreakGlassRequired(cause)
+	if err.Code != yerr.CodeBreakGlassRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeBreakGlassRequired)
+	}
+	if err.Message != "break-glass access is required" {
+		t.Fatalf("message = %q, want fixed break-glass-required message", err.Message)
+	}
+	if err.Hint != "start an approved break-glass session before retrying" {
+		t.Fatalf("hint = %q, want fixed break-glass recovery hint", err.Hint)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_BREAK_GLASS_REQUIRED is not catalogued")
+	}
+	if entry.HTTPStatus != 403 {
+		t.Errorf("HTTPStatus = %d, want 403", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("BreakGlassRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-break-glass-required", err)
+	body := rec.Body.String()
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "yka_break_glass_secret_token", "org_target_123", "cross-tenant admin.read"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-break-glass-required"`) ||
+		!strings.Contains(body, string(yerr.CodeBreakGlassRequired)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeBreakGlassRequired)) {
 		t.Fatalf("envelope missing stable contract fields: %s", body)
 	}
 }

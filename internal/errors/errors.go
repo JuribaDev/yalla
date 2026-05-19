@@ -53,6 +53,11 @@ const (
 	CodeAuthExpired Code = "E_AUTH_EXPIRED"
 	CodeAuth        Code = "E_AUTH"
 	CodeForbidden   Code = "E_FORBIDDEN"
+	// CodeBreakGlassRequired marks an authenticated support/admin path that
+	// requires an active, approved break-glass session before it may continue.
+	// Public responses must not expose target tenant ids, action names,
+	// credential material, or the denied access reason internals.
+	CodeBreakGlassRequired Code = "E_BREAK_GLASS_REQUIRED"
 	// CodeScopeRequired marks a request that reached authorization without
 	// the organization/resource scope needed to evaluate the action.
 	CodeScopeRequired Code = "E_SCOPE_REQUIRED"
@@ -187,6 +192,7 @@ var codeDescriptions = map[Code]string{
 	CodeAuthExpired:            "supplied authentication credentials have expired",
 	CodeAuth:                   "supplied authentication credentials are invalid",
 	CodeForbidden:              "credentials are valid but not authorised for the action",
+	CodeBreakGlassRequired:     "break-glass access is required before the action can continue",
 	CodeScopeRequired:          "required organization or resource scope was not supplied",
 	CodeNotFound:               "resource, operationId, or schema does not exist",
 	CodeConflict:               "request rejected because of a precondition or state conflict",
@@ -227,7 +233,7 @@ var codeDescriptions = map[Code]string{
 func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeValidation, CodeInvalidInput,
-		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
+		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeBreakGlassRequired, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded, CodeUnsupportedServiceType,
 		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug,
 		CodeNetwork, CodeDBUnavailable, CodeMigrationRequired, CodeSecretDecryption, CodeDriftReviewRequired, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
@@ -267,7 +273,7 @@ func (c Code) ExitCode() int {
 		return 2
 	case CodeConfig, CodeOrphan, CodeMigrationRequired:
 		return 3
-	case CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden:
+	case CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeBreakGlassRequired:
 		return 4
 	case CodeNotFound:
 		return 5

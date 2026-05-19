@@ -36438,3 +36438,43 @@ change that widened Reason to caller-supplied data.
   - Error-contract stories continue to be localized to shared `internal/errors`, backend `apierr`, `apienvelope.StatusForCode`, and focused contract tests unless a concrete call site already exists.
   - Manual-review gates should use generic public messages and preserve drift specifics only as wrapped server-side causes because drift details may contain resource ids or secret-shaped values.
 ---
+## 2026-05-19 04:33 +03 - BE-0539
+- What was implemented
+  - Added the stable `E_BREAK_GLASS_REQUIRED` error code to the shared CLI/backend error registry.
+  - Added backend taxonomy coverage and the typed `apierr.BreakGlassRequired` constructor with HTTP 403, non-retryable generic-message policy, fixed public message, fixed recovery hint, and server-side cause preservation.
+  - Added envelope/status tests proving `yalla.error.v1` shape, `request_id`, documentation URL, HTTP status, and no leakage of target tenant/action/credential details.
+  - Marked BE-0539 as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr -run 'Test(Code_ExitCodeMappingIsStable|BreakGlassRequired|StatusForCode|CatalogIsSortedAndCoversCategories|ConstructorsEmitCataloguedCodes)$'` (red first failed on missing code/constructor/status mapping, then passed after implementation)
+  - `gofmt -w .`
+  - `goimports -w .` not run: `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestRedaction ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not available on direct PATH check; repository pre-commit strict verification ran it)
+  - `govulncheck ./...` (not available on direct PATH check; repository pre-commit strict verification ran it and found no vulnerabilities)
+  - `scripts/verify.sh --strict --release` via pre-commit hook
+- Results
+  - Required formatting, tidy, unit tests, race tests, vet, focused control-plane tests, redaction-focused test filter, and golangci-lint all passed.
+  - Repository pre-commit strict verification passed, including focused backend suites, `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot release build.
+- Remaining risks or follow-ups
+  - No persistence or Dokploy integration was touched, so Postgres-backed migration/job/quota focused suites were not required for this error-contract-only story.
+  - Future policy or handler work that needs this contract should call `apierr.BreakGlassRequired` rather than emitting `E_FORBIDDEN` or a string literal when an active break-glass session is specifically required.
+- **Learnings for future iterations:**
+  - `E_BREAK_GLASS_REQUIRED` is an authorization/escalation gate, not a generic policy denial: it maps to HTTP 403 and CLI exit code 4, uses a fixed generic public message, and preserves target/action details only as the wrapped server-side cause.
+  - Error-contract stories remain a four-point update: shared `internal/errors` registry, backend `apierr` taxonomy/constructor, `apienvelope.StatusForCode`, and redaction/doc-link tests.
+---

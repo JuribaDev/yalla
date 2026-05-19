@@ -21,6 +21,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeMigrationRequired, 3},
 		{CodeSecretDecryption, 1},
 		{CodeDriftReviewRequired, 6},
+		{CodeBreakGlassRequired, 4},
 		{CodeAuthenticationRequired, 4},
 		{CodeAuthInvalid, 4},
 		{CodeAuthExpired, 4},
@@ -172,6 +173,22 @@ func TestDriftReviewRequiredDescriptionNamesManualReviewGate(t *testing.T) {
 	const want = "drift reconciliation requires manual review before it can continue"
 	if got != want {
 		t.Fatalf("E_DRIFT_REVIEW_REQUIRED description = %q, want %q", got, want)
+	}
+}
+
+func TestBreakGlassRequiredDescriptionNamesElevatedAccessGate(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeBreakGlassRequired) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "break-glass access is required before the action can continue"
+	if got != want {
+		t.Fatalf("E_BREAK_GLASS_REQUIRED description = %q, want %q", got, want)
 	}
 }
 

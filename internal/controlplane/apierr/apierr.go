@@ -10,7 +10,7 @@
 // source of truth:
 //
 //   - Auth / policy:        AuthenticationRequired, AuthInvalid, AuthExpired,
-//     Unauthenticated, Forbidden, ScopeRequired
+//     Unauthenticated, Forbidden, BreakGlassRequired, ScopeRequired
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict, JobNotClaimed, JobCancelled
 //   - Quota:                QuotaExceeded
@@ -148,6 +148,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeAuthExpired:            {false, MessageGeneric, "authentication credentials were supplied but have expired"},
 	yerr.CodeAuth:                   {false, MessageSpecific, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
+	yerr.CodeBreakGlassRequired:     {false, MessageGeneric, "an active break-glass session is required before the action may continue"},
 	yerr.CodeScopeRequired:          {false, MessageSpecific, "the request did not supply the organization or resource scope required for authorization"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
 	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
@@ -339,6 +340,18 @@ func Forbidden(message string) *yerr.Error {
 		message = "not authorized to perform this action"
 	}
 	return yerr.New(yerr.CodeForbidden, message)
+}
+
+// BreakGlassRequired builds an E_BREAK_GLASS_REQUIRED error (HTTP 403) for an
+// authenticated request that is otherwise blocked until a support/operator
+// break-glass session is active. The public message and hint are fixed and
+// generic: they must never expose target tenant ids, action names, credential
+// material, policy internals, or denied access details. The cause is preserved
+// via Unwrap for server-side diagnostics only.
+func BreakGlassRequired(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeBreakGlassRequired, "break-glass access is required").
+		WithHint("start an approved break-glass session before retrying").
+		Wrap(cause)
 }
 
 // ScopeRequired builds an E_SCOPE_REQUIRED error (HTTP 400) for a request

@@ -11150,8 +11150,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_BREAK_GLASS_REQUIRED."
+      "passes": true,
+      "notes": "Stable error code: E_BREAK_GLASS_REQUIRED. Implemented as a typed backend error via apierr.BreakGlassRequired with HTTP 403, non-retryable generic-message taxonomy, fixed break-glass recovery hint, yalla.error.v1 envelope/doc-link/redaction tests, CLI manifest description, and exit-code mapping."
     },
     {
       "id": "BE-0540",
