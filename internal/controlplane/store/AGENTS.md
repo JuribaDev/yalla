@@ -44,6 +44,16 @@ Postgres persistence for control-plane source-of-truth state.
   `ON DELETE` behaviour. Add the uniqueness constraints that enforce the
   hierarchy (e.g. unique slug *within* a parent, not globally).
 
+## Billing period snapshots
+
+- Invoice-period close snapshots compose existing source-of-truth surfaces:
+  `usage_counters` remain the frozen aggregate, `usage_counter_adjustments`
+  carry late corrections, `billing_exports` remains the provider-neutral export
+  work item, and `invoice_snapshots` / `invoice_snapshot_items` freeze the
+  auditable invoice basis. Reopen a closed snapshot by marking it `reopened`
+  with an audit event and creating the next `close_version`; do not rewrite
+  prior item quantities.
+
 ## Tenant hierarchy schema
 
 - The `Organization -> Project -> Environment -> Service` chain is in

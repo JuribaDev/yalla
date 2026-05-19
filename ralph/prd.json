@@ -11948,8 +11948,8 @@
       ],
       "type": "billing",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented invoice-period close snapshots with migration 0068, storing tenant-scoped invoice_snapshots and invoice_snapshot_items. Close snapshots accepted subscription plan id/slug/version, entitlement revision, usage-event and adjustment checksums, final counter plus late-adjustment quantities, and linked billing export status. Reopen for correction marks the previous snapshot reopened with a redacted admin audit event and the next close creates a higher close_version instead of rewriting prior item quantities. Added isolated Postgres coverage for close/export/customer readback, closed-period late usage adjustment-only behavior, reopen audit redaction, new close versions, validation, and tenant-scoped not-found."
     },
     {
       "id": "BE-0582",
