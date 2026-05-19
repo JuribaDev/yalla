@@ -11739,8 +11739,8 @@
       ],
       "type": "billing",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented provider-neutral billing export abstraction with migration 0066 billing_exports/billing_export_items, store.BillingExportRepository for idempotent organization/subscription/period/provider groups, immutable usage_counter item snapshots, provider response ID persistence, failed-attempt retry timestamps, and redacted provider error summaries/log values. Added internal/controlplane/billing Provider/ExportBatch boundary so Stripe/manual adapters consume snapshots without coupling core metering to a provider SDK. No public HTTP surface was added, so JSON envelope criteria are not applicable for this internal billing story."
     },
     {
       "id": "BE-0571",
