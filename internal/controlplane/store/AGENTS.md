@@ -216,6 +216,18 @@ Postgres persistence for control-plane source-of-truth state.
   (`hard`/`soft`/`metered`/`disabled`) is the second shared domain. Adding a
   dimension is a new migration running `ALTER DOMAIN`.
 
+## Usage counters (`0052_usage_counters`)
+
+- `usage_counters` are billing-period aggregates derived from append-only
+  `usage_events`; never mutate `usage_events` to correct a counter. Replay
+  aggregation through `UsageCounterRepository.AggregateUsageEvents`, which
+  upserts open-period counters by
+  `(organization_id, key, unit, period_start, period_end, source)`.
+- Once a counter has been aggregated after `period_end`, treat the counter's
+  `quantity` as frozen for billing auditability. Late-arriving events for that
+  closed period should create net-new `usage_counter_adjustments` rows; replay
+  must subtract prior adjustments so it does not duplicate the same delta.
+
 ## Subscriptions and entitlement overrides (`0050_subscriptions_entitlement_overrides`)
 
 - Customer-visible limits and usage readers should prefer the current accepted

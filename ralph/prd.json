@@ -11720,8 +11720,8 @@
       ],
       "type": "metering",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented migration 0052_usage_counters with usage_counters and usage_counter_adjustments. Added UsageCounterRepository.AggregateUsageEvents to replay append-only usage_events into deterministic org-scoped counters keyed by resource/unit/source/period/version, upsert open periods idempotently, freeze previously closed counters, and append only net-new late-event adjustments. Added integration coverage for replay idempotency, closed-period late adjustments, validation, tenant not-found, rollback on partial failure, and concurrent aggregators. No public HTTP surface was added in this persistence story, so yalla.output.v1/yalla.error.v1 route envelope criteria are not applicable until a usage-counters API or export endpoint consumes this repository."
     },
     {
       "id": "BE-0570",
