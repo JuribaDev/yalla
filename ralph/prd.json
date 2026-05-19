@@ -11929,8 +11929,8 @@
       ],
       "type": "metering",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented metering UsageReconciler over append-only usage_events and usage_counters. The worker service validates tenant/period input, replays counters idempotently through UsageCounterRepository, detects metric gaps, overlapping duplicate windows, counter resets, and quarantined samples, and records low-confidence discrepancies as drift findings with request/correlation ids. Tests cover open-period replay repair, closed-period late adjustments without double-counting, gap/quarantine findings, duplicate-window/counter-reset detection, validation, and tenant-scoped not-found behavior."
     },
     {
       "id": "BE-0581",
