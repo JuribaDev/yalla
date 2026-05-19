@@ -259,6 +259,23 @@ Postgres persistence for control-plane source-of-truth state.
   Quota accounting rows (`quota_usage`, `quota_reservations`) are **not** domain
   resources — `newQuotaID` mints their ids locally, no `domain.Kind`.
 
+## Pricing plans (`0049_pricing_plan_catalog`, `pricing_plan.go`)
+
+- `plans` is global pricing configuration, not tenant-owned customer data. It
+  carries a versioned package contract: `(slug, billing_period, version)` is
+  unique, and only one row may be `active` for a `(slug, billing_period)` pair.
+  Future subscriptions should reference the accepted plan row, not only the
+  slug, so audits can recover the exact accepted package after later changes.
+- Do not mutate an accepted plan row in place. `PricingPlanRepository.Update`
+  locks the current row, archives it, inserts the next version, and clones the
+  existing `plan_entitlements` rows onto the new version in the same
+  transaction. Change entitlements on the new version with
+  `UpsertEntitlement`.
+- `plan_entitlements.enforcement_mode` reuses `quota_enforcement_mode`
+  (`hard`, `soft`, `metered`, `disabled`) but uses a free-form
+  `entitlement_key` because billing-grade metrics extend beyond the current
+  `quota_resource` domain. Keys must stay value-free and non-secret.
+
 ## Service lifecycle (`0041_service_state_machine`, `service.go`, `service_event.go`)
 
 - `services.status` is the source-of-truth lifecycle state for the service row

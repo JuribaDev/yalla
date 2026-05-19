@@ -11606,8 +11606,8 @@
       ],
       "type": "pricing",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented migration 0049_pricing_plan_catalog with versioned plans, plan_entitlements, seeded Starter/Pro/Business/Enterprise monthly v1 packages, enforcement modes hard/soft/metered/disabled, active-plan uniqueness, and archived-row consistency. Added PricingPlanRepository with Create/Get/GetBySlugVersion/ListActive/Update/Archive/UpsertEntitlement/ListEntitlements. Update archives the current accepted version, inserts version+1, and clones entitlements in the same transaction. Added pure validation tests plus isolated-Postgres schema/repository tests for seeds, creation, update/versioning, archival, uniqueness, and not-found. No HTTP surface was added in this schema story, so public JSON envelope and route-level authorization criteria are not applicable until pricing admin/customer APIs land."
     },
     {
       "id": "BE-0564",
