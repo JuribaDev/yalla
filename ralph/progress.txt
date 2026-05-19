@@ -36582,3 +36582,13 @@ change that widened Reason to caller-supplied data.
   - `subscription_entitlements.source` enforces shape: `subscription_override` rows must carry a tenant-scoped subscription id, while `emergency_admin` rows are organization-level and must leave `subscription_id` null.
   - The resolver precedence is plan defaults < subscription overrides < emergency admin overrides; keep the tie-breakers stable so API, quota, worker, and billing services agree exactly.
 ---
+## 2026-05-19 05:20 +03 - BE-0318
+- What was implemented: Added Redis-specific drift reconciliation verification. The new tests pin Redis engine drift as dangerous review-only drift, prove deleted upstream Redis databases are reviewed, prove missing managed domains are repaired safely, and prove unmanaged extra Redis databases are quarantined without auto-delete.
+- Files changed: `internal/controlplane/reconcile/database_redis_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w internal/controlplane/reconcile/database_redis_test.go`; `go test ./internal/controlplane/reconcile -run 'TestRedis|TestReconciliation'`; `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test ./internal/controlplane/...`; `go test -run TestReconciliation ./...`; `go test -run TestFakeDokploy ./...`; `go test -race ./...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go vet ./...`; `golangci-lint run ./...`; pre-commit `scripts/verify.sh --strict --release`.
+- Results: All required, focused, lint, and strict pre-commit checks passed. `golangci-lint` passed with 0 issues. Pre-commit also passed `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and snapshot release checks. `goimports` is not installed for the manual import-format pass.
+- Remaining risks or follow-ups: None specific to BE-0318. The implementation uses the existing generic database subtype drift path in `diffService`.
+- **Learnings for future iterations:**
+  - Redis reconciliation uses the same `ServiceDatabase` plus engine-subtype contract as postgres/mysql/mariadb/mongo: engine mismatch maps to `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` and returns before safe repairs.
+  - Per-engine reconciliation verification remains a test-only pin when the shared engine path already supports the target engine.
+---
