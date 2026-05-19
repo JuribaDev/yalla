@@ -137,6 +137,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
 	auditMetrics := telemetry.DefaultAuditEventMetrics
+	policyMetrics := telemetry.DefaultPolicyDecisionMetrics
 	for _, opt := range routeOptions {
 		switch v := opt.(type) {
 		case PreviewCreator:
@@ -179,6 +180,10 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 			if v != nil {
 				auditMetrics = v
 			}
+		case *telemetry.PolicyDecisionMetrics:
+			if v != nil {
+				policyMetrics = v
+			}
 		}
 	}
 
@@ -190,7 +195,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 		backupReporter = backup.Unconfigured()
 	}
 
-	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings, dokployRefs, adminDokployReconciler, adminDokployImporter, adminConfigDryRunner, adminPlanManager, adminSubscriptionManager, adminMeteringSourceManager, adminMetricDefinitionManager, adminAttributionRuleManager, httpMetrics, dokployMetrics, quotaMetrics, auditMetrics)
+	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings, dokployRefs, adminDokployReconciler, adminDokployImporter, adminConfigDryRunner, adminPlanManager, adminSubscriptionManager, adminMeteringSourceManager, adminMetricDefinitionManager, adminAttributionRuleManager, httpMetrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)

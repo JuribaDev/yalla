@@ -33,6 +33,11 @@ var DefaultQuotaUsageMetrics = NewQuotaUsageMetrics()
 // their own collector.
 var DefaultAuditEventMetrics = NewAuditEventMetrics()
 
+// DefaultPolicyDecisionMetrics is the process-wide policy authorization
+// metrics collector used by the policy engine unless tests or embedders inject
+// their own collector.
+var DefaultPolicyDecisionMetrics = NewPolicyDecisionMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -385,6 +390,67 @@ type auditEventMetricSeries struct {
 	AuditEventMetric
 }
 
+// PolicyDecisionObservation is one policy authorization observation. Action,
+// ResourceKind, Decision, and Reason are aggregate dimensions; identifiers are
+// latest-sample hints for incident joins and must never be used as labels.
+type PolicyDecisionObservation struct {
+	Action         string
+	ResourceKind   string
+	ResourceID     string
+	Decision       string
+	Reason         string
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	PrincipalID    string
+	JobID          string
+}
+
+// PolicyDecisionMetric is one aggregate policy authorization series.
+type PolicyDecisionMetric struct {
+	Action         string `json:"action"`
+	ResourceKind   string `json:"resource_kind"`
+	Decision       string `json:"decision"`
+	Reason         string `json:"reason"`
+	Count          int64  `json:"count"`
+	RequestID      string `json:"request_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	ServiceID      string `json:"service_id,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
+	PrincipalID    string `json:"principal_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+}
+
+// PolicyDecisionMetricsSnapshot is the JSON-serializable operational view
+// exposed to operators, tests, and metrics endpoints.
+type PolicyDecisionMetricsSnapshot struct {
+	TotalDecisions int64                  `json:"total_decisions"`
+	Series         []PolicyDecisionMetric `json:"series"`
+}
+
+// PolicyDecisionMetrics stores low-cardinality authorization decision
+// counters. It is safe for concurrent use by API and worker goroutines.
+type PolicyDecisionMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[policyDecisionMetricKey]*policyDecisionMetricSeries
+}
+
+type policyDecisionMetricKey struct {
+	action       string
+	resourceKind string
+	decision     string
+	reason       string
+}
+
+type policyDecisionMetricSeries struct {
+	PolicyDecisionMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -409,6 +475,12 @@ func NewQuotaUsageMetrics() *QuotaUsageMetrics {
 // NewAuditEventMetrics returns an empty audit-log append metrics collector.
 func NewAuditEventMetrics() *AuditEventMetrics {
 	return &AuditEventMetrics{series: make(map[auditEventMetricKey]*auditEventMetricSeries)}
+}
+
+// NewPolicyDecisionMetrics returns an empty policy authorization decision
+// metrics collector.
+func NewPolicyDecisionMetrics() *PolicyDecisionMetrics {
+	return &PolicyDecisionMetrics{series: make(map[policyDecisionMetricKey]*policyDecisionMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -575,6 +647,92 @@ func (m *AuditEventMetrics) Snapshot() AuditEventMetricsSnapshot {
 		return a.ErrorCode < b.ErrorCode
 	})
 	return out
+}
+
+// Snapshot returns a deterministic copy of all policy authorization decision
+// metrics currently held by the collector.
+func (m *PolicyDecisionMetrics) Snapshot() PolicyDecisionMetricsSnapshot {
+	if m == nil {
+		return PolicyDecisionMetricsSnapshot{Series: []PolicyDecisionMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := PolicyDecisionMetricsSnapshot{
+		TotalDecisions: m.total,
+		Series:         make([]PolicyDecisionMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.PolicyDecisionMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Action != b.Action {
+			return a.Action < b.Action
+		}
+		if a.ResourceKind != b.ResourceKind {
+			return a.ResourceKind < b.ResourceKind
+		}
+		if a.Decision != b.Decision {
+			return a.Decision < b.Decision
+		}
+		return a.Reason < b.Reason
+	})
+	return out
+}
+
+// RecordPolicyDecision aggregates one policy authorization observation.
+func (m *PolicyDecisionMetrics) RecordPolicyDecision(ctx context.Context, event PolicyDecisionObservation) {
+	if m == nil {
+		return
+	}
+	action := metricAuditToken(event.Action, "unknown")
+	resourceKind := metricAuditToken(event.ResourceKind, "unknown")
+	decision := metricAuditDecision(event.Decision)
+	reason := metricAuditToken(event.Reason, "unknown")
+
+	corr := FromContext(ctx)
+	orgID, principalID := "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID = f.snapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+
+	key := policyDecisionMetricKey{
+		action:       action,
+		resourceKind: resourceKind,
+		decision:     decision,
+		reason:       reason,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &policyDecisionMetricSeries{PolicyDecisionMetric: PolicyDecisionMetric{
+			Action:       action,
+			ResourceKind: resourceKind,
+			Decision:     decision,
+			Reason:       reason,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = corr.RequestID
+	series.CorrelationID = corr.CorrelationID
+	series.OrganizationID = safeMetricID(orgID)
+	series.ProjectID = safeMetricID(event.ProjectID)
+	series.EnvironmentID = safeMetricID(event.EnvironmentID)
+	series.ServiceID = safeMetricID(event.ServiceID)
+	series.ResourceID = safeMetricID(event.ResourceID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.JobID = safeMetricID(event.JobID)
 }
 
 // RecordAuditEventAppend aggregates one immutable audit-log append observation.

@@ -121,6 +121,14 @@ do not mix customer API handlers into CLI packages.
   and failed append attempts so direct store services and the higher-level
   auditor share one instrumentation boundary, and `/metrics` exposes the
   snapshot under `data.audit_events`.
+- `telemetry.PolicyDecisionMetrics` follows the same low-cardinality collector
+  pattern for policy authorization decisions: group only by `action`,
+  `resource_kind`, `decision`, and stable policy `reason`; keep
+  request/correlation/org/project/environment/service/resource/principal/job
+  identifiers as latest-sample hints. Inject test collectors with
+  `policy.WithDecisionMetrics`; production engines default to
+  `telemetry.DefaultPolicyDecisionMetrics`, and `/metrics` exposes the snapshot
+  under `data.policy_decisions`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

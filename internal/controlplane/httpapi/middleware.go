@@ -130,7 +130,7 @@ func RequireAuth(a Authenticator, engine *policy.Engine, action policy.Action, r
 			if resource != nil {
 				res = resource(r)
 			}
-			if err := engine.Authorize(id.Principal, action, res); err != nil {
+			if err := engine.AuthorizeCtx(r.Context(), action, res); err != nil {
 				apienvelope.WriteError(w, requestID(r), toAPIError(err))
 				return
 			}

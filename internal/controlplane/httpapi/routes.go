@@ -58,6 +58,7 @@ type metricsSnapshot struct {
 	DokployDependencySnapshot telemetry.DokployDependencyMetricsSnapshot `json:"dokploy_dependencies"`
 	QuotaUsageSnapshot        telemetry.QuotaUsageMetricsSnapshot        `json:"quota_usage"`
 	AuditEventSnapshot        telemetry.AuditEventMetricsSnapshot        `json:"audit_events"`
+	PolicyDecisionSnapshot    telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
 }
 
 // healthzPayload is the data block of the GET /healthz success envelope.
@@ -219,6 +220,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
 	auditMetrics := telemetry.DefaultAuditEventMetrics
+	policyMetrics := telemetry.DefaultPolicyDecisionMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -274,6 +276,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(*telemetry.AuditEventMetrics); ok && v != nil {
 			auditMetrics = v
 		}
+		if v, ok := opt.(*telemetry.PolicyDecisionMetrics); ok && v != nil {
+			policyMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -299,7 +304,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Path:               "/metrics",
 				OperationID:        "getMetrics",
 				Summary:            "Read operational metrics",
-				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, private Dokploy dependency metrics, quota usage decision metrics, and audit-log append metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use audit_events to detect failed audit persistence, unexpected denial spikes, and missing request/job correlation before trusting mutation timelines. Secrets in request targets and Dokploy endpoint values are redacted or normalized before storage, and audit metric identifiers are emitted only when they pass the safe correlation-id character set.",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, private Dokploy dependency metrics, quota usage decision metrics, audit-log append metrics, and policy authorization decision metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code; policy decision series are grouped by action, resource kind, allow/deny decision, and stable policy reason. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use policy_decisions to spot authorization denial spikes by action and reason during incidents, then join the latest request_id/correlation_id to structured logs before investigating tenant/resource identifiers. Secrets in request targets and Dokploy endpoint values are redacted or normalized before storage, and metric identifiers are emitted only when they pass the safe correlation-id character set.",
 				Tags:               []string{tagOperations},
 				SuccessDescription: "The current in-process operational metric snapshot.",
 			},
@@ -309,6 +314,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 					DokployDependencySnapshot: dokployMetrics.Snapshot(),
 					QuotaUsageSnapshot:        quotaMetrics.Snapshot(),
 					AuditEventSnapshot:        auditMetrics.Snapshot(),
+					PolicyDecisionSnapshot:    policyMetrics.Snapshot(),
 				})
 			},
 		},

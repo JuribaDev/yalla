@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
@@ -349,6 +350,47 @@ func TestContextCarrier(t *testing.T) {
 	if code := codeOf(t, e.AuthorizeCtx(t.Context(), "members.manage", resourceIn(orgA))); code != yerr.CodeAuth {
 		t.Fatalf("AuthorizeCtx with no principal code = %s, want %s", code, yerr.CodeAuth)
 	}
+}
+
+func TestAuthorizeCtxEmitsPolicyDecisionMetrics(t *testing.T) {
+	t.Parallel()
+
+	metrics := telemetry.NewPolicyDecisionMetrics()
+	e := NewEngine(WithDecisionMetrics(metrics))
+	ctx := telemetry.WithCorrelation(t.Context(), telemetry.Correlation{
+		RequestID:     "req_policy_authorize",
+		CorrelationID: "corr_policy_authorize",
+	})
+	ctx = WithPrincipal(ctx, principalIn(orgA, RoleViewer))
+
+	if err := e.AuthorizeCtx(ctx, "project.read", resourceIn(orgA)); err != nil {
+		t.Fatalf("project.read should be allowed: %v", err)
+	}
+	if err := e.AuthorizeCtx(ctx, "project.create", resourceIn(orgA)); err == nil {
+		t.Fatal("project.create should be denied for viewer")
+	}
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalDecisions != 2 {
+		t.Fatalf("total_decisions = %d, want 2", snapshot.TotalDecisions)
+	}
+	allowed := findPolicyMetric(snapshot.Series, "project.read", "allowed", string(ReasonAllowedByRole))
+	if allowed == nil || allowed.RequestID != "req_policy_authorize" || allowed.OrganizationID != orgA {
+		t.Fatalf("allowed metric = %+v, want request and org hints", allowed)
+	}
+	denied := findPolicyMetric(snapshot.Series, "project.create", "denied", string(ReasonDeniedNoCapability))
+	if denied == nil || denied.PrincipalID == "" || denied.ResourceID != orgA {
+		t.Fatalf("denied metric = %+v, want principal and resource hints", denied)
+	}
+}
+
+func findPolicyMetric(metrics []telemetry.PolicyDecisionMetric, action, decision, reason string) *telemetry.PolicyDecisionMetric {
+	for i := range metrics {
+		if metrics[i].Action == action && metrics[i].Decision == decision && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
 }
 
 // TestCatalogAndRolesAreWellFormed guards the static contract: every action

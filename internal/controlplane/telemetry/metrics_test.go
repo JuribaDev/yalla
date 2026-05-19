@@ -353,6 +353,91 @@ func findQuotaUsageMetric(metrics []QuotaUsageMetric, resource, mode string, out
 	return nil
 }
 
+func TestPolicyDecisionMetricsRecordsDenialsWithSafeHints(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewPolicyDecisionMetrics()
+	ctx := WithCorrelation(contextWithFields(t), Correlation{
+		RequestID:     "req_policy_metrics",
+		CorrelationID: "corr_policy_metrics",
+	})
+	SetOrgID(ctx, "org_context_policy")
+	SetPrincipalID(ctx, "usr_policy_metrics")
+
+	metrics.RecordPolicyDecision(ctx, PolicyDecisionObservation{
+		Action:         "project.create",
+		ResourceKind:   "project",
+		ResourceID:     "proj_policy_metrics",
+		Decision:       "denied",
+		Reason:         "denied_no_capability",
+		OrganizationID: "org_policy_metrics",
+		ProjectID:      "proj_policy_metrics",
+	})
+	metrics.RecordPolicyDecision(ctx, PolicyDecisionObservation{
+		Action:         "project.create",
+		ResourceKind:   "project",
+		ResourceID:     "proj_policy_metrics_2",
+		Decision:       "allowed",
+		Reason:         "allowed_by_role",
+		OrganizationID: "org_policy_metrics",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalDecisions != 2 {
+		t.Fatalf("total_decisions = %d, want 2", snapshot.TotalDecisions)
+	}
+	if len(snapshot.Series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	denied := findPolicyDecisionMetric(snapshot.Series, "project.create", "project", "denied", "denied_no_capability")
+	if denied == nil {
+		t.Fatalf("missing denied metric: %+v", snapshot.Series)
+	}
+	if denied.Count != 1 || denied.RequestID != "req_policy_metrics" || denied.CorrelationID != "corr_policy_metrics" {
+		t.Errorf("denied metric = %+v, want request/correlation hints", *denied)
+	}
+	if denied.OrganizationID != "org_policy_metrics" || denied.PrincipalID != "usr_policy_metrics" || denied.ResourceID != "proj_policy_metrics" || denied.ProjectID != "proj_policy_metrics" {
+		t.Errorf("denied metric = %+v, want safe latest-sample identity hints", *denied)
+	}
+}
+
+func TestPolicyDecisionMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewPolicyDecisionMetrics()
+	metrics.RecordPolicyDecision(context.Background(), PolicyDecisionObservation{
+		Action:         "project.create\nAuthorization: Bearer yka_secret",
+		ResourceKind:   "project",
+		ResourceID:     "proj_bad\nsecret",
+		Decision:       "maybe",
+		Reason:         "reason with token=secret",
+		OrganizationID: "org_ok",
+		ProjectID:      "proj ok",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalDecisions != 1 || len(snapshot.Series) != 1 {
+		t.Fatalf("snapshot = %+v, want one bounded series", snapshot)
+	}
+	got := snapshot.Series[0]
+	if got.Action != "other" || got.ResourceKind != "project" || got.Decision != "other" || got.Reason != "other" {
+		t.Fatalf("metric = %+v, want bounded dimensions", got)
+	}
+	if got.OrganizationID != "org_ok" || got.ResourceID != "" || got.ProjectID != "" {
+		t.Fatalf("metric = %+v, want only safe identifiers retained", got)
+	}
+}
+
+func findPolicyDecisionMetric(metrics []PolicyDecisionMetric, action, resourceKind, decision, reason string) *PolicyDecisionMetric {
+	for i := range metrics {
+		if metrics[i].Action == action && metrics[i].ResourceKind == resourceKind && metrics[i].Decision == decision && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
 func TestAuditEventMetricsRecordsSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 

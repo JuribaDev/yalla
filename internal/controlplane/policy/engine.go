@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 // Engine is the authorization decision engine. It holds the action catalog and
@@ -13,6 +14,7 @@ import (
 type Engine struct {
 	catalog     map[Action]Capability
 	customRoles CustomRoleResolver
+	metrics     *telemetry.PolicyDecisionMetrics
 }
 
 // Option configures an [Engine] at construction time.
@@ -31,6 +33,16 @@ func WithAction(action Action, capability Capability) Option {
 	return func(e *Engine) { e.catalog[action] = capability }
 }
 
+// WithDecisionMetrics registers the metrics collector that receives every
+// authorization decision observed through Authorize or AuthorizeCtx.
+func WithDecisionMetrics(metrics *telemetry.PolicyDecisionMetrics) Option {
+	return func(e *Engine) {
+		if metrics != nil {
+			e.metrics = metrics
+		}
+	}
+}
+
 // NewEngine builds an Engine seeded with the default action catalog. Options
 // are applied in order, so a later WithAction overrides an earlier one.
 func NewEngine(opts ...Option) *Engine {
@@ -38,7 +50,7 @@ func NewEngine(opts ...Option) *Engine {
 	for a, c := range defaultActionCatalog {
 		catalog[a] = c
 	}
-	e := &Engine{catalog: catalog}
+	e := &Engine{catalog: catalog, metrics: telemetry.DefaultPolicyDecisionMetrics}
 	for _, opt := range opts {
 		opt(e)
 	}
@@ -164,6 +176,11 @@ func (e *Engine) Decide(principal Principal, action Action, resource Resource) D
 // it is safe to place on the wire and in logs.
 func (e *Engine) Authorize(principal Principal, action Action, resource Resource) error {
 	d := e.Decide(principal, action, resource)
+	e.recordDecision(context.Background(), principal, action, resource, d)
+	return authorizeError(action, d)
+}
+
+func authorizeError(action Action, d Decision) error {
 	if d.Allow {
 		return nil
 	}
@@ -183,7 +200,44 @@ func (e *Engine) Authorize(principal Principal, action Action, resource Resource
 // principal on the request context.
 func (e *Engine) AuthorizeCtx(ctx context.Context, action Action, resource Resource) error {
 	p, _ := PrincipalFromContext(ctx)
-	return e.Authorize(p, action, resource)
+	d := e.Decide(p, action, resource)
+	e.recordDecision(ctx, p, action, resource, d)
+	return authorizeError(action, d)
+}
+
+func (e *Engine) recordDecision(ctx context.Context, principal Principal, action Action, resource Resource, decision Decision) {
+	if e == nil || e.metrics == nil {
+		return
+	}
+	verdict := "denied"
+	if decision.Allow {
+		verdict = "allowed"
+	}
+	e.metrics.RecordPolicyDecision(ctx, telemetry.PolicyDecisionObservation{
+		Action:         string(action),
+		ResourceKind:   string(resource.Kind),
+		ResourceID:     resourceID(resource.Scope),
+		Decision:       verdict,
+		Reason:         string(decision.Reason),
+		OrganizationID: resource.Scope.OrganizationID,
+		ProjectID:      resource.Scope.ProjectID,
+		EnvironmentID:  resource.Scope.EnvironmentID,
+		ServiceID:      resource.Scope.ServiceID,
+		PrincipalID:    principal.ID,
+	})
+}
+
+func resourceID(scope Scope) string {
+	switch {
+	case scope.ServiceID != "":
+		return scope.ServiceID
+	case scope.EnvironmentID != "":
+		return scope.EnvironmentID
+	case scope.ProjectID != "":
+		return scope.ProjectID
+	default:
+		return scope.OrganizationID
+	}
 }
 
 func allow(r Reason) Decision { return Decision{Allow: true, Reason: r} }
