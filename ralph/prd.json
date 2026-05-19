@@ -11625,8 +11625,8 @@
       ],
       "type": "pricing",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented migration 0050_subscriptions_entitlement_overrides with subscriptions bound to exact plan rows, current-subscription uniqueness, provider/cancellation/trial fields, subscription_entitlements with source, reason, actor/request/correlation metadata, effective windows, and tenant-safe composite FK to subscriptions. Added SubscriptionRepository with Create, UpsertEntitlement, ResolveEntitlements, and PlanLookup. Resolver deterministically layers plan defaults < subscription_override < emergency_admin, ignores canceled/out-of-period subscriptions and expired overrides, and uses stable tie-break ordering. Tests cover schema constraints, trialing/active/past_due/canceled status behavior, custom subscription and emergency overrides, expired override exclusion, tenant isolation, validation, and reason redaction. No HTTP surface was added in this schema/resolver story, so public JSON envelope and route-level authorization criteria are not applicable until pricing APIs land."
     },
     {
       "id": "BE-0565",

@@ -215,6 +215,23 @@ Postgres persistence for control-plane source-of-truth state.
   goes in the `.down.sql` **after** the tables that use it. `quota_enforcement_mode`
   (`hard`/`soft`/`metered`/`disabled`) is the second shared domain. Adding a
   dimension is a new migration running `ALTER DOMAIN`.
+
+## Subscriptions and entitlement overrides (`0050_subscriptions_entitlement_overrides`)
+
+- `subscriptions` bind an organization to the exact immutable `plans.id` it
+  accepted. Runtime entitlement reads only consider `trialing`, `active`, and
+  `past_due` subscriptions whose current period contains the resolver's
+  timestamp; `canceled` and out-of-period rows are historical/audit data.
+- `subscription_entitlements` carries effective-windowed overrides with a
+  closed `source`: `subscription_override` must point at the tenant-scoped
+  subscription through `(organization_id, subscription_id)`, while
+  `emergency_admin` is organization-level and must not carry a subscription id.
+  Redact free-text `reason` before persistence.
+- `SubscriptionRepository.ResolveEntitlements` is the deterministic precedence
+  rule: plan defaults < subscription overrides < emergency admin overrides.
+  Within one layer, newest active `effective_from` wins, then row creation time,
+  then id as a stable tie-breaker. Keep future resolver/cache services aligned
+  with this ordering.
 - `quota_policies` holds **one limit per (scope, resource)**. A row is *either*
   a `plan_default` (keyed by the text `plan` column — there is **no FK to a
   plans table yet**) *or* an `organization` override (keyed by
