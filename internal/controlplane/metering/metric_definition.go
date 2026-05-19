@@ -68,6 +68,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"storage_gb_month": {
+		Key:          "storage_gb_month",
+		Unit:         "gb_month",
+		Source:       "volume_scanner",
+		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.

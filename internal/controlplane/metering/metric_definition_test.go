@@ -73,3 +73,15 @@ func TestContainerMemoryMBHoursMetricDefinition(t *testing.T) {
 		t.Fatalf("container_memory_mb_hours definition = %+v, want mb_hour/dokploy_or_cadvisor/metered/billing-grade", def)
 	}
 }
+
+func TestStorageGBMonthMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("storage_gb_month")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(storage_gb_month) missing")
+	}
+	if def.Key != "storage_gb_month" || def.Unit != "gb_month" || def.Source != "volume_scanner" || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("storage_gb_month definition = %+v, want gb_month/volume_scanner/metered/billing-grade", def)
+	}
+}
