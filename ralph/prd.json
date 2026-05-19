@@ -6590,8 +6590,8 @@
       ],
       "type": "test-admin",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for DELETE /v1/admin/break-glass/{session_id}."
+      "passes": true,
+      "notes": "Added explicit DELETE /v1/admin/break-glass/{session_id} contract coverage for success/error envelopes, request_id propagation, unauthenticated/unauthorized/invalid/not-found paths, OpenAPI registration, stdout/stderr silence, and bearer-token redaction in response/log surfaces."
     },
     {
       "id": "BE-0300",

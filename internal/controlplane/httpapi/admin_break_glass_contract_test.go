@@ -338,6 +338,206 @@ func TestDeleteAdminBreakGlassResponseAndErrorEnvelopesPreserveRequestID(t *test
 	}
 }
 
+func TestDeleteAdminBreakGlassServerWritesResponseDataOnlyToResponseWriter(t *testing.T) {
+	// Not parallel: captureProcessOutput swaps global os.Stdout/os.Stderr.
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_delete_streams"
+	now := time.Date(2026, 5, 19, 15, 0, 0, 0, time.UTC)
+	revoked := fakeBreakGlassSession(targetOrg, sessionID, now, time.Hour)
+	revoked.Status = store.BreakGlassSessionStatusRevoked
+	revokedAt := now.Add(time.Minute)
+	revoked.RevokedAt = &revokedAt
+	revoked.RevokedByID = "usr_support"
+	revoked.RevokedByKind = "usr"
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := adminBreakGlassHandlerForWithLogger(fakeAuthenticator{identity: auth.Identity{
+		Principal: orgPrincipal("usr_support", homeOrg, policy.RoleSupport),
+		Method:    auth.MethodAPIKey,
+	}}, fakeBreakGlassController{revokeResult: revoked}, logger)
+
+	var rec *httptest.ResponseRecorder
+	stdout, stderr := captureProcessOutput(t, func() {
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+		req.Header.Set("X-Request-Id", "req_admin_break_glass_delete_streams")
+		req.Header.Set("X-Correlation-Id", "corr_admin_break_glass_delete_streams")
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+	})
+
+	if stdout != "" {
+		t.Errorf("HTTP server wrote %q to stdout, want nothing; response data must go through the ResponseWriter", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("HTTP server wrote %q to stderr, want nothing; response data must go through the ResponseWriter", stderr)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		RequestID     string `json:"request_id"`
+		Data          struct {
+			Session struct {
+				ID             string `json:"id"`
+				OrganizationID string `json:"organization_id"`
+				Status         string `json:"status"`
+				ElevatedAccess bool   `json:"elevated_access"`
+			} `json:"session"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode success envelope: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_admin_break_glass_delete_streams" {
+		t.Fatalf("success envelope = %+v, want yalla.output.v1 ok=true with request id", env)
+	}
+	if env.Data.Session.ID != sessionID || env.Data.Session.OrganizationID != targetOrg || env.Data.Session.Status != "revoked" || !env.Data.Session.ElevatedAccess {
+		t.Fatalf("session projection = %+v, want revoked admin break-glass session", env.Data.Session)
+	}
+	if logBuf.Len() == 0 {
+		t.Error("structured request log is empty, want one record for the served request")
+	}
+	if strings.Contains(logBuf.String(), adminBreakGlassContractSecret) {
+		t.Errorf("request log leaked bearer credential: %s", logBuf.String())
+	}
+}
+
+func TestDeleteAdminBreakGlassContractErrorPaths(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_delete_errors"
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		t.Parallel()
+		var got store.RevokeBreakGlassInput
+		handler := breakGlassHandlerFor(auth.Identity{}, auth.ErrNoCredentials, fakeBreakGlassController{revokeGot: &got})
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("X-Request-Id", "req_admin_break_glass_delete_unauthenticated")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+		}
+		env := decodeError(t, rec, "E_AUTHENTICATION_REQUIRED")
+		if env.RequestID != "req_admin_break_glass_delete_unauthenticated" {
+			t.Errorf("request_id = %q, want req_admin_break_glass_delete_unauthenticated", env.RequestID)
+		}
+		if got.OrganizationID != "" {
+			t.Fatalf("Revoke called on unauthenticated request: %+v", got)
+		}
+	})
+
+	t.Run("unauthorized", func(t *testing.T) {
+		t.Parallel()
+		var got store.RevokeBreakGlassInput
+		handler := breakGlassHandlerFor(ownerIdentity(targetOrg, "usr_owner"), nil, fakeBreakGlassController{revokeGot: &got})
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+		}
+		decodeError(t, rec, "E_FORBIDDEN")
+		if got.OrganizationID != "" {
+			t.Fatalf("Revoke called on authorization failure: %+v", got)
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		t.Parallel()
+		handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+			revokeErr: apierr.NotFound("break_glass_session", sessionID),
+		})
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
+		}
+		env := decodeError(t, rec, "E_NOT_FOUND")
+		if env.SchemaVersion != "yalla.error.v1" || env.OK {
+			t.Fatalf("error envelope = %+v, want yalla.error.v1 ok=false", env)
+		}
+	})
+}
+
+func TestDeleteAdminBreakGlassRequestLogRedactsBearerToken(t *testing.T) {
+	t.Parallel()
+
+	orgID := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_delete_redaction"
+	now := time.Date(2026, 5, 19, 15, 15, 0, 0, time.UTC)
+	revoked := fakeBreakGlassSession(orgID, sessionID, now, time.Hour)
+	revoked.Status = store.BreakGlassSessionStatusRevoked
+	revokedAt := now.Add(time.Minute)
+	revoked.RevokedAt = &revokedAt
+	revoked.RevokedByID = "usr_support"
+	revoked.RevokedByKind = "usr"
+
+	tests := []struct {
+		name       string
+		identity   auth.Identity
+		ctl        BreakGlassController
+		wantStatus int
+	}{
+		{
+			name: "success path",
+			identity: auth.Identity{
+				Principal: orgPrincipal("usr_support", orgID, policy.RoleSupport),
+				Method:    auth.MethodAPIKey,
+			},
+			ctl:        fakeBreakGlassController{revokeResult: revoked},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "authorization failure path",
+			identity: auth.Identity{
+				Principal: orgPrincipal("usr_owner", orgID, policy.RoleOwner),
+				Method:    auth.MethodAPIKey,
+			},
+			ctl:        fakeBreakGlassController{revokeErr: stderrors.New("controller must not be called")},
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var logBuf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			handler := adminBreakGlassHandlerForWithLogger(fakeAuthenticator{identity: tc.identity}, tc.ctl, logger)
+
+			req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+orgID, nil)
+			req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if logBuf.Len() == 0 {
+				t.Fatal("structured request log is empty, want one record for the served request")
+			}
+			if strings.Contains(logBuf.String(), adminBreakGlassContractSecret) {
+				t.Errorf("request log leaked bearer credential: %s", logBuf.String())
+			}
+			if strings.Contains(rec.Body.String(), adminBreakGlassContractSecret) {
+				t.Errorf("response body echoed bearer credential: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestDeleteAdminBreakGlassOpenAPIContract(t *testing.T) {
 	t.Parallel()
 
