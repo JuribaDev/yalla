@@ -263,6 +263,22 @@ smoke test warning. Any future observability-dashboard-guide change should
 update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## External live-Dokploy smoke test guide artifact (BE-0560)
+
+`external_live_dokploy_smoke_test_guide_static_test.go` pins the developer-facing
+external live-Dokploy smoke test guide at
+`docs/development/external-live-dokploy-smoke-test-guide.md`: the guide must
+document the opt-in external smoke path, the canonical smoke file
+`internal/controlplane/dokploy/live_dokploy_smoke_test.go`, required environment
+variables (`YALLA_EXTERNAL_DOKPLOY`, `YALLA_EXTERNAL_DOKPLOY_BASE_URL`,
+`YALLA_EXTERNAL_DOKPLOY_TOKEN`, `YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE`), exact
+verification commands, expected output shapes, the CI gating cadence
+(`workflow_dispatch` + nightly `schedule` in `.github/workflows/external-smoke.yml`),
+failure recovery guidance, stable `yalla.error.v1` envelope expectations,
+request_id and resource_id actionable failure contract, and the redaction
+contract. Any future external-live-Dokploy-smoke-test-guide change should update
+the guide, SECURITY.md section, CI step, and `scripts/verify.sh` in the same edit.
+
 ## Release checklist artifact (BE-0551)
 
 `release_checklist_artifact_static_test.go` pins the production release

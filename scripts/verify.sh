@@ -310,6 +310,12 @@ if ! go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact
   required_failed=1
 fi
 
+# Required: external live-Dokploy smoke test guide artifact static tests
+step "go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact"
+if ! go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

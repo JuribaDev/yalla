@@ -165,6 +165,9 @@ jobs:
       - name: Observability dashboard guide artifact static tests
         run: go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact
 
+      - name: External live-Dokploy smoke test guide artifact static tests
+        run: go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

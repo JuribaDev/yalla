@@ -873,6 +873,26 @@ external live-Dokploy smoke test warning.
 CI pins the observability dashboard guide with
 `go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact`.
 
+## External Live-Dokploy Smoke Test Guide Artifact
+
+The developer-facing external live-Dokploy smoke test guide lives at
+`docs/development/external-live-dokploy-smoke-test-guide.md`. It documents the
+opt-in external smoke path, the canonical smoke file
+`internal/controlplane/dokploy/live_dokploy_smoke_test.go`, the required
+environment variables (`YALLA_EXTERNAL_DOKPLOY`, `YALLA_EXTERNAL_DOKPLOY_BASE_URL`,
+`YALLA_EXTERNAL_DOKPLOY_TOKEN`, `YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE`), exact
+verification commands, expected outputs, the CI gating cadence
+(`workflow_dispatch` + nightly `schedule` in `.github/workflows/external-smoke.yml`),
+failure recovery guidance, and the redaction contract.
+
+The document uses only `<redacted:...>` placeholders for secret-shaped values
+and documents the exact verification commands, expected output shapes, stable
+`yalla.error.v1` envelope expectations, request_id and resource_id actionable
+failure contract, and the opt-in external live-Dokploy smoke test warning.
+
+CI pins the external live-Dokploy smoke test guide with
+`go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact`.
+
 ## Rollback Checklist Artifact
 
 The production rollback checklist lives at

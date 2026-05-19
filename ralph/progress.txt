@@ -40124,3 +40124,35 @@ change that widened Reason to caller-supplied data.
   - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase (e.g., "must not print database URLs" must not span a newline).
   - The developer-facing observability dashboard guide complements the operator-facing `docs/operations/on-call-dashboard.md` and `docs/operations/dashboard-json-export.md`; all three should be reviewed when telemetry sources or dashboard panels change.
 ---
+
+## 2026-05-19 22:10 +03 - BE-0560
+- What was implemented
+  - Added `docs/development/external-live-dokploy-smoke-test-guide.md` documenting the opt-in external live-Dokploy smoke test path: required env vars (`YALLA_EXTERNAL_DOKPLOY`, `YALLA_EXTERNAL_DOKPLOY_BASE_URL`, `YALLA_EXTERNAL_DOKPLOY_TOKEN`, `YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE`) with redacted placeholders, exact commands, expected outputs, CI gating cadence (`workflow_dispatch` + nightly `schedule`), failure recovery, stable `yalla.error.v1` envelope expectations, request_id/resource_id actionable failure contract, and redaction contract.
+  - Added `internal/release/external_live_dokploy_smoke_test_guide_static_test.go` pinning the guide contents and wiring into `scripts/verify.sh`, `.github/workflows/ci.yml`, and `SECURITY.md`.
+  - Updated `internal/release/AGENTS.md` with the artifact documentation.
+- Files changed
+  - `docs/development/external-live-dokploy-smoke-test-guide.md`
+  - `internal/release/external_live_dokploy_smoke_test_guide_static_test.go`
+  - `.github/workflows/ci.yml`
+  - `scripts/verify.sh`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact`
+  - `scripts/verify.sh`
+- Results
+  - All required and focused checks passed.
+- Remaining risks or follow-ups
+  - None. BE-0560 is complete.
+- **Learnings for future iterations:**
+  - Documentation artifacts follow the same static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` section, and `internal/release/AGENTS.md` guidance together.
+  - Keep load-bearing phrases on one line when a test pins a substring; multi-line sentences break `strings.Contains` matchers.
+  - Avoid forbidden substrings like "Bearer " in guide text even in benign contexts (e.g. "bearer token"); use alternative phrasing like "authorization token".
+---

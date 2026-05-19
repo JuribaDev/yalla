@@ -11549,8 +11549,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: external live-Dokploy smoke test guide."
+      "passes": true,
+      "notes": "Implemented docs/development/external-live-dokploy-smoke-test-guide.md with the static-release-gate pattern: exact commands, required environment variables with redacted placeholders, expected outputs, CI gating cadence (workflow_dispatch + nightly schedule), failure recovery guidance, stable yalla.error.v1 envelope expectations, request_id/resource_id actionable failure contract, redaction contract, and the opt-in external live-Dokploy smoke test warning. Added internal/release/external_live_dokploy_smoke_test_guide_static_test.go to pin the guide contents and verify wiring into scripts/verify.sh, .github/workflows/ci.yml, and SECURITY.md. Updated internal/release/AGENTS.md. All required and focused checks passed."
     },
     {
       "id": "BE-0561",
