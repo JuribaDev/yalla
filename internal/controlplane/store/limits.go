@@ -73,7 +73,7 @@ func (r *LimitsReader) ListEffectiveLimits(ctx context.Context, organizationID s
 			if err != nil {
 				return err
 			}
-			usage, err := quotaUsageCounterMap(ctx, q, organizationID)
+			usage, err := quotaUsageCounterMap(ctx, q, organizationID, at)
 			if err != nil {
 				return err
 			}

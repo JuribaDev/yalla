@@ -212,6 +212,12 @@ do not mix customer API handlers into CLI packages.
   deterministic Dokploy/Traefik names containing the service id, require a
   matching service-level `dokploy_refs` row, and quarantine missing-ref,
   deleted-service, and unmanaged samples instead of billing them.
+- Billing-grade Traefik metric ingestion should follow the same vertical each
+  time: define the metric in `metering.MetricDefinition`, add a higher-version
+  `quota_resource` migration plus a `store.QuotaResource` constant for
+  invoiceable keys, emit only fully attributed samples into append-only
+  `usage_events` with replay-safe idempotency keys, and expose current-period
+  totals through `usage_counters` rather than mutable source state.
 - Deployment usage metering should be emitted from Yalla timelines, never from
   Dokploy current state. Count deployment outcomes from terminal
   `deployment_events`; derive `build_minutes` from immutable `job_attempts`

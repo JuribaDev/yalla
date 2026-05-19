@@ -333,6 +333,68 @@ func TestUsageReaderUsesCurrentSubscriptionEntitlementsPeriodAndTenantCounters(t
 	}
 }
 
+func TestUsageReaderIncludesBillingGradeUsageCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "HTTPRequestsUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "http_requests", store.EntitlementSourceSubscriptionOverride, 1000, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceHTTPRequests,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       77,
+		Unit:           "request",
+		Source:         "traefik",
+		IdempotencyKey: "http_requests:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var requests store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceHTTPRequests {
+			requests = row
+			break
+		}
+	}
+	if requests.Resource == "" {
+		t.Fatalf("usage rows %+v missing http_requests counter", got)
+	}
+	if requests.UsedValue != 77 {
+		t.Fatalf("http_requests UsedValue = %d, want aggregated counter 77", requests.UsedValue)
+	}
+	if requests.LimitValue == nil || *requests.LimitValue != 1000 {
+		t.Fatalf("http_requests limit = %+v, want subscription entitlement 1000", requests)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

@@ -56,7 +56,7 @@ func (r *UsageReader) ListOrganizationUsage(ctx context.Context, organizationID 
 			if err != nil {
 				return err
 			}
-			counters, err := quotaUsageCounterMap(ctx, q, organizationID)
+			counters, err := quotaUsageCounterMap(ctx, q, organizationID, at)
 			if err != nil {
 				return err
 			}

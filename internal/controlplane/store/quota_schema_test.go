@@ -107,8 +107,9 @@ func TestQuotaResourceDomainEnforcesClosedSet(t *testing.T) {
 	dimensions := []string{
 		"projects", "environments", "services", "applications", "compose_stacks",
 		"databases", "domains", "preview_environments", "cpu_millicores",
-		"memory_mb", "storage_gb", "backups", "concurrent_deployments",
-		"monthly_deployments",
+		"memory_mb", "storage_gb", "backups", "backup_schedules", "api_keys",
+		"members", "concurrent_deployments", "monthly_deployments", "deployments",
+		"failed_deployments", "build_minutes", "http_requests",
 	}
 	for i, dim := range dimensions {
 		if _, err := db.Exec(ctx,

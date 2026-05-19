@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Billing-grade Traefik metric stories should add four pieces together: a runtime `metering.MetricDefinition`, a new `quota_resource` migration + `store.QuotaResource` constant when the key is invoiceable, an idempotent emitter that writes only fully attributed samples into `usage_events`, and a customer usage projection from current-period `usage_counters`.
 - Entitlement-backed hard quota rejections should carry both human guidance and stable machine details: `resource`, `entitlement_key`, `current`, `reserved`, `requested`, `limit`, and subscription `reset_period_start`/`reset_period_end` when the limit came from a current subscription period. Keep the detailed counts from the same locked quota decision that creates or rejects the reservation.
 - Build/deployment metering is a bridge from Yalla source-of-truth timelines into append-only `usage_events`: deployment counts come from terminal `deployment_events` (never Dokploy current state), successful/rolled-back deployments use `deployments`, failed deployments use `failed_deployments`, cancelled deployments do not emit deployment-count usage, and `build_minutes` sums completed `job_attempts` durations with a terminal `provisioning_jobs.started_at/finished_at` fallback. Idempotency keys are per deployment outcome (`deployment:<id>:<status>`) and per job duration (`build_minutes:<job_id>`).
 - Traefik metric attribution is a separate layer after source collection: extract explicit Yalla service labels before deterministic Dokploy/Traefik names containing `svc_<id>`/`svc-<id>`, resolve only services that still have a service-level `dokploy_refs` mapping, attach full org/project/environment/service scope plus attribution source/confidence metadata, and quarantine missing-ref, deleted-service, and unmanaged samples so they never become billing-grade `usage_events` automatically.
@@ -37009,4 +37010,53 @@ change that widened Reason to caller-supplied data.
   - The subscription resolver query can safely carry current-period timestamps alongside entitlement rows; these fields are public-period metadata and do not expose provider ids, plan ids, subscription ids, or override reasons.
   - Quota errors should keep the human `Hint` useful for operators while putting count and period values in `yerr.Error.Details` for agents.
   - Legacy quota-policy rejections still use the resource name as the effective entitlement key because no pricing entitlement row backs that path.
+---
+## 2026-05-19 06:55 +03 - BE-0583
+- What was implemented
+  - Added the accepted `http_requests` metric definition (`request`, `traefik`, `metered`, billing-grade).
+  - Added `http_requests` to the closed `quota_resource` contract via migration 0054 and the Go `QuotaResource` set.
+  - Added `TraefikUsageEmitter` to turn fully attributed `http_requests` Traefik samples into idempotent, append-only `usage_events` with full org/project/environment/service scope and redacted metadata.
+  - Extended current-period customer usage reads to include aggregated `usage_counters`, so billing-grade request counters are visible through the existing usage API projection when tied to current subscription entitlements.
+- Files changed
+  - `internal/controlplane/metering/metric_definition.go`
+  - `internal/controlplane/metering/metric_definition_test.go`
+  - `internal/controlplane/metering/traefik_usage.go`
+  - `internal/controlplane/metering/traefik_usage_test.go`
+  - `internal/controlplane/store/customer_usage.go`
+  - `internal/controlplane/store/limits.go`
+  - `internal/controlplane/store/usage.go`
+  - `internal/controlplane/store/usage_test.go`
+  - `internal/controlplane/store/quota.go`
+  - `internal/controlplane/store/quota_internal_test.go`
+  - `internal/controlplane/store/quota_schema_test.go`
+  - `internal/controlplane/store/migrate/migrations/0054_http_requests_metering_resource.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0054_http_requests_metering_resource.down.sql`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - All installed required and optional checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups
+  - The next tracked Traefik metric stories should extend the same metric-definition/resource/emitter mapping instead of adding parallel ingestion paths.
+  - `usage_counters` projection currently rounds current-period aggregate quantities into the legacy integer `used_value` API field; that is correct for `http_requests` but future fractional metrics may need a richer public usage shape.
+- **Learnings for future iterations:**
+  - A billing-grade metric key must be accepted by both Go (`QuotaResource.Valid`) and Postgres (`quota_resource` domain) before `UsageEventRepository.Append` can persist it.
+  - The store repository already redacts usage-event metadata at the append boundary; emitters should pass stable machine metadata and let the repository enforce secret hygiene.
+  - Existing Traefik attribution tests cover unsafe/missing/deleted sample quarantine, so the usage emitter should consume only `AttributedTraefikSample` and skip incomplete scopes defensively.
 ---

@@ -43,7 +43,7 @@ func readCurrentSubscriptionView(ctx context.Context, q Querier, organizationID 
 	return current, true, nil
 }
 
-func quotaUsageCounterMap(ctx context.Context, q Querier, organizationID string) (map[QuotaResource]int64, error) {
+func quotaUsageCounterMap(ctx context.Context, q Querier, organizationID string, at time.Time) (map[QuotaResource]int64, error) {
 	rows, err := q.Query(ctx,
 		`SELECT resource, used_value
 		   FROM quota_usage
@@ -64,6 +64,34 @@ func quotaUsageCounterMap(ctx context.Context, q Querier, organizationID string)
 		usage[QuotaResource(resource)] = used
 	}
 	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	counterRows, err := q.Query(ctx,
+		`SELECT key, COALESCE(round(quantity), 0)::bigint
+		   FROM usage_counters
+		  WHERE organization_id = $1
+		    AND period_start <= $2
+		    AND period_end > $2`,
+		organizationID, at.UTC())
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer counterRows.Close()
+	for counterRows.Next() {
+		var resource string
+		var used int64
+		if err := counterRows.Scan(&resource, &used); err != nil {
+			return nil, apierr.StoreUnavailable(err)
+		}
+		qr := QuotaResource(resource)
+		if qr.Valid() {
+			usage[qr] += used
+		}
+	}
+	if err := counterRows.Err(); err != nil {
 		return nil, apierr.StoreUnavailable(err)
 	}
 	return usage, nil
