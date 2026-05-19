@@ -12347,8 +12347,8 @@
       ],
       "type": "backoffice-pricing-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-only backoffice plan lifecycle APIs: POST /v1/admin/plans, PATCH /v1/admin/plans/{plan_id}, POST /v1/admin/plans/{plan_id}/publish, /archive, and /rollback. Added audited store.AdminPlanService plus repository draft/publish/rollback operations so edits create draft versions while active runtime rows remain stable until publish, publish atomically archives the prior active version, and rollback copies historical versions into a new active version. Added HTTP contract tests for create/edit/publish/archive/rollback, authn/authz denial, invalid input, not found, and conflict; added isolated Postgres service tests for audit/request identity and lifecycle behavior."
     },
     {
       "id": "BE-0603",

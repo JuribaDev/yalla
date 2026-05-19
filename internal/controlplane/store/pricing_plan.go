@@ -264,6 +264,141 @@ func (r *PricingPlanRepository) Update(ctx context.Context, tx *Tx, id string, i
 	return inserted, nil
 }
 
+// CreateDraftFrom creates the next draft version for the addressed plan
+// without archiving the currently active version. It is the backoffice edit
+// path: runtime readers keep using the active row until an operator publishes
+// the draft.
+func (r *PricingPlanRepository) CreateDraftFrom(ctx context.Context, tx *Tx, id string, in UpdatePlanInput) (Plan, error) {
+	if tx == nil {
+		return Plan{}, apierr.Internal(errors.New("store: PricingPlanRepository.CreateDraftFrom called with a nil transaction"))
+	}
+	update, err := validatePlanUpdate(in)
+	if err != nil {
+		return Plan{}, err
+	}
+	current, err := r.lockPlan(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return Plan{}, err
+	}
+	if current.Status == PlanStatusArchived {
+		return Plan{}, apierr.Conflict("archived plan versions cannot be edited")
+	}
+	nextVersion, err := r.nextVersion(ctx, tx, current.Slug, current.BillingPeriod)
+	if err != nil {
+		return Plan{}, err
+	}
+	newPlanID, err := newOpaqueStoreID("plan")
+	if err != nil {
+		return Plan{}, apierr.Internal(err)
+	}
+	next := Plan{
+		ID:            newPlanID,
+		Slug:          current.Slug,
+		Name:          update.Name,
+		Status:        PlanStatusDraft,
+		BillingPeriod: current.BillingPeriod,
+		DisplayOrder:  update.DisplayOrder,
+		Version:       nextVersion,
+	}
+	inserted, err := r.insertPlan(ctx, tx, next)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := r.cloneEntitlements(ctx, tx, current.ID, inserted.ID); err != nil {
+		return Plan{}, err
+	}
+	return inserted, nil
+}
+
+// Publish promotes a draft to active and archives the previously active
+// version for the same slug and billing period in the same transaction.
+func (r *PricingPlanRepository) Publish(ctx context.Context, tx *Tx, id string) (Plan, error) {
+	if tx == nil {
+		return Plan{}, apierr.Internal(errors.New("store: PricingPlanRepository.Publish called with a nil transaction"))
+	}
+	plan, err := r.lockPlan(ctx, tx, strings.TrimSpace(id))
+	if err != nil {
+		return Plan{}, err
+	}
+	if plan.Status == PlanStatusArchived {
+		return Plan{}, apierr.Conflict("archived plan versions cannot be published")
+	}
+	if plan.Status == PlanStatusActive {
+		return plan, nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE plans
+		    SET status = 'archived', archived_at = now()
+		  WHERE slug = $1
+		    AND billing_period = $2
+		    AND status = 'active'
+		    AND id <> $3`,
+		plan.Slug, plan.BillingPeriod, plan.ID,
+	); err != nil {
+		return Plan{}, mapWriteError(err, "archive active plan version")
+	}
+	err = tx.QueryRow(ctx,
+		`UPDATE plans
+		    SET status = 'active', archived_at = NULL
+		  WHERE id = $1
+		  RETURNING `+planColumns,
+		plan.ID,
+	).Scan(
+		&plan.ID, &plan.Slug, &plan.Name, &plan.Status, &plan.BillingPeriod,
+		&plan.DisplayOrder, &plan.Version, &plan.ArchivedAt, &plan.CreatedAt, &plan.UpdatedAt,
+	)
+	if err != nil {
+		return Plan{}, mapWriteError(err, "publish plan")
+	}
+	return plan, nil
+}
+
+// Rollback copies a historical plan version into a new active version.
+func (r *PricingPlanRepository) Rollback(ctx context.Context, tx *Tx, sourceID string) (Plan, error) {
+	if tx == nil {
+		return Plan{}, apierr.Internal(errors.New("store: PricingPlanRepository.Rollback called with a nil transaction"))
+	}
+	source, err := r.lockPlan(ctx, tx, strings.TrimSpace(sourceID))
+	if err != nil {
+		return Plan{}, err
+	}
+	nextVersion, err := r.nextVersion(ctx, tx, source.Slug, source.BillingPeriod)
+	if err != nil {
+		return Plan{}, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE plans
+		    SET status = 'archived', archived_at = now()
+		  WHERE slug = $1
+		    AND billing_period = $2
+		    AND status = 'active'`,
+		source.Slug, source.BillingPeriod,
+	); err != nil {
+		return Plan{}, mapWriteError(err, "archive active plan version")
+	}
+	newPlanID, err := newOpaqueStoreID("plan")
+	if err != nil {
+		return Plan{}, apierr.Internal(err)
+	}
+	next := Plan{
+		ID:            newPlanID,
+		Slug:          source.Slug,
+		Name:          source.Name,
+		Status:        PlanStatusActive,
+		BillingPeriod: source.BillingPeriod,
+		DisplayOrder:  source.DisplayOrder,
+		Version:       nextVersion,
+	}
+	inserted, err := r.insertPlan(ctx, tx, next)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := r.cloneEntitlements(ctx, tx, source.ID, inserted.ID); err != nil {
+		return Plan{}, err
+	}
+	return inserted, nil
+}
+
 // Archive marks a plan version archived while preserving it for audit reads.
 func (r *PricingPlanRepository) Archive(ctx context.Context, tx *Tx, id string) (Plan, error) {
 	if tx == nil {
@@ -426,6 +561,19 @@ func (r *PricingPlanRepository) cloneEntitlements(ctx context.Context, tx *Tx, f
 		}
 	}
 	return nil
+}
+
+func (r *PricingPlanRepository) nextVersion(ctx context.Context, q Querier, slug string, period BillingPeriod) (int, error) {
+	var current int
+	if err := q.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version), 0)
+		   FROM plans
+		  WHERE slug = $1 AND billing_period = $2`,
+		slug, period,
+	).Scan(&current); err != nil {
+		return 0, apierr.StoreUnavailable(err)
+	}
+	return current + 1, nil
 }
 
 func buildPlanToCreate(in CreatePlanInput) (Plan, error) {

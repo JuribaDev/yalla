@@ -100,6 +100,7 @@ const (
 	ActionAdminImport         Action = "admin.import"
 	ActionAdminReconcile      Action = "admin.reconcile"
 	ActionAdminConfigValidate Action = "admin.config.validate"
+	ActionAdminPlansManage    Action = "admin.plans.manage"
 	ActionAdminBreakGlass     Action = "admin.break_glass"
 )
 
@@ -170,6 +171,7 @@ var allActions = []Action{
 	ActionAdminImport,
 	ActionAdminReconcile,
 	ActionAdminConfigValidate,
+	ActionAdminPlansManage,
 	ActionAdminBreakGlass,
 }
 

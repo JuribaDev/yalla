@@ -336,6 +336,11 @@ Postgres persistence for control-plane source-of-truth state.
   existing `plan_entitlements` rows onto the new version in the same
   transaction. Change entitlements on the new version with
   `UpsertEntitlement`.
+- Backoffice plan-management APIs use `AdminPlanService`, not bare repository
+  calls: edits create draft successor rows without archiving the current active
+  row, publish archives the previous active row and promotes the draft in one
+  transaction, rollback copies a historical row into a new active version, and
+  every mutation appends an audit event with actor/request/correlation identity.
 - `plan_entitlements.enforcement_mode` reuses `quota_enforcement_mode`
   (`hard`, `soft`, `metered`, `disabled`) but uses a free-form
   `entitlement_key` because billing-grade metrics extend beyond the current

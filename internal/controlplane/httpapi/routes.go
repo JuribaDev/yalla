@@ -203,6 +203,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminDokployReconciler AdminDokployReconciler
 	var adminDokployImporter AdminDokployImporter
 	var adminConfigDryRunner AdminConfigDryRunner
+	var adminPlanManager AdminPlanManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
@@ -231,6 +232,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminConfigDryRunner); ok {
 			adminConfigDryRunner = v
+		}
+		if v, ok := opt.(AdminPlanManager); ok {
+			adminPlanManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -424,6 +428,82 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The dry-run validation report.",
 			},
 			handler: dryRunAdminConfigHandler(adminConfigDryRunner),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/plans",
+				OperationID:        "createAdminPlan",
+				Summary:            "Create a draft pricing plan",
+				Description:        "Creates a draft backoffice pricing-plan version. The plan catalog is global operator-owned configuration, not tenant data; action admin.plans.manage is support-only until finer backoffice roles land. The draft is not runtime-active until it is published.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The draft plan was created.",
+			},
+			handler: createAdminPlanHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPatch,
+				Path:               "/v1/admin/plans/{plan_id}",
+				OperationID:        "editAdminPlan",
+				Summary:            "Edit a pricing plan draft",
+				Description:        "Creates or updates an editable draft replacement for the addressed pricing-plan version without mutating the active version in place. Published plan versions remain reproducible for historical invoices.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				PathParams:         []openapi.PathParam{{Name: "plan_id", Description: "The plan version to edit."}},
+				SuccessDescription: "The edited draft plan.",
+			},
+			handler: editAdminPlanHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/plans/{plan_id}/publish",
+				OperationID:        "publishAdminPlan",
+				Summary:            "Publish a pricing plan draft",
+				Description:        "Publishes the addressed draft plan version and archives any previously active version for the same slug and billing period in the same transaction.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				PathParams:         []openapi.PathParam{{Name: "plan_id", Description: "The draft plan version to publish."}},
+				SuccessDescription: "The plan version is active.",
+			},
+			handler: publishAdminPlanHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/plans/{plan_id}/archive",
+				OperationID:        "archiveAdminPlan",
+				Summary:            "Archive a pricing plan",
+				Description:        "Archives the addressed plan version while preserving it for invoice and subscription audit reads.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				PathParams:         []openapi.PathParam{{Name: "plan_id", Description: "The plan version to archive."}},
+				SuccessDescription: "The plan version was archived.",
+			},
+			handler: archiveAdminPlanHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/plans/{plan_id}/rollback",
+				OperationID:        "rollbackAdminPlan",
+				Summary:            "Rollback a pricing plan",
+				Description:        "Publishes a new active version copied from the addressed historical plan version, then archives the previously active version for the same slug and billing period.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminPlansManage),
+				SuccessStatus:      http.StatusCreated,
+				PathParams:         []openapi.PathParam{{Name: "plan_id", Description: "The historical plan version to restore from."}},
+				SuccessDescription: "A rollback plan version was published.",
+			},
+			handler: rollbackAdminPlanHandler(adminPlanManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

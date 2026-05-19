@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice plan-management APIs use a store service over `PricingPlanRepository` for lifecycle changes: edits create draft successor rows without archiving the current active row, publish archives the previous active row and promotes the draft in one transaction, rollback copies a historical row into a new active version, and every mutation appends an allowed `audit_events` row with actor/request/correlation identity.
 - Backoffice config mutations should use a service layer over `AdminConfigRepository` when auditability matters: verify the admin actor organization, mutate `admin_config_sets`/`admin_config_versions`, and append the immutable `audit_events` row in one `Store.Write` transaction. Audit metadata should carry redacted JSON `before`/`after` snapshots, sorted `changed_fields`, operator `reason`, `effective_at`, and rollback target where applicable.
 - Backoffice dry-run validation is a side-effect-free `internal/controlplane/backoffice` service with optional read ports for existence/impact checks: malformed request shape returns typed API errors, while candidate configuration defects return a successful `yalla.output.v1` report with stable `warnings`, `blocking_errors`, and `simulated_organizations` arrays. Secret-looking credential values are rejected without echoing the submitted value.
 - Backoffice runtime configuration uses global `admin_config_sets` plus `admin_config_versions`, not tenant tables: create editable drafts, publish immutable effective-at versions, archive instead of deleting, and make runtime readers select only `status='published'` rows whose `effective_at` has passed. Bump the set `revision` on version mutations so future cache layers have a monotonic invalidation token.
@@ -37494,4 +37495,51 @@ change that widened Reason to caller-supplied data.
   - Backoffice config is global runtime state, but audit rows are tenant-scoped under the admin actor's organization so support/audit readers keep their existing organization-rooted shape.
   - The audit metadata column is `map[string]string`; store structured before/after/diff details as deterministic JSON strings inside that map and redact before marshaling.
   - A rollback audit should distinguish the source payload copied into the new version from the target version being rolled back, using `rollback_target_version_id`.
+---
+## 2026-05-19 08:52 +03 - BE-0602
+- What was implemented
+  - Added support-only backoffice plan lifecycle APIs for create draft, edit draft, publish, archive, and rollback.
+  - Added `store.AdminPlanService` to wrap pricing-plan mutations and audit writes in one transaction.
+  - Extended `PricingPlanRepository` with draft edit, publish, rollback, and next-version helpers so active runtime plan rows remain stable until publish.
+  - Added `admin.plans.manage` policy action and OpenAPI route metadata for every new endpoint.
+  - Wired `cmd/yalla-api` to initialize and pass the store-backed plan manager.
+  - Marked BE-0602 passing in `ralph/prd.json`.
+- Files changed
+  - `cmd/yalla-api/main.go`
+  - `internal/controlplane/httpapi/admin_plans.go`
+  - `internal/controlplane/httpapi/admin_plans_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/policy/actions.go`
+  - `internal/controlplane/policy/catalog.go`
+  - `internal/controlplane/policy/policy_test.go`
+  - `internal/controlplane/store/admin_plan_service.go`
+  - `internal/controlplane/store/admin_plan_service_test.go`
+  - `internal/controlplane/store/pricing_plan.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All listed checks passed; the pre-commit hook also passed `govulncheck`, `staticcheck`, GoReleaser check, snapshot release build, and additional focused smoke suites.
+  - `goimports` was not installed.
+- Remaining risks or follow-ups
+  - BE-0603 and later backoffice stories still need finer entitlement/subscription/metring-specific APIs and roles.
+  - The plan-management endpoints intentionally use support-only `admin.plans.manage` until BE-0613 splits backoffice permissions and roles.
+- **Learnings for future iterations:**
+  - Pricing plans are global operator-owned configuration, so admin plan audit rows are filed under the operator's organization rather than a customer tenant.
+  - Editing a published plan must not archive the current active row; runtime entitlement resolution depends on active rows staying stable until an explicit publish.
+  - Route-option wiring avoids another `NewHandler` positional-arity sweep for backoffice-only services.
 ---
