@@ -54,6 +54,18 @@ Postgres persistence for control-plane source-of-truth state.
   with an audit event and creating the next `close_version`; do not rewrite
   prior item quantities.
 
+## Usage aggregation schedules
+
+- `admin_usage_aggregation_schedules` is global backoffice runtime config:
+  schedule rows are updated in place with monotonically increasing `version`
+  and `revision`, disabled instead of deleted, and loaded by aggregators through
+  `UsageAggregationScheduleRepository.ListRuntimeEnabled` in deterministic
+  `(source, metric_key, schedule_key)` order.
+- Mutations go through `AdminUsageAggregationScheduleService`, which verifies
+  the support actor organization, writes the schedule, and appends the
+  `admin.usage_aggregation_schedule.*` audit event in one `Store.Write`
+  transaction.
+
 ## Tenant hierarchy schema
 
 - The `Organization -> Project -> Environment -> Service` chain is in

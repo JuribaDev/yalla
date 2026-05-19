@@ -223,6 +223,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminMeteringSourceManager AdminMeteringSourceManager
 	var adminMetricDefinitionManager AdminMetricDefinitionManager
 	var adminAttributionRuleManager AdminAttributionRuleManager
+	var adminUsageAggregationScheduleManager AdminUsageAggregationScheduleManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -277,6 +278,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminAttributionRuleManager); ok {
 			adminAttributionRuleManager = v
+		}
+		if v, ok := opt.(AdminUsageAggregationScheduleManager); ok {
+			adminUsageAggregationScheduleManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -802,6 +806,51 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The source connection test report.",
 			},
 			handler: testAdminMeteringSourceHandler(adminMeteringSourceManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/metering/schedules/{schedule_key}",
+				OperationID:        "getAdminUsageAggregationSchedule",
+				Summary:            "Get a usage aggregation schedule",
+				Description:        "Returns the current backoffice usage aggregation schedule for one source metric, including aggregation interval, replay lookback, period close delay, late-event handling, enabled state, and version. Action metering.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "schedule_key", Description: "Stable usage aggregation schedule key."}},
+				SuccessDescription: "The current usage aggregation schedule.",
+			},
+			handler: getAdminUsageAggregationScheduleHandler(adminUsageAggregationScheduleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/metering/schedules/{schedule_key}",
+				OperationID:        "upsertAdminUsageAggregationSchedule",
+				Summary:            "Configure a usage aggregation schedule",
+				Description:        "Creates or updates one audited usage aggregation schedule. Runtime aggregators load enabled schedules by revision and version so interval, replay, close-delay, and late-event changes can be picked up safely without dropping in-flight work.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "schedule_key", Description: "Stable usage aggregation schedule key."}},
+				SuccessDescription: "The usage aggregation schedule was persisted and audited.",
+			},
+			handler: upsertAdminUsageAggregationScheduleHandler(adminUsageAggregationScheduleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodDelete,
+				Path:               "/v1/admin/metering/schedules/{schedule_key}",
+				OperationID:        "disableAdminUsageAggregationSchedule",
+				Summary:            "Disable a usage aggregation schedule",
+				Description:        "Disables the current usage aggregation schedule without deleting history. Runtime aggregators load only enabled schedules.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "schedule_key", Description: "Stable usage aggregation schedule key."}},
+				SuccessDescription: "The usage aggregation schedule was disabled and audited.",
+			},
+			handler: disableAdminUsageAggregationScheduleHandler(adminUsageAggregationScheduleManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

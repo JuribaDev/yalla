@@ -1,0 +1,3 @@
+DROP TRIGGER IF EXISTS admin_usage_aggregation_schedules_set_updated_at ON admin_usage_aggregation_schedules;
+DROP TABLE IF EXISTS admin_usage_aggregation_schedules;
+DROP DOMAIN IF EXISTS usage_late_event_mode;

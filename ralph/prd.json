@@ -12461,8 +12461,8 @@
       ],
       "type": "backoffice-metering-api",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-gated backoffice usage aggregation schedule APIs: GET/PUT/DELETE /v1/admin/metering/schedules/{schedule_key}. Added admin_usage_aggregation_schedules persistence with aggregation interval, replay lookback, close delay, late-event mode, enabled state, monotonically versioned updates, runtime enabled-schedule reload, audited store service writes, OpenAPI route metadata, API binary wiring, and focused HTTP/store tests covering success, validation, authorization, not-found, conflict, interval changes, replay windows, late-event modes, disabled schedules, and audit rows. Required quality checks passed; goimports was not installed in the direct shell, and the strict pre-commit verifier passed golangci-lint, govulncheck, staticcheck, GoReleaser check, and snapshot release."
     },
     {
       "id": "BE-0609",

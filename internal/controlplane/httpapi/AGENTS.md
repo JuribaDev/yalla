@@ -194,6 +194,11 @@ Attribution-rule routes share the same action and thin-handler shape: publish
 mutations delegate to `AdminAttributionRuleService`, dry-run requests remain
 side-effect free, and unsafe samples are never rendered as billable unless a
 rule meets its configured confidence threshold.
+Usage aggregation schedule routes share the same action and route-option
+wiring: `GET/PUT/DELETE /v1/admin/metering/schedules/{schedule_key}` delegate
+to `AdminUsageAggregationScheduleService`, expose interval/replay/close-delay
+and late-event mode as stable top-level fields, and disable schedules instead
+of deleting runtime history.
 
 ## Adding an endpoint
 

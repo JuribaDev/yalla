@@ -25,6 +25,7 @@
 - Audit event metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.AuditEventMetrics` groups by `(action, resource_kind, decision, outcome, reason, error_code)`, stores request/correlation/org/resource/actor/job IDs only as latest-sample incident hints, is emitted from `store.AuditRepository.Append` for both recorded and failed append attempts, and `/metrics` exposes the snapshot under `data.audit_events`.
 - Backoffice runtime config consumers should use `backoffice.RuntimeConfigCache` over `AdminConfigRepository.ListActivePublishedRuntime`: snapshots are immutable, carry `config_set_id`/`version_id`/`version`/`revision` identifiers, continue serving the last known good config after reload failures, and emit one stale alert per generation once the configured staleness threshold is exceeded.
 - Backoffice attribution rules are dedicated global runtime metering contracts: `admin_attribution_rules` stores enabled rules ordered by `(priority, rule_key)`, mutations go through `AdminAttributionRuleService` for actor-org verification plus audit in one `Store.Write`, and dry-run evaluation is side-effect free with unsafe samples rendered as attributed/quarantined/ignored but never billable unless a rule meets its configured confidence threshold.
+- Backoffice usage aggregation schedules are dedicated global runtime metering contracts: `admin_usage_aggregation_schedules` stores one schedule per `(source, metric_key)`, updates in place with monotonically increasing `version`/`revision`, disables instead of deleting, exposes enabled runtime reload through `UsageAggregationScheduleRepository.ListRuntimeEnabled`, and mutates through `AdminUsageAggregationScheduleService` so actor-org verification plus audit happen in one `Store.Write`.
 - Backoffice metric definitions use dedicated versioned global config, not generic JSON config: `admin_metric_definitions` keeps one current row per key (`superseded_at IS NULL`), `MetricDefinitionRepository.Upsert` rejects billing-grade unit changes unless `AllowNewVersion` is set and then inserts the next version, runtime aggregators reload enabled current rows through `ListRuntimePublished`, and HTTP routes are support-gated with `admin.metering.manage`.
 - Backoffice metering source configuration uses a dedicated audited store surface rather than generic JSON config when credentials are involved: persist global `admin_metering_sources` rows with write-only `(credential_provider, credential_key_id, credential_ciphertext)` columns, return only `credential_set` on the wire, expose runtime reload through `MeteringSourceRepository.ListRuntimeEnabled`, and gate HTTP routes with `admin.metering.manage` (currently CapSupport).
 - Quota usage metrics follow the existing HTTP/job/Dokploy collector pattern: one in-memory `telemetry.QuotaUsageMetrics` series per low-cardinality `(resource, enforcement_mode, outcome, reason)` tuple, with request/correlation/org/principal/job IDs and quota counts kept only as latest-sample incident hints. The quota checker emits decisions for allowed, rejected, validation, and infrastructure-error paths, and `/metrics` exposes the snapshot under `data.quota_usage`.
@@ -38759,4 +38760,56 @@ change that widened Reason to caller-supplied data.
   - Billing close should compose existing `usage_counters`, `usage_counter_adjustments`, and `billing_exports`; avoid a second billing export implementation in invoice code.
   - Reopen/correction should version forward with `close_version` and an audit event, preserving prior item quantities for auditability.
   - `goimports`, `staticcheck`, and `govulncheck` are not installed in this runner; `golangci-lint` is installed and includes revive exported-comment checks.
+---
+## 2026-05-19 15:03 +03 - BE-0608
+- What was implemented
+  - Added support-gated backoffice usage aggregation schedule APIs: `GET`, `PUT`, and `DELETE /v1/admin/metering/schedules/{schedule_key}`.
+  - Added `admin_usage_aggregation_schedules` migration with schedule key, source, metric key, aggregation interval, replay lookback, close delay, late-event mode, enabled state, version, revision, and timestamps.
+  - Added `UsageAggregationScheduleRepository` and `AdminUsageAggregationScheduleService` with runtime enabled-schedule reload, in-place versioned updates, disable-without-delete lifecycle, actor-org verification, and immutable audit rows.
+  - Wired the manager through `httpapi.NewHandler`, route/OpenAPI metadata, and `cmd/yalla-api`.
+  - Marked BE-0608 as passing in `ralph/prd.json`.
+- Files changed
+  - `cmd/yalla-api/main.go`
+  - `internal/controlplane/httpapi/admin_usage_schedules.go`
+  - `internal/controlplane/httpapi/admin_usage_schedules_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/store/usage_aggregation_schedule.go`
+  - `internal/controlplane/store/admin_usage_schedule_service.go`
+  - `internal/controlplane/store/admin_usage_schedule_service_test.go`
+  - `internal/controlplane/store/migrate/migrations/0069_admin_usage_aggregation_schedules.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0069_admin_usage_aggregation_schedules.down.sql`
+  - `internal/controlplane/httpapi/AGENTS.md`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All installed required and focused checks passed.
+  - `golangci-lint` passed with `0 issues`.
+  - `goimports` was not installed in the direct shell.
+  - The strict pre-commit verifier also passed `govulncheck`, `staticcheck`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Remaining risks or follow-ups
+  - Runtime aggregators now have a stable reload repository surface, but no aggregator process consumes these schedules yet.
+- **Learnings for future iterations:**
+  - Backoffice runtime schedule config follows the source/definition/attribution pattern: global table, support-gated `admin.metering.manage` HTTP routes, audited store service, and deterministic runtime list.
+  - For schedules, update rows in place and increment `version`/`revision`; disable instead of delete so in-flight aggregators can compare versions and historical audit remains intact.
+  - `golangci-lint` is installed and enforces exported constant comments via revive; add comments with new exported enum values.
+  - Optional security/release tools may be available through `scripts/verify.sh --strict --release` even when direct `command -v` checks do not find them in the shell.
 ---
