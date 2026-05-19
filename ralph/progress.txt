@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Entitlement-backed hard quota rejections should carry both human guidance and stable machine details: `resource`, `entitlement_key`, `current`, `reserved`, `requested`, `limit`, and subscription `reset_period_start`/`reset_period_end` when the limit came from a current subscription period. Keep the detailed counts from the same locked quota decision that creates or rejects the reservation.
 - Build/deployment metering is a bridge from Yalla source-of-truth timelines into append-only `usage_events`: deployment counts come from terminal `deployment_events` (never Dokploy current state), successful/rolled-back deployments use `deployments`, failed deployments use `failed_deployments`, cancelled deployments do not emit deployment-count usage, and `build_minutes` sums completed `job_attempts` durations with a terminal `provisioning_jobs.started_at/finished_at` fallback. Idempotency keys are per deployment outcome (`deployment:<id>:<status>`) and per job duration (`build_minutes:<job_id>`).
 - Traefik metric attribution is a separate layer after source collection: extract explicit Yalla service labels before deterministic Dokploy/Traefik names containing `svc_<id>`/`svc-<id>`, resolve only services that still have a service-level `dokploy_refs` mapping, attach full org/project/environment/service scope plus attribution source/confidence metadata, and quarantine missing-ref, deleted-service, and unmanaged samples so they never become billing-grade `usage_events` automatically.
 - Traefik metering source collection lives under `internal/controlplane/metering` and should stay source-only: query bounded Prometheus windows, normalize counters into deterministic unattributed samples, attach `query_version` plus raw-sample checksum metadata, and leave tenant attribution/quarantine plus `usage_events` writes to later attribution/aggregation layers.
@@ -36967,4 +36968,45 @@ change that widened Reason to caller-supplied data.
   - Deployment metering must read terminal `deployment_events` before emitting deployment-count usage so billing never infers customer deploys from mutable Dokploy current state.
   - Retry build time should sum immutable `job_attempts`; cancelled attempts still contribute elapsed worker time, but cancelled deployments should not consume the successful/failed deployment-count entitlement key.
   - Adding a quota/usage resource requires both the Go `QuotaResource` closed set and a new `ALTER DOMAIN quota_resource` migration; `TestQuotaResourceValid` pins the Go-side lockstep count.
+---
+## 2026-05-19 06:46 +03 - BE-0577
+- What was implemented
+  - Completed the entitlement-backed hard-limit enforcement contract.
+  - Existing quota enforcement already preferred runtime entitlements and ran inside `Store.Write` transactions through the shared `quota.Checker`; this iteration added the missing public failure details.
+  - Subscription entitlement resolution now carries the current subscription period through `store.EffectiveEntitlement` and `entitlements.Entitlement`.
+  - `quota.Checker` now attaches stable `entitlement_key`, `current`, `reserved`, `requested`, `limit`, and reset-period details to `E_QUOTA_EXCEEDED` while preserving the upgrade hint and recoverable `quota.ExceededDetail`.
+- Files changed
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/entitlements/resolver.go`
+  - `internal/controlplane/quota/quota.go`
+  - `internal/controlplane/quota/quota_test.go`
+  - `internal/controlplane/store/quota.go`
+  - `internal/controlplane/store/subscription.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/quota -run TestCheckerReserveUsesEntitlementResolverWhenConfigured -count=1` (red run failed on missing detail keys; green after implementation)
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All verification commands passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - Direct PATH probes did not find `goimports`, `staticcheck`, or `govulncheck`, so those commands were not run directly in this iteration.
+- Remaining risks or follow-ups
+  - BE-0578 should reuse these quota detail keys when adding soft-limit warning envelopes so agents see the same resource/entitlement/count vocabulary across hard and soft enforcement.
+- **Learnings for future iterations:**
+  - The subscription resolver query can safely carry current-period timestamps alongside entitlement rows; these fields are public-period metadata and do not expose provider ids, plan ids, subscription ids, or override reasons.
+  - Quota errors should keep the human `Hint` useful for operators while putting count and period values in `yerr.Error.Details` for agents.
+  - Legacy quota-policy rejections still use the resource name as the effective entitlement key because no pricing entitlement row backs that path.
 ---

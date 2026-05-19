@@ -36,6 +36,8 @@ type Entitlement struct {
 	PlanID          string
 	SubscriptionID  string
 	OverrideID      string
+	PeriodStart     time.Time
+	PeriodEnd       time.Time
 }
 
 // Snapshot is the deterministic runtime view for one organization at one
@@ -186,6 +188,8 @@ func buildSnapshot(orgID string, at time.Time, revision string, rows []store.Eff
 			PlanID:          row.PlanID,
 			SubscriptionID:  row.SubscriptionID,
 			OverrideID:      row.OverrideID,
+			PeriodStart:     row.PeriodStart,
+			PeriodEnd:       row.PeriodEnd,
 		}
 		ent.Explanation = explanation(ent)
 		ents[ent.Key] = ent

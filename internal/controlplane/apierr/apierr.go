@@ -87,6 +87,33 @@ const DetailKeyQuotaResource = "resource"
 // 64-bit numeric type.
 const DetailKeyQuotaLimit = "limit"
 
+// DetailKeyQuotaEntitlementKey is the stable details key naming the pricing
+// entitlement that backed a quota rejection. For legacy quota-policy
+// rejections, callers should use the resource value as the entitlement key.
+const DetailKeyQuotaEntitlementKey = "entitlement_key"
+
+// DetailKeyQuotaCurrent is the stable details key carrying the currently used
+// amount observed under the quota lock.
+const DetailKeyQuotaCurrent = "current"
+
+// DetailKeyQuotaReserved is the stable details key carrying the active
+// reserved amount observed under the quota lock.
+const DetailKeyQuotaReserved = "reserved"
+
+// DetailKeyQuotaRequested is the stable details key carrying the amount the
+// rejected request attempted to reserve.
+const DetailKeyQuotaRequested = "requested"
+
+// DetailKeyQuotaResetPeriodFrom is the stable details key carrying the UTC RFC
+// 3339 start instant of the billing/reset period when the limit is backed by a
+// current subscription entitlement.
+const DetailKeyQuotaResetPeriodFrom = "reset_period_start"
+
+// DetailKeyQuotaResetPeriodTo is the stable details key carrying the UTC RFC
+// 3339 end instant of the billing/reset period when the limit is backed by a
+// current subscription entitlement.
+const DetailKeyQuotaResetPeriodTo = "reset_period_end"
+
 // MessagePolicy classifies whether an error code's user-facing Message is
 // allowed to describe the specific failure.
 type MessagePolicy string

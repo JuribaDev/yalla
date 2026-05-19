@@ -11872,8 +11872,8 @@
       ],
       "type": "pricing-enforcement",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed entitlement-backed hard-limit enforcement contract: quota checker already runs in-source-of-truth transactions and blocks countable resources through existing Reserve/ReserveAmount call sites; quota rejections now include stable structured entitlement_key/current/reserved/requested/limit/reset-period details plus upgrade guidance. Full required verification passed."
     },
     {
       "id": "BE-0578",

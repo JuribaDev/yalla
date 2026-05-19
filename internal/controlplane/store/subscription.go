@@ -106,6 +106,8 @@ type EffectiveEntitlement struct {
 	PlanID          string
 	SubscriptionID  string
 	OverrideID      string
+	PeriodStart     time.Time
+	PeriodEnd       time.Time
 }
 
 // CreateSubscriptionInput describes the accepted plan version for an organization.
@@ -248,7 +250,7 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 	}
 	rows, err := q.Query(ctx,
 		`WITH current_subscription AS (
-		    SELECT id, plan_id
+		    SELECT id, plan_id, current_period_start, current_period_end
 		      FROM subscriptions
 		     WHERE organization_id = $1
 		       AND status IN ('trialing', 'active', 'past_due')
@@ -265,6 +267,8 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 		           cs.plan_id,
 		           cs.id AS subscription_id,
 		           NULL::text AS override_id,
+		           cs.current_period_start,
+		           cs.current_period_end,
 		           0 AS precedence,
 		           pe.created_at,
 		           pe.id
@@ -278,6 +282,8 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 		           cs.plan_id,
 		           cs.id AS subscription_id,
 		           se.id AS override_id,
+		           cs.current_period_start,
+		           cs.current_period_end,
 		           CASE se.source WHEN 'subscription_override' THEN 1 ELSE 2 END AS precedence,
 		           se.effective_from AS created_at,
 		           se.id
@@ -292,7 +298,7 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 		       AND (se.effective_until IS NULL OR se.effective_until > $2)
 		 )
 		 SELECT DISTINCT ON (entitlement_key)
-		        entitlement_key, limit_value, enforcement_mode, source, plan_id, subscription_id, COALESCE(override_id, '')
+		        entitlement_key, limit_value, enforcement_mode, source, plan_id, subscription_id, COALESCE(override_id, ''), current_period_start, current_period_end
 		   FROM candidates
 		  ORDER BY entitlement_key, precedence DESC, created_at DESC, id DESC`,
 		strings.TrimSpace(organizationID), at,
@@ -307,7 +313,7 @@ func (r *SubscriptionRepository) ResolveEntitlements(ctx context.Context, q Quer
 		var ent EffectiveEntitlement
 		if err := rows.Scan(
 			&ent.EntitlementKey, &ent.LimitValue, &ent.EnforcementMode, &ent.Source,
-			&ent.PlanID, &ent.SubscriptionID, &ent.OverrideID,
+			&ent.PlanID, &ent.SubscriptionID, &ent.OverrideID, &ent.PeriodStart, &ent.PeriodEnd,
 		); err != nil {
 			return nil, apierr.StoreUnavailable(err)
 		}

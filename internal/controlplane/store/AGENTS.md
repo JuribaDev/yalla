@@ -250,7 +250,10 @@ Postgres persistence for control-plane source-of-truth state.
 - `SubscriptionRepository.ResolveEntitlements` is the deterministic precedence
   rule: plan defaults < subscription overrides < emergency admin overrides.
   Within one layer, newest active `effective_from` wins, then row creation time,
-  then id as a stable tie-breaker. Keep future resolver/cache services aligned
+  then id as a stable tie-breaker. It also carries the current subscription
+  period on each effective row so quota errors and customer-visible usage can
+  expose reset windows without leaking provider ids, plan ids, subscription ids,
+  override ids, or override reasons. Keep future resolver/cache services aligned
   with this ordering.
 - `quota_policies` holds **one limit per (scope, resource)**. A row is *either*
   a `plan_default` (keyed by the text `plan` column — there is **no FK to a

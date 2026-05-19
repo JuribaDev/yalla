@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,7 +229,7 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 			return err
 		}
 		if current+reserved+requested > limit.LimitValue {
-			return quotaExceeded(res, current, reserved, requested, limit.LimitValue)
+			return quotaExceeded(limit, current, reserved, requested)
 		}
 	case store.EnforcementModeSoft, store.EnforcementModeMetered:
 		// Recorded for metering and visibility, but never rejected.
@@ -266,6 +267,9 @@ func (c *Checker) effectiveLimit(ctx context.Context, tx *store.Tx, orgID string
 				Resource:        res,
 				LimitValue:      limit,
 				EnforcementMode: ent.EnforcementMode,
+				EntitlementKey:  ent.Key,
+				ResetPeriodFrom: timePtr(ent.PeriodStart),
+				ResetPeriodTo:   timePtr(ent.PeriodEnd),
 			}, true, nil
 		}
 	}
@@ -280,16 +284,39 @@ func (c *Checker) effectiveLimit(ctx context.Context, tx *store.Tx, orgID string
 // quotaExceeded builds the typed rejection error for an exhausted hard limit:
 // an apierr.QuotaExceeded whose hint carries every count behind the decision
 // and whose wrapped cause is a recoverable ExceededDetail.
-func quotaExceeded(res store.QuotaResource, current, reserved, requested, limit int64) error {
+func quotaExceeded(limit store.QuotaLimit, current, reserved, requested int64) error {
+	resource := limit.Resource
+	entitlementKey := strings.TrimSpace(limit.EntitlementKey)
+	if entitlementKey == "" {
+		entitlementKey = resource.String()
+	}
 	detail := ExceededDetail{
-		Resource:  res.String(),
+		Resource:  resource.String(),
 		Current:   current,
 		Reserved:  reserved,
 		Requested: requested,
-		Limit:     limit,
+		Limit:     limit.LimitValue,
 	}
-	return apierr.QuotaExceeded(res.String(), limit).
+	err := apierr.QuotaExceeded(resource.String(), limit.LimitValue).
+		WithDetail(apierr.DetailKeyQuotaEntitlementKey, entitlementKey).
+		WithDetail(apierr.DetailKeyQuotaCurrent, strconv.FormatInt(current, 10)).
+		WithDetail(apierr.DetailKeyQuotaReserved, strconv.FormatInt(reserved, 10)).
+		WithDetail(apierr.DetailKeyQuotaRequested, strconv.FormatInt(requested, 10)).
 		WithHintf("%s quota exhausted: %d in use, %d reserved, %d requested, limit %d; release usage or request a higher quota",
-			res, current, reserved, requested, limit).
+			resource, current, reserved, requested, limit.LimitValue).
 		Wrap(detail)
+	if limit.ResetPeriodFrom != nil && !limit.ResetPeriodFrom.IsZero() {
+		err = err.WithDetail(apierr.DetailKeyQuotaResetPeriodFrom, limit.ResetPeriodFrom.UTC().Format(time.RFC3339))
+	}
+	if limit.ResetPeriodTo != nil && !limit.ResetPeriodTo.IsZero() {
+		err = err.WithDetail(apierr.DetailKeyQuotaResetPeriodTo, limit.ResetPeriodTo.UTC().Format(time.RFC3339))
+	}
+	return err
+}
+
+func timePtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }

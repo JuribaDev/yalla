@@ -168,6 +168,9 @@ type QuotaLimit struct {
 	Resource        QuotaResource
 	LimitValue      int64
 	EnforcementMode EnforcementMode
+	EntitlementKey  string
+	ResetPeriodFrom *time.Time
+	ResetPeriodTo   *time.Time
 }
 
 // QuotaScope is which scope produced an effective quota policy: a plan default

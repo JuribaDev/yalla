@@ -198,6 +198,10 @@ do not mix customer API handlers into CLI packages.
   `Resolver.ResolveWithQuerier(ctx, tx, orgID, at)` so quota checks observe the
   same transaction snapshot as the desired-state write. Standalone API/read
   paths may call `Resolver.Resolve`, which opens its own read transaction.
+  Entitlement-backed hard quota failures should expose machine-readable
+  `yerr.Error.Details` for `resource`, `entitlement_key`, `current`,
+  `reserved`, `requested`, `limit`, and subscription reset-period timestamps
+  when present, while keeping the human `Hint` as upgrade/recovery guidance.
 - Metering source adapters live in `internal/controlplane/metering`. They should
   emit deterministic, unattributed source samples with bounded window metadata,
   query-version metadata, and raw-sample checksums; tenant/resource attribution,

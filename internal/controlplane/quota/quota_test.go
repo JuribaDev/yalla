@@ -3,6 +3,7 @@ package quota_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -545,6 +546,28 @@ func TestCheckerReserveUsesEntitlementResolverWhenConfigured(t *testing.T) {
 	}
 	if detail.Resource != "projects" || detail.Limit != 1 || detail.Reserved != 1 || detail.Requested != 1 {
 		t.Fatalf("quota detail = %+v, want projects limit 1 from starter entitlement", detail)
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) {
+		t.Fatal("quota rejection was not a typed yerr.Error")
+	}
+	wantDetails := map[string]string{
+		apierr.DetailKeyQuotaResource:        "projects",
+		apierr.DetailKeyQuotaEntitlementKey:  "projects",
+		apierr.DetailKeyQuotaCurrent:         "0",
+		apierr.DetailKeyQuotaReserved:        "1",
+		apierr.DetailKeyQuotaRequested:       "1",
+		apierr.DetailKeyQuotaLimit:           "1",
+		apierr.DetailKeyQuotaResetPeriodFrom: "2026-01-01T00:00:00Z",
+		apierr.DetailKeyQuotaResetPeriodTo:   "2027-01-01T00:00:00Z",
+	}
+	for key, want := range wantDetails {
+		if got := ye.Details[key]; got != want {
+			t.Errorf("details[%q] = %q, want %q", key, got, want)
+		}
+	}
+	if ye.Hint == "" || !strings.Contains(ye.Hint, "request a higher quota") {
+		t.Errorf("hint = %q, want stable upgrade guidance", ye.Hint)
 	}
 }
 
