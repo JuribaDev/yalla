@@ -4570,6 +4570,34 @@ nightly + manual, not "Every push and PR".
   A drift on any single surface (rename, renumber, deletion) fails
   ONE test, not six.
 
+## Agent Story Execution Guide Artifact
+
+The agent story execution guide lives at
+`docs/development/agent-story-execution-guide.md`. It documents how autonomous
+coding agents pick up backend user stories from `ralph/prd.json`, read prior
+learnings from `ralph/progress.txt`, check out the `codex/yalla-control-plane-backend`
+branch, implement one story per iteration, run required quality checks, update
+the PRD and progress log, and commit with conventional-commit messages.
+
+The guide preserves the production boundary: agents implement backend API and
+worker behavior that keeps Dokploy private, Postgres as the source of truth,
+and customer-facing endpoints behind auth, policy, quota, idempotency, and
+audit. It pins exact commands (`gofmt`, `go mod tidy`, `go test ./...`,
+`go test -race ./...`, `go vet ./...`, focused backend suites), required
+environment variables with redacted placeholders, expected output shapes,
+failure recovery guidance, and the rule that normal tests use fake Dokploy
+fixtures rather than live Dokploy servers.
+
+The checked-in guide intentionally uses only `<redacted:...>` placeholders for
+secret-shaped values. It documents that tokens, API keys, database URLs,
+Dokploy tokens, cookies, request bodies, response bodies, and rendered
+environment variable values must never appear in logs, errors, audit metadata,
+tests, or docs. External Dokploy smoke tests remain opt-in and must never run
+against production.
+
+CI pins the agent story execution guide with
+`go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact`.
+
 ## Disclosure Timeline (Best Effort)
 
 1. **Day 0** — report received, acknowledgement sent.

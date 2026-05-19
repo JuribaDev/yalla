@@ -40156,3 +40156,46 @@ change that widened Reason to caller-supplied data.
   - Keep load-bearing phrases on one line when a test pins a substring; multi-line sentences break `strings.Contains` matchers.
   - Avoid forbidden substrings like "Bearer " in guide text even in benign contexts (e.g. "bearer token"); use alternative phrasing like "authorization token".
 ---
+
+## 2026-05-19 22:23 +03 - BE-0561
+- What was implemented
+  - Created `docs/development/agent-story-execution-guide.md` documenting the
+    autonomous agent story execution workflow for the Yalla Control Plane backend.
+    Covers PRD and progress reading, branch checkout, story picking, required
+    quality checks (gofmt, go mod tidy, go test, go test -race, go vet, focused
+    backend suites), commit convention, PRD/progress updates, contract checks,
+    safety rules, and failure recovery guidance.
+  - Added `internal/release/agent_story_execution_guide_static_test.go` pinning
+    the artifact content, required commands, contract checks, environment
+    placeholders, expected outputs, redaction rules, and release-gate wiring.
+  - Wired the new static artifact gate into `scripts/verify.sh`,
+    `.github/workflows/ci.yml`, and `SECURITY.md`.
+- Files changed
+  - `docs/development/agent-story-execution-guide.md`
+  - `internal/release/agent_story_execution_guide_static_test.go`
+  - `scripts/verify.sh`
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact` passed.
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+- Results
+  - All required and focused checks passed.
+- Remaining risks or follow-ups
+  - None. This is a documentation artifact story with no runtime impact.
+- **Learnings for future iterations:**
+  - Documentation artifacts continue to follow the static-release-gate pattern:
+    add the markdown artifact, a focused `internal/release/*_static_test.go`,
+    CI wiring, `scripts/verify.sh` wiring, and `SECURITY.md` section together.
+  - Static tests match exact substrings case-sensitively; ensure the markdown
+    file contains the exact lowercase/uppercase phrases the test expects.
+  - Multi-line markdown sentences split across lines can fail substring checks
+    when the expected phrase spans the break; keep expected phrases on one line
+    or verify the concatenated text matches.
+---

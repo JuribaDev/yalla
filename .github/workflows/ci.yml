@@ -222,6 +222,9 @@ jobs:
       - name: Break-glass playbook artifact static tests
         run: go test ./internal/release/... -run TestBreakGlassPlaybookArtifact
 
+      - name: Agent story execution guide artifact static tests
+        run: go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact
+
       - name: Race detector
         run: go test -race ./...
 

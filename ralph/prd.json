@@ -11568,8 +11568,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: agent story execution guide."
+      "passes": true,
+      "notes": "Created docs/development/agent-story-execution-guide.md documenting the agent story execution workflow: PRD reading, branch checkout, story picking, quality checks, commit convention, PRD/progress updates, contract checks, safety rules, and failure recovery. Added internal/release/agent_story_execution_guide_static_test.go pinning the artifact content, redaction, and wiring into scripts/verify.sh, .github/workflows/ci.yml, and SECURITY.md. All required checks passed."
     },
     {
       "id": "BE-0562",
