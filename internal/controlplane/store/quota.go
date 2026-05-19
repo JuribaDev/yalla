@@ -53,6 +53,7 @@ const (
 	QuotaResourceContainerMemoryMBHours       QuotaResource = "container_memory_mb_hours"
 	QuotaResourceStorageGBMonth               QuotaResource = "storage_gb_month"
 	QuotaResourceBackupStorageGBMonth         QuotaResource = "backup_storage_gb_month"
+	QuotaResourceActiveServices               QuotaResource = "active_services"
 )
 
 // quotaResources is the membership set behind QuotaResource.Valid.
@@ -88,6 +89,7 @@ var quotaResources = map[QuotaResource]struct{}{
 	QuotaResourceContainerMemoryMBHours:       {},
 	QuotaResourceStorageGBMonth:               {},
 	QuotaResourceBackupStorageGBMonth:         {},
+	QuotaResourceActiveServices:               {},
 }
 
 // Valid reports whether r is one of the closed set of quota dimensions.

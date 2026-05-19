@@ -157,3 +157,15 @@ func TestDeploymentsMetricDefinition(t *testing.T) {
 		t.Fatalf("deployments definition = %+v, want deployment/yalla_events/hard_or_metered/billing-grade", def)
 	}
 }
+
+func TestActiveServicesMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("active_services")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(active_services) missing")
+	}
+	if def.Key != "active_services" || def.Unit != "service" || def.Source != CurrentStateUsageSource || def.Enforcement != MetricEnforcementHard || def.BillingGrade {
+		t.Fatalf("active_services definition = %+v, want service/yalla_current_state/hard/non-billing-grade", def)
+	}
+}

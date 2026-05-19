@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Current-state tracked metrics follow the same durable usage pipeline as source adapters: define a runtime `metering.MetricDefinition`, add a closed `quota_resource` migration/constant, build attributed samples from Yalla source-of-truth rows, emit idempotent `usage_events` with redacted metadata, and rely on `UsageCounterRepository.AggregateUsageEvents` plus the existing usage/billing export projections for customer/internal visibility.
 - Traefik histogram-derived tracked metrics should be derived from the raw bucket series in the adapter, not from already-emitted usage counters: normalize buckets over the bounded collection window, compute the service-level value before the collection checksum is copied onto samples, then emit through the same attributed `TraefikUsageEmitter` / `usage_events` / `usage_counters` path as other tracked metrics.
 - Soft/non-billing tracked metrics that must be customer-visible still flow through durable `usage_events` and `usage_counters`: `MetricDefinition.BillingGrade=false` controls billing semantics, not persistence; add a `quota_resource` constant/domain value when the metric must appear in usage APIs or billing export snapshots.
 - Derived Traefik tracked metrics should be created from normalized source samples before the collection checksum is copied onto final samples; new quota-resource metrics must update the SQL domain migration, `store.QuotaResource` constant, `quotaResources` membership map, and `TestQuotaResourceValid`'s explicit constant list together.
@@ -38849,4 +38850,19 @@ change that widened Reason to caller-supplied data.
   - Histogram-derived Traefik metrics need raw bucket series retained during collection; deriving solely from normalized bucket samples is possible but loses the clearer source boundary for cumulative bucket math.
   - Non-billing observability metrics still need `usage_events`, `usage_counters`, usage-reader tests, and quota-resource domain support when customers must see them in usage APIs.
   - The direct shell has `golangci-lint`, but not `goimports`, `staticcheck`, or `govulncheck`.
+---
+## 2026-05-19 15:34 +03 - BE-0596
+- Implemented active_services as a non-billing hard current-state tracked metric.
+- Added runtime metric definition with unit service, source yalla_current_state, enforcement hard, and billingGrade=false.
+- Added quota_resource support through store.QuotaResourceActiveServices and migration 0073_active_services_metering_resource.
+- Added a current-state service sample builder plus an idempotent usage_events emitter that preserves org/project/environment/service attribution, skips unsupported/incomplete samples, and redacts secret-shaped metadata through the existing usage event repository.
+- Added tests for definition, normal sample emission, duplicate-window idempotency, aggregation/customer usage visibility through usage_counters, missing data, tenant isolation, redaction, and active-service row collection.
+- Files changed: internal/controlplane/metering/current_state_usage.go; internal/controlplane/metering/current_state_usage_test.go; internal/controlplane/metering/metric_definition.go; internal/controlplane/metering/metric_definition_test.go; internal/controlplane/store/quota.go; internal/controlplane/store/quota_internal_test.go; internal/controlplane/store/migrate/migrations/0073_active_services_metering_resource.up.sql; internal/controlplane/store/migrate/migrations/0073_active_services_metering_resource.down.sql; ralph/prd.json; ralph/progress.txt.
+- Verification run: gofmt -w .; goimports -w . attempted; go mod tidy; go test ./...; go test -race ./...; go vet ./...; go test ./internal/controlplane/...; go test -race ./internal/controlplane/...; go test -run TestMigrations ./...; go test -run TestTenantIsolation ./...; golangci-lint run ./...; scripts/verify.sh --strict --release from the pre-commit hook, including govulncheck ./..., staticcheck ./..., golangci-lint run ./..., goreleaser check, and goreleaser release --snapshot --clean.
+- Results: all required Go tests, race tests, vet, focused suites, golangci-lint, govulncheck, staticcheck, goreleaser check, and the snapshot release passed. goimports was not installed in this environment.
+- Remaining risks or follow-ups: no live Dokploy smoke was required or run; active_databases and active_domains remain separate unfinished tracked-metric stories.
+- **Learnings for future iterations:**
+  - Non-billing current-state metrics that need customer visibility should still write durable usage_events and aggregate into usage_counters, using billingGrade=false only to control billing semantics.
+  - For source-of-truth row metrics, keep collection as a small builder from the store row and keep emission through the same repository path so tenant-scoped composite FKs enforce unsafe attribution.
+  - Adding a metric resource still requires the SQL domain migration, store constant, quotaResources map, and TestQuotaResourceValid list in lockstep.
 ---
