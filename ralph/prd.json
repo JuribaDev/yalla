@@ -11834,8 +11834,8 @@
       ],
       "type": "metering-source",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed storage and backup GB-month metering source behavior by adding period/lifetime proration helpers for persistent volumes and backup artefacts, retention-expiry clipping, failed-backup skip behavior, deleted-resource historical usage metadata, explicit adjustment usage_event support, and focused tests for create/delete mid-period, retention expiry, backup failure, tenant-scoped event emission, redacted metadata, and adjustment events. No public HTTP surface was added in this metering-source story, so JSON envelope route criteria remain not applicable until an API consumes the metering output."
     },
     {
       "id": "BE-0576",

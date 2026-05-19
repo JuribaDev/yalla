@@ -39,6 +39,41 @@ type AttributedBackupSample struct {
 	ProjectID      string
 	EnvironmentID  string
 	ServiceID      string
+	EventType      store.UsageEventType
+	Metadata       map[string]string
+}
+
+// BackupArtifactStatus is the normalized status used by backup metadata
+// metering before a sample becomes billing-grade usage.
+type BackupArtifactStatus string
+
+const (
+	// BackupArtifactSucceeded marks a backup artefact that exists and should
+	// contribute retained storage usage while it overlaps the billing period.
+	BackupArtifactSucceeded BackupArtifactStatus = "succeeded"
+	// BackupArtifactFailed marks a failed backup attempt that produced no
+	// billable retained artefact.
+	BackupArtifactFailed BackupArtifactStatus = "failed"
+)
+
+// BackupStorageGBMonthSampleInput describes one backup artefact retained over
+// a billing window. Failed artefacts are not billable and return ok=false.
+type BackupStorageGBMonthSampleInput struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	BackupID       string
+	SizeBytes      int64
+	Status         BackupArtifactStatus
+	WindowStart    time.Time
+	WindowEnd      time.Time
+	PeriodStart    time.Time
+	PeriodEnd      time.Time
+	CreatedAt      time.Time
+	ExpiresAt      *time.Time
+	Source         string
+	QueryVersion   string
 	Metadata       map[string]string
 }
 
@@ -124,6 +159,11 @@ func buildBackupUsageEventInput(sample AttributedBackupSample, requestID string)
 		metadata = map[string]string{}
 	}
 	metadata["metric_key"] = def.Key
+	eventType := sample.EventType
+	if eventType == "" {
+		eventType = store.UsageEventTypeConsumed
+	}
+	metadata["event_type"] = string(eventType)
 	metadata["window_start"] = sample.WindowStart.UTC().Format(time.RFC3339Nano)
 	metadata["window_end"] = sample.WindowEnd.UTC().Format(time.RFC3339Nano)
 	metadata["quantity"] = strconv.FormatFloat(sample.Value, 'f', -1, 64)
@@ -142,7 +182,7 @@ func buildBackupUsageEventInput(sample AttributedBackupSample, requestID string)
 		EnvironmentID:  sample.EnvironmentID,
 		ServiceID:      sample.ServiceID,
 		Resource:       resource,
-		EventType:      store.UsageEventTypeConsumed,
+		EventType:      eventType,
 		Quantity:       sample.Value,
 		Unit:           def.Unit,
 		Source:         def.Source,
@@ -150,6 +190,58 @@ func buildBackupUsageEventInput(sample AttributedBackupSample, requestID string)
 		RequestID:      strings.TrimSpace(requestID),
 		Metadata:       metadata,
 		OccurredAt:     sample.WindowEnd,
+	}, true, nil
+}
+
+// BuildBackupStorageGBMonthSample converts backup metadata into a prorated
+// GB-month sample, clipped by retention expiry and the billing period.
+func BuildBackupStorageGBMonthSample(in BackupStorageGBMonthSampleInput) (AttributedBackupSample, bool, error) {
+	if in.Status == BackupArtifactFailed {
+		return AttributedBackupSample{}, false, nil
+	}
+	if in.Status != "" && in.Status != BackupArtifactSucceeded {
+		return AttributedBackupSample{}, false, apierr.InvalidInput(apierr.FieldViolation{Field: "status", Reason: "must be succeeded or failed"})
+	}
+	start, end, ok, err := meteringWindowOverlap(in.WindowStart, in.WindowEnd, in.PeriodStart, in.PeriodEnd, in.CreatedAt, in.ExpiresAt)
+	if err != nil || !ok {
+		return AttributedBackupSample{}, false, err
+	}
+	if in.SizeBytes < 0 {
+		return AttributedBackupSample{}, false, apierr.InvalidInput(apierr.FieldViolation{Field: "size_bytes", Reason: "must be non-negative"})
+	}
+	quantity := bytesToGBMonth(in.SizeBytes, start, end, in.PeriodStart, in.PeriodEnd)
+	metadata := copyStringMap(in.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	metadata["period_start"] = in.PeriodStart.UTC().Format(time.RFC3339Nano)
+	metadata["period_end"] = in.PeriodEnd.UTC().Format(time.RFC3339Nano)
+	metadata["size_bytes"] = strconv.FormatInt(in.SizeBytes, 10)
+	metadata["backup_status"] = string(BackupArtifactSucceeded)
+	if in.ExpiresAt != nil {
+		metadata["retention_expires_at"] = in.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		metadata["retention_hours"] = strconv.FormatFloat(in.ExpiresAt.Sub(in.CreatedAt).Hours(), 'f', -1, 64)
+	}
+	source := strings.TrimSpace(in.Source)
+	if source == "" {
+		source = BackupUsageSource
+	}
+	return AttributedBackupSample{
+		BackupMetricSample: BackupMetricSample{
+			Name:         "backup_storage_gb_month",
+			BackupID:     strings.TrimSpace(in.BackupID),
+			Value:        quantity,
+			Unit:         "gb_month",
+			WindowStart:  start,
+			WindowEnd:    end,
+			Source:       source,
+			QueryVersion: strings.TrimSpace(in.QueryVersion),
+		},
+		OrganizationID: strings.TrimSpace(in.OrganizationID),
+		ProjectID:      strings.TrimSpace(in.ProjectID),
+		EnvironmentID:  strings.TrimSpace(in.EnvironmentID),
+		ServiceID:      strings.TrimSpace(in.ServiceID),
+		Metadata:       metadata,
 	}, true, nil
 }
 
@@ -171,7 +263,11 @@ func backupUsageIdempotencyKey(sample AttributedBackupSample) string {
 	if checksum == "" {
 		checksum = "-"
 	}
-	return fmt.Sprintf("%s:%s:%s:%s:%s:%s",
+	eventType := sample.EventType
+	if eventType == "" {
+		eventType = store.UsageEventTypeConsumed
+	}
+	key := fmt.Sprintf("%s:%s:%s:%s:%s:%s",
 		sample.Name,
 		sample.ServiceID,
 		backupID,
@@ -179,4 +275,8 @@ func backupUsageIdempotencyKey(sample AttributedBackupSample) string {
 		sample.WindowEnd.UTC().Format(time.RFC3339Nano),
 		checksum,
 	)
+	if eventType == store.UsageEventTypeAdjusted {
+		return "adjusted:" + key
+	}
+	return key
 }

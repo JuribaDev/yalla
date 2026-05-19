@@ -39,6 +39,28 @@ type AttributedStorageSample struct {
 	ProjectID      string
 	EnvironmentID  string
 	ServiceID      string
+	EventType      store.UsageEventType
+	Metadata       map[string]string
+}
+
+// StorageGBMonthSampleInput describes one bounded persistent-storage sample.
+// SizeBytes is converted to GB-months by prorating its overlap with the
+// billing period and the resource lifetime.
+type StorageGBMonthSampleInput struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	VolumeID       string
+	SizeBytes      int64
+	WindowStart    time.Time
+	WindowEnd      time.Time
+	PeriodStart    time.Time
+	PeriodEnd      time.Time
+	CreatedAt      time.Time
+	DeletedAt      *time.Time
+	Source         string
+	QueryVersion   string
 	Metadata       map[string]string
 }
 
@@ -124,6 +146,11 @@ func buildStorageUsageEventInput(sample AttributedStorageSample, requestID strin
 		metadata = map[string]string{}
 	}
 	metadata["metric_key"] = def.Key
+	eventType := sample.EventType
+	if eventType == "" {
+		eventType = store.UsageEventTypeConsumed
+	}
+	metadata["event_type"] = string(eventType)
 	metadata["window_start"] = sample.WindowStart.UTC().Format(time.RFC3339Nano)
 	metadata["window_end"] = sample.WindowEnd.UTC().Format(time.RFC3339Nano)
 	metadata["quantity"] = strconv.FormatFloat(sample.Value, 'f', -1, 64)
@@ -142,7 +169,7 @@ func buildStorageUsageEventInput(sample AttributedStorageSample, requestID strin
 		EnvironmentID:  sample.EnvironmentID,
 		ServiceID:      sample.ServiceID,
 		Resource:       resource,
-		EventType:      store.UsageEventTypeConsumed,
+		EventType:      eventType,
 		Quantity:       sample.Value,
 		Unit:           def.Unit,
 		Source:         def.Source,
@@ -150,6 +177,53 @@ func buildStorageUsageEventInput(sample AttributedStorageSample, requestID strin
 		RequestID:      strings.TrimSpace(requestID),
 		Metadata:       metadata,
 		OccurredAt:     sample.WindowEnd,
+	}, true, nil
+}
+
+// BuildStorageGBMonthSample converts a point-in-time storage-size observation
+// into a billing-period prorated GB-month sample. It returns ok=false when the
+// window has no overlap with the resource's lifetime in the target period.
+func BuildStorageGBMonthSample(in StorageGBMonthSampleInput) (AttributedStorageSample, bool, error) {
+	start, end, ok, err := meteringWindowOverlap(in.WindowStart, in.WindowEnd, in.PeriodStart, in.PeriodEnd, in.CreatedAt, in.DeletedAt)
+	if err != nil || !ok {
+		return AttributedStorageSample{}, false, err
+	}
+	if in.SizeBytes < 0 {
+		return AttributedStorageSample{}, false, apierr.InvalidInput(apierr.FieldViolation{Field: "size_bytes", Reason: "must be non-negative"})
+	}
+	quantity := bytesToGBMonth(in.SizeBytes, start, end, in.PeriodStart, in.PeriodEnd)
+	metadata := copyStringMap(in.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	metadata["period_start"] = in.PeriodStart.UTC().Format(time.RFC3339Nano)
+	metadata["period_end"] = in.PeriodEnd.UTC().Format(time.RFC3339Nano)
+	metadata["size_bytes"] = strconv.FormatInt(in.SizeBytes, 10)
+	metadata["resource_lifecycle"] = "active"
+	if in.DeletedAt != nil && in.DeletedAt.After(in.PeriodStart) && in.DeletedAt.Before(in.PeriodEnd) {
+		metadata["resource_lifecycle"] = "deleted_during_period"
+		metadata["deleted_at"] = in.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	source := strings.TrimSpace(in.Source)
+	if source == "" {
+		source = StorageUsageSource
+	}
+	return AttributedStorageSample{
+		StorageMetricSample: StorageMetricSample{
+			Name:         "storage_gb_month",
+			VolumeID:     strings.TrimSpace(in.VolumeID),
+			Value:        quantity,
+			Unit:         "gb_month",
+			WindowStart:  start,
+			WindowEnd:    end,
+			Source:       source,
+			QueryVersion: strings.TrimSpace(in.QueryVersion),
+		},
+		OrganizationID: strings.TrimSpace(in.OrganizationID),
+		ProjectID:      strings.TrimSpace(in.ProjectID),
+		EnvironmentID:  strings.TrimSpace(in.EnvironmentID),
+		ServiceID:      strings.TrimSpace(in.ServiceID),
+		Metadata:       metadata,
 	}, true, nil
 }
 
@@ -171,7 +245,11 @@ func storageUsageIdempotencyKey(sample AttributedStorageSample) string {
 	if checksum == "" {
 		checksum = "-"
 	}
-	return fmt.Sprintf("%s:%s:%s:%s:%s:%s",
+	eventType := sample.EventType
+	if eventType == "" {
+		eventType = store.UsageEventTypeConsumed
+	}
+	key := fmt.Sprintf("%s:%s:%s:%s:%s:%s",
 		sample.Name,
 		sample.ServiceID,
 		volumeID,
@@ -179,4 +257,65 @@ func storageUsageIdempotencyKey(sample AttributedStorageSample) string {
 		sample.WindowEnd.UTC().Format(time.RFC3339Nano),
 		checksum,
 	)
+	if eventType == store.UsageEventTypeAdjusted {
+		return "adjusted:" + key
+	}
+	return key
+}
+
+func meteringWindowOverlap(windowStart, windowEnd, periodStart, periodEnd, createdAt time.Time, endedAt *time.Time) (time.Time, time.Time, bool, error) {
+	windowStart = windowStart.UTC()
+	windowEnd = windowEnd.UTC()
+	periodStart = periodStart.UTC()
+	periodEnd = periodEnd.UTC()
+	createdAt = createdAt.UTC()
+	var violations []apierr.FieldViolation
+	if windowStart.IsZero() {
+		violations = append(violations, apierr.FieldViolation{Field: "window_start", Reason: "is required"})
+	}
+	if windowEnd.IsZero() || !windowEnd.After(windowStart) {
+		violations = append(violations, apierr.FieldViolation{Field: "window_end", Reason: "must be after window_start"})
+	}
+	if periodStart.IsZero() {
+		violations = append(violations, apierr.FieldViolation{Field: "period_start", Reason: "is required"})
+	}
+	if periodEnd.IsZero() || !periodEnd.After(periodStart) {
+		violations = append(violations, apierr.FieldViolation{Field: "period_end", Reason: "must be after period_start"})
+	}
+	if createdAt.IsZero() {
+		violations = append(violations, apierr.FieldViolation{Field: "created_at", Reason: "is required"})
+	}
+	if len(violations) > 0 {
+		return time.Time{}, time.Time{}, false, apierr.InvalidInput(violations...)
+	}
+	start := maxTime(maxTime(windowStart, periodStart), createdAt)
+	end := minTime(windowEnd, periodEnd)
+	if endedAt != nil {
+		ended := endedAt.UTC()
+		end = minTime(end, ended)
+	}
+	if !end.After(start) {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return start, end, true, nil
+}
+
+func bytesToGBMonth(sizeBytes int64, start, end, periodStart, periodEnd time.Time) float64 {
+	const bytesPerGiB = 1024 * 1024 * 1024
+	gb := float64(sizeBytes) / float64(bytesPerGiB)
+	return gb * end.Sub(start).Hours() / periodEnd.Sub(periodStart).Hours()
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

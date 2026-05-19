@@ -169,3 +169,110 @@ func TestBackupUsageEmitterKeepsStorageGBMonthTenantScoped(t *testing.T) {
 	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
 	assertUsageEventCount(t, db, bravo.OrganizationID, 0)
 }
+
+func TestBuildBackupStorageGBMonthSampleTracksRetentionAndSkipsFailures(t *testing.T) {
+	t.Parallel()
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	expiresAt := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+
+	sample, ok, err := metering.BuildBackupStorageGBMonthSample(metering.BackupStorageGBMonthSampleInput{
+		OrganizationID: "org_backup_retention",
+		ProjectID:      "proj_backup_retention",
+		EnvironmentID:  "env_backup_retention",
+		ServiceID:      "svc_backup_retention",
+		BackupID:       "backup_retained",
+		SizeBytes:      20 * 1024 * 1024 * 1024,
+		Status:         metering.BackupArtifactSucceeded,
+		WindowStart:    periodStart,
+		WindowEnd:      periodEnd,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		CreatedAt:      createdAt,
+		ExpiresAt:      &expiresAt,
+		Source:         "backup_metadata",
+	})
+	if err != nil {
+		t.Fatalf("BuildBackupStorageGBMonthSample: %v", err)
+	}
+	if !ok {
+		t.Fatal("BuildBackupStorageGBMonthSample ok=false, want retained backup usage")
+	}
+	want := 20 * expiresAt.Sub(createdAt).Hours() / periodEnd.Sub(periodStart).Hours()
+	if sample.Name != "backup_storage_gb_month" || sample.Unit != "gb_month" || sample.WindowStart != createdAt || sample.WindowEnd != expiresAt {
+		t.Fatalf("sample window/identity = %+v, want backup_storage_gb_month clipped to retention lifetime", sample)
+	}
+	if diff := sample.Value - want; diff < -0.0000001 || diff > 0.0000001 {
+		t.Fatalf("sample.Value = %.12f, want %.12f", sample.Value, want)
+	}
+	if sample.Metadata["retention_expires_at"] != expiresAt.Format(time.RFC3339Nano) || sample.Metadata["backup_status"] != "succeeded" {
+		t.Fatalf("metadata = %+v, want retention expiry and succeeded status", sample.Metadata)
+	}
+
+	failed, ok, err := metering.BuildBackupStorageGBMonthSample(metering.BackupStorageGBMonthSampleInput{
+		OrganizationID: "org_backup_retention",
+		ProjectID:      "proj_backup_retention",
+		EnvironmentID:  "env_backup_retention",
+		ServiceID:      "svc_backup_retention",
+		BackupID:       "backup_failed",
+		SizeBytes:      20 * 1024 * 1024 * 1024,
+		Status:         metering.BackupArtifactFailed,
+		WindowStart:    periodStart,
+		WindowEnd:      periodEnd,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		CreatedAt:      createdAt,
+		Source:         "backup_metadata",
+	})
+	if err != nil {
+		t.Fatalf("failed BuildBackupStorageGBMonthSample: %v", err)
+	}
+	if ok || failed.Value != 0 {
+		t.Fatalf("failed backup sample = %+v ok=%v, want skipped without billable usage", failed, ok)
+	}
+}
+
+func TestBackupUsageEmitterWritesAdjustmentEvents(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewBackupUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewBackupUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	result, err := emitter.Emit(ctx, metering.BackupUsageInput{
+		Samples: []metering.AttributedBackupSample{{
+			BackupMetricSample: metering.BackupMetricSample{
+				Name:              "backup_storage_gb_month",
+				BackupID:          "backup-correction",
+				Value:             -0.75,
+				Unit:              "gb_month",
+				WindowStart:       start,
+				WindowEnd:         start.Add(time.Hour),
+				RawSampleChecksum: "backup-correction-1",
+			},
+			OrganizationID: seed.OrganizationID,
+			ProjectID:      seed.ProjectID,
+			EnvironmentID:  seed.EnvironmentID,
+			ServiceID:      seed.ServiceID,
+			EventType:      store.UsageEventTypeAdjusted,
+			Metadata:       map[string]string{"reason": "backup_inventory_correction"},
+		}},
+		RequestID: "req_backup_adjustment",
+	})
+	if err != nil {
+		t.Fatalf("Emit adjustment: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %+v, want one adjustment", result.Events)
+	}
+	if result.Events[0].EventType != store.UsageEventTypeAdjusted || result.Events[0].Quantity != -0.75 {
+		t.Fatalf("event = %+v, want adjusted quantity -0.75", result.Events[0])
+	}
+}

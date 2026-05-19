@@ -38480,3 +38480,46 @@ change that widened Reason to caller-supplied data.
   - Use required compose variable interpolation for secret-shaped keys; literal defaults like `yalla` are treated as baked-secret regressions even for local operations artifacts.
   - Distroless API/worker containers should not rely on in-container curl/shell healthchecks; publish the API port and document external `/healthz` and `/readyz` probes instead.
 ---
+## 2026-05-19 13:57:02 +03 - BE-0575
+- What was implemented
+  - Completed storage and backup metering source behavior for billing-grade GB-month usage.
+  - Added `BuildStorageGBMonthSample` to prorate persistent-storage byte samples over the billing period and resource lifetime, including deleted-resource historical usage metadata.
+  - Added `BuildBackupStorageGBMonthSample` to prorate backup artefact size over the billing period and retention lifetime, skip failed backups, and preserve retention metadata.
+  - Extended storage and backup usage emitters to accept explicit `adjusted` usage events while preserving `consumed` as the default.
+  - Added focused tests for create/delete mid-period storage proration, backup retention expiry, backup failure skip, and adjustment event emission.
+- Files changed
+  - `internal/controlplane/metering/storage_usage.go`
+  - `internal/controlplane/metering/storage_usage_test.go`
+  - `internal/controlplane/metering/backup_usage.go`
+  - `internal/controlplane/metering/backup_usage_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/metering -run 'Test(BuildStorageGBMonthSample|StorageUsageEmitterWritesAdjustmentEvents|BuildBackupStorageGBMonthSample|BackupUsageEmitterWritesAdjustmentEvents)'`
+  - `go test ./internal/controlplane/metering`
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestMigrationsEmptyDB ./...`
+  - `go test -run TestMigrationsDowngradeSafety ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All executed checks passed.
+  - `goimports` was not installed.
+  - Direct `command -v staticcheck` / `command -v govulncheck` checks did not find standalone binaries, but the repo strict verification script ran its optional `staticcheck ./...` and `govulncheck ./...` gates successfully.
+- Remaining risks or follow-ups
+  - No public HTTP surface was added for this metering-source story; JSON envelope criteria remain not applicable until a future endpoint consumes these metering outputs.
+  - The source helpers currently accept already-attributed service scope; future live collectors should feed them only after source inventory has been resolved to Yalla service ownership.
+- **Learnings for future iterations:**
+  - Storage and backup GB-month metering should separate period math from usage_event emission: source helpers clip byte-size windows to period/resource/retention lifetimes, while emitters only write attributed billing-grade `usage_events`.
+  - Explicit correction events should set `EventType: store.UsageEventTypeAdjusted`; the default remains `consumed` for normal scanner samples.
+---

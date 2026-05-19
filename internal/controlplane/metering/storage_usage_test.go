@@ -169,3 +169,87 @@ func TestStorageUsageEmitterKeepsGBMonthTenantScoped(t *testing.T) {
 	assertUsageEventCount(t, db, alpha.OrganizationID, 0)
 	assertUsageEventCount(t, db, bravo.OrganizationID, 0)
 }
+
+func TestBuildStorageGBMonthSampleProratesCreateDeleteMidPeriod(t *testing.T) {
+	t.Parallel()
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	deletedAt := time.Date(2026, 5, 20, 18, 0, 0, 0, time.UTC)
+
+	sample, ok, err := metering.BuildStorageGBMonthSample(metering.StorageGBMonthSampleInput{
+		OrganizationID: "org_storage_proration",
+		ProjectID:      "proj_storage_proration",
+		EnvironmentID:  "env_storage_proration",
+		ServiceID:      "svc_storage_proration",
+		VolumeID:       "vol_prorated",
+		SizeBytes:      10 * 1024 * 1024 * 1024,
+		WindowStart:    periodStart,
+		WindowEnd:      periodEnd,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		CreatedAt:      createdAt,
+		DeletedAt:      &deletedAt,
+		Source:         "volume_scanner",
+	})
+	if err != nil {
+		t.Fatalf("BuildStorageGBMonthSample: %v", err)
+	}
+	if !ok {
+		t.Fatal("BuildStorageGBMonthSample ok=false, want billable historical usage")
+	}
+	want := 10 * deletedAt.Sub(createdAt).Hours() / periodEnd.Sub(periodStart).Hours()
+	if sample.Name != "storage_gb_month" || sample.Unit != "gb_month" || sample.WindowStart != createdAt || sample.WindowEnd != deletedAt {
+		t.Fatalf("sample window/identity = %+v, want storage_gb_month clipped to resource lifetime", sample)
+	}
+	if diff := sample.Value - want; diff < -0.0000001 || diff > 0.0000001 {
+		t.Fatalf("sample.Value = %.12f, want %.12f", sample.Value, want)
+	}
+	if sample.Metadata["resource_lifecycle"] != "deleted_during_period" {
+		t.Fatalf("resource_lifecycle metadata = %q, want deleted_during_period", sample.Metadata["resource_lifecycle"])
+	}
+}
+
+func TestStorageUsageEmitterWritesAdjustmentEvents(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewStorageUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewStorageUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	result, err := emitter.Emit(ctx, metering.StorageUsageInput{
+		Samples: []metering.AttributedStorageSample{{
+			StorageMetricSample: metering.StorageMetricSample{
+				Name:              "storage_gb_month",
+				VolumeID:          "vol-correction",
+				Value:             -1.25,
+				Unit:              "gb_month",
+				WindowStart:       start,
+				WindowEnd:         start.Add(time.Hour),
+				RawSampleChecksum: "storage-correction-1",
+			},
+			OrganizationID: seed.OrganizationID,
+			ProjectID:      seed.ProjectID,
+			EnvironmentID:  seed.EnvironmentID,
+			ServiceID:      seed.ServiceID,
+			EventType:      store.UsageEventTypeAdjusted,
+			Metadata:       map[string]string{"reason": "volume_rescan_correction"},
+		}},
+		RequestID: "req_storage_adjustment",
+	})
+	if err != nil {
+		t.Fatalf("Emit adjustment: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %+v, want one adjustment", result.Events)
+	}
+	if result.Events[0].EventType != store.UsageEventTypeAdjusted || result.Events[0].Quantity != -1.25 {
+		t.Fatalf("event = %+v, want adjusted quantity -1.25", result.Events[0])
+	}
+}
