@@ -250,6 +250,17 @@ Postgres persistence for control-plane source-of-truth state.
   `changed_fields`; secret-shaped keys are replaced with the canonical
   redaction sentinel before persistence.
 
+## Backoffice metering sources (`0063_admin_metering_sources`, `metering_source.go`)
+
+- Metering source credentials are write-only. Persist only the sealed
+  `(credential_provider, credential_key_id, credential_ciphertext)` tuple,
+  return only `CredentialSet`/`credential_set` in public projections, and keep
+  submitted credential values out of audit metadata.
+- Use `AdminMeteringSourceService` for source mutations so the actor
+  organization check, repository upsert, credential sealing, and audit append
+  happen as one audited unit of work. Runtime readers should use
+  `MeteringSourceRepository.ListRuntimeEnabled` for deterministic reload input.
+
 ## Usage counters (`0052_usage_counters`)
 
 - `usage_counters` are billing-period aggregates derived from append-only

@@ -211,6 +211,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminConfigDryRunner AdminConfigDryRunner
 	var adminPlanManager AdminPlanManager
 	var adminSubscriptionManager AdminSubscriptionManager
+	var adminMeteringSourceManager AdminMeteringSourceManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -247,6 +248,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminSubscriptionManager); ok {
 			adminSubscriptionManager = v
+		}
+		if v, ok := opt.(AdminMeteringSourceManager); ok {
+			adminMeteringSourceManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -603,6 +607,36 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			},
 			handler:  upsertAdminSubscriptionEntitlementHandler(adminSubscriptionManager),
 			resolver: organizationIDResolver,
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/metering/sources/{source_key}",
+				OperationID:        "upsertAdminMeteringSource",
+				Summary:            "Configure a metering source",
+				Description:        "Creates or replaces one backoffice metering source configuration for Traefik, Prometheus, Dokploy, container, storage, or backup metering. Credentials are write-only: submitted credential_value is sealed at rest and never returned in the response. Action admin.metering.manage is support-only until finer backoffice metering roles land.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "source_key", Description: "Stable metering source key."}},
+				SuccessDescription: "The metering source was persisted and audited.",
+			},
+			handler: upsertAdminMeteringSourceHandler(adminMeteringSourceManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/metering/sources/{source_key}/test",
+				OperationID:        "testAdminMeteringSource",
+				Summary:            "Test a metering source",
+				Description:        "Performs a side-effect-free reachability check against the configured metering source endpoint and returns a stable success or failure report without exposing credentials.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "source_key", Description: "Stable metering source key."}},
+				SuccessDescription: "The source connection test report.",
+			},
+			handler: testAdminMeteringSourceHandler(adminMeteringSourceManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

@@ -101,6 +101,7 @@ const (
 	ActionAdminReconcile      Action = "admin.reconcile"
 	ActionAdminConfigValidate Action = "admin.config.validate"
 	ActionAdminPlansManage    Action = "admin.plans.manage"
+	ActionAdminMeteringManage Action = "admin.metering.manage"
 	ActionAdminBreakGlass     Action = "admin.break_glass"
 )
 
@@ -172,6 +173,7 @@ var allActions = []Action{
 	ActionAdminReconcile,
 	ActionAdminConfigValidate,
 	ActionAdminPlansManage,
+	ActionAdminMeteringManage,
 	ActionAdminBreakGlass,
 }
 

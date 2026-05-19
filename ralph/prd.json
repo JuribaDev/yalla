@@ -12404,8 +12404,8 @@
       ],
       "type": "backoffice-metering-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-only backoffice metering source APIs: PUT /v1/admin/metering/sources/{source_key} and POST /v1/admin/metering/sources/{source_key}/test. Added admin_metering_sources persistence with encrypted write-only credentials, runtime-enabled source listing, audited Store.Write mutations, stable response projections, OpenAPI/action wiring, and API binary wiring. Tests cover HTTP create/update redaction, authn/authz, invalid/not-found/conflict paths, test-connection reports, encrypted-at-rest storage, audit redaction, disable behavior, and runtime reload listing."
     },
     {
       "id": "BE-0606",

@@ -133,6 +133,7 @@ var defaultActionCatalog = map[Action]Capability{
 	ActionAdminReconcile:      CapSupport,
 	ActionAdminConfigValidate: CapSupport,
 	ActionAdminPlansManage:    CapSupport,
+	ActionAdminMeteringManage: CapSupport,
 	ActionAdminBreakGlass:     CapSupport,
 }
 
