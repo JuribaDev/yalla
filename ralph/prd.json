@@ -8718,7 +8718,7 @@
       ],
       "type": "operations-artifact",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Operations artifact: docker-compose local stack."
     },
     {

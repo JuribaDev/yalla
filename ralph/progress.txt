@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Local Docker Compose is both a Postgres integration-test dependency stack and an opt-in `control-plane` operations profile: keep `postgres` profile-free with a pinned major image and healthcheck; put `yalla-api` and `yalla-worker` behind `profiles: [control-plane]`; build them from `Dockerfile` / `Dockerfile.worker`; require secret-shaped environment values through `${VAR:?message}` interpolation; wait on `postgres.condition=service_healthy`; harden API/worker services with `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `/tmp` tmpfs, explicit JSON logging, and `restart: unless-stopped`; publish only the API's `8080:8080` for `/healthz` and `/readyz`.
 - Production worker container artifacts use a dedicated `Dockerfile.worker` rather than overloading the API image: keep the same distroless/nonroot/no-secrets hardening, build `./cmd/yalla-worker`, copy `/out/yalla-worker` to `/usr/local/bin/yalla-worker`, keep the entrypoint on that binary, document that the worker has no HTTP listener, and pin the contract through `internal/release/container_hardening_static_test.go` plus `SECURITY.md`.
 - Container resource metering uses the same source/attribution/emission split as Traefik and storage metrics: source adapters normalize bounded windows into `ContainerMetricSample` values, `StoreContainerResolver` requires a live service-level `dokploy_refs` mapping before attribution, ambiguous or deleted services are quarantined before billing, and `ContainerUsageEmitter` writes only fully scoped billing-grade samples to append-only `usage_events`.
 - Dokploy monitoring source adapters are operational inputs, not billing oracles: call typed Dokploy client methods (`application.readAppMonitoring`, `user.getContainerMetrics`, `server.getServerMetrics`, `user.getServerMetrics`), normalize numeric leaves into `source=dokploy` samples with explicit `billing_grade`, keep query version/checksum metadata, and degrade optional unavailable monitoring sources by returning stable error-code entries while relying on Dokploy dependency metrics for telemetry. Monitoring endpoints that require node URL/token query params must pass a safe endpoint template into client logs/errors/metrics, and `dokployfake.RecordedRequest.RawQuery` must redact secret-shaped query keys.
@@ -38440,4 +38441,42 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Worker containers should not expose or fake an HTTP readiness endpoint; use process liveness, non-zero exit restarts, durable queue state, dead-letter alerts, worker metrics, and structured `service=yalla-worker` logs.
   - Release static tests can reuse the existing Dockerfile parser for additional image artifacts by adding path-specific loaders and small matcher functions for package/artifact/entrypoint pins.
+---
+## 2026-05-19 13:49 +03 - BE-0411
+- What was implemented
+  - Expanded `docker-compose.yml` from a Postgres-only dependency stack into a local operations stack while preserving the existing Postgres-only test workflow.
+  - Added opt-in `control-plane` profile services for `yalla-api` and `yalla-worker` that build from the production Dockerfiles, wait for healthy Postgres, require runtime secret interpolation, and run with least-privilege compose settings.
+  - Added static release tests for API/worker compose service presence, API local health endpoint exposure, no baked secret-shaped compose env values, and least-privilege runtime posture, with synthetic analyzer regression fixtures.
+  - Documented the compose operations contract in `SECURITY.md` and `internal/release/AGENTS.md`.
+  - Marked BE-0411 passing in `ralph/prd.json`.
+- Files changed
+  - `docker-compose.yml`
+  - `internal/release/container_hardening_static_test.go`
+  - `internal/release/AGENTS.md`
+  - `SECURITY.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - RED: `go test ./internal/release -run 'TestDockerCompose(DefinesControlPlaneServices|APIExposesHealthEndpoints|DoesNotBakeSecrets|ControlPlaneLeastPrivilege)'` failed against the old compose file because API/worker services were missing and Postgres used a literal password.
+  - GREEN/focused: `go test ./internal/release -run 'TestDockerCompose|TestSecurityPolicyDocumentsContainerHardening|TestContainerHardeningStaticAnalyzerDetectsRegressions'` passed.
+  - `gofmt -w .`
+  - `goimports -w .` attempted but `goimports` is not installed.
+  - `go mod tidy`
+  - `docker compose --profile control-plane config --services` with non-production placeholder environment values returned `postgres`, `yalla-api`, and `yalla-worker`.
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release` also ran `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results
+  - Required formatting, module cleanup, full unit/integration test suite, race detector, and vet all passed.
+  - `golangci-lint` passed with 0 issues; `govulncheck` found no vulnerabilities; `staticcheck` passed via the pre-commit verifier.
+  - No live Dokploy server was required; this story only adds a compose artifact and static release tests.
+- Remaining risks or follow-ups
+  - The compose stack validates and references the API/worker services, but the full `docker compose up --build` smoke was not run to avoid starting local services in this non-interactive loop.
+  - Operators still need to provide real local values for `YALLA_POSTGRES_PASSWORD`, `YALLA_SIGNING_KEYS`, `YALLA_SECRET_KEYS`, `YALLA_DOKPLOY_BASE_URL`, and `YALLA_DOKPLOY_TOKEN` before using the `control-plane` profile.
+- **Learnings for future iterations:**
+  - Keep the Postgres integration-test workflow profile-free so existing `docker compose up -d postgres` usage remains cheap and does not require Dokploy configuration.
+  - Use required compose variable interpolation for secret-shaped keys; literal defaults like `yalla` are treated as baked-secret regressions even for local operations artifacts.
+  - Distroless API/worker containers should not rely on in-container curl/shell healthchecks; publish the API port and document external `/healthz` and `/readyz` probes instead.
 ---

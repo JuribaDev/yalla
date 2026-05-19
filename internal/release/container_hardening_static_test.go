@@ -602,6 +602,41 @@ func TestDockerComposePostgresHasHealthcheck(t *testing.T) {
 	}
 }
 
+func TestDockerComposeDefinesControlPlaneServices(t *testing.T) {
+	t.Parallel()
+	services := loadComposeServices(t)
+	if err := matchComposeControlPlaneService(services, "yalla-api", "Dockerfile", "/usr/local/bin/yalla-api"); err != nil {
+		t.Fatalf("%s: %v", dockerComposePath, err)
+	}
+	if err := matchComposeControlPlaneService(services, "yalla-worker", "Dockerfile.worker", "/usr/local/bin/yalla-worker"); err != nil {
+		t.Fatalf("%s: %v", dockerComposePath, err)
+	}
+}
+
+func TestDockerComposeAPIExposesHealthEndpoints(t *testing.T) {
+	t.Parallel()
+	if err := matchComposeAPIHealthContract(loadComposeServices(t)); err != nil {
+		t.Fatalf("%s: %v", dockerComposePath, err)
+	}
+}
+
+func TestDockerComposeDoesNotBakeSecrets(t *testing.T) {
+	t.Parallel()
+	if err := matchComposeNoBakedSecrets(loadComposeServices(t)); err != nil {
+		t.Fatalf("%s: %v", dockerComposePath, err)
+	}
+}
+
+func TestDockerComposeControlPlaneLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	services := loadComposeServices(t)
+	for _, name := range []string{"yalla-api", "yalla-worker"} {
+		if err := matchComposeLeastPrivilege(services, name); err != nil {
+			t.Fatalf("%s: %v", dockerComposePath, err)
+		}
+	}
+}
+
 // TestSecurityPolicyDocumentsContainerHardening asserts the public
 // SECURITY.md document carries the container-hardening section and
 // the corresponding verification-gate row. A regression that drops
@@ -626,6 +661,10 @@ func TestSecurityPolicyDocumentsContainerHardening(t *testing.T) {
 		"CGO_ENABLED=0",
 		"-trimpath",
 		"Container image hardening",
+		"docker-compose.yml",
+		"control-plane",
+		"no-new-privileges:true",
+		"GET /readyz",
 	}
 	for _, want := range required {
 		if !strings.Contains(src, want) {
@@ -1017,6 +1056,201 @@ func TestContainerHardeningStaticAnalyzerDetectsRegressions(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("control-plane service matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name       string
+			services   map[string]composeService
+			service    string
+			dockerfile string
+			entrypoint string
+			wantErr    bool
+		}{
+			{
+				name:       "canonical: API service references API Dockerfile",
+				services:   minimalCanonicalComposeServices(),
+				service:    "yalla-api",
+				dockerfile: "Dockerfile",
+				entrypoint: "/usr/local/bin/yalla-api",
+				wantErr:    false,
+			},
+			{
+				name:       "canonical: worker service references worker Dockerfile",
+				services:   minimalCanonicalComposeServices(),
+				service:    "yalla-worker",
+				dockerfile: "Dockerfile.worker",
+				entrypoint: "/usr/local/bin/yalla-worker",
+				wantErr:    false,
+			},
+			{
+				name:       "regression: service missing",
+				services:   map[string]composeService{"postgres": {Image: "postgres:16"}},
+				service:    "yalla-api",
+				dockerfile: "Dockerfile",
+				entrypoint: "/usr/local/bin/yalla-api",
+				wantErr:    true,
+			},
+			{
+				name: "regression: wrong worker Dockerfile",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-worker", func(s composeService) composeService {
+					s.Build.Dockerfile = "Dockerfile"
+					return s
+				}),
+				service:    "yalla-worker",
+				dockerfile: "Dockerfile.worker",
+				entrypoint: "/usr/local/bin/yalla-worker",
+				wantErr:    true,
+			},
+			{
+				name: "regression: command overrides entrypoint",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.Command = []string{"sh", "-c", "sleep infinity"}
+					return s
+				}),
+				service:    "yalla-api",
+				dockerfile: "Dockerfile",
+				entrypoint: "/usr/local/bin/yalla-api",
+				wantErr:    true,
+			},
+			{
+				name: "regression: does not wait for healthy Postgres",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.DependsOn = map[string]interface{}{"postgres": map[string]interface{}{"condition": "service_started"}}
+					return s
+				}),
+				service:    "yalla-api",
+				dockerfile: "Dockerfile",
+				entrypoint: "/usr/local/bin/yalla-api",
+				wantErr:    true,
+			},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				err := matchComposeControlPlaneService(tc.services, tc.service, tc.dockerfile, tc.entrypoint)
+				assertWantErr(t, tc.name, err, tc.wantErr)
+			})
+		}
+	})
+
+	t.Run("compose API health contract matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []analyzerComposeCase{
+			{
+				name:     "canonical: API binds and publishes local health port",
+				services: minimalCanonicalComposeServices(),
+				wantErr:  false,
+			},
+			{
+				name: "regression: port not published",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.Ports = nil
+					return s
+				}),
+				wantErr: true,
+			},
+			{
+				name: "regression: API binds loopback inside container",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.Environment["YALLA_API_ADDR"] = "127.0.0.1:8080"
+					return s
+				}),
+				wantErr: true,
+			},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				err := matchComposeAPIHealthContract(tc.services)
+				assertWantErr(t, tc.name, err, tc.wantErr)
+			})
+		}
+	})
+
+	t.Run("compose no-baked-secrets matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []analyzerComposeCase{
+			{
+				name:     "canonical: secret-looking values use interpolation",
+				services: minimalCanonicalComposeServices(),
+				wantErr:  false,
+			},
+			{
+				name: "regression: Postgres password is literal",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "postgres", func(s composeService) composeService {
+					s.Environment["POSTGRES_PASSWORD"] = "yalla"
+					return s
+				}),
+				wantErr: true,
+			},
+			{
+				name: "regression: Dokploy token is literal",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-worker", func(s composeService) composeService {
+					s.Environment["YALLA_DOKPLOY_TOKEN"] = "token-plaintext"
+					return s
+				}),
+				wantErr: true,
+			},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				err := matchComposeNoBakedSecrets(tc.services)
+				assertWantErr(t, tc.name, err, tc.wantErr)
+			})
+		}
+	})
+
+	t.Run("compose least-privilege matcher", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name     string
+			services map[string]composeService
+			wantErr  bool
+		}{
+			{
+				name:     "canonical: read-only root with dropped caps",
+				services: minimalCanonicalComposeServices(),
+				wantErr:  false,
+			},
+			{
+				name: "regression: writable root filesystem",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.ReadOnly = false
+					return s
+				}),
+				wantErr: true,
+			},
+			{
+				name: "regression: capabilities not dropped",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.CapDrop = nil
+					return s
+				}),
+				wantErr: true,
+			},
+			{
+				name: "regression: no-new-privileges omitted",
+				services: mutateComposeService(minimalCanonicalComposeServices(), "yalla-api", func(s composeService) composeService {
+					s.SecurityOpt = nil
+					return s
+				}),
+				wantErr: true,
+			},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				err := matchComposeLeastPrivilege(tc.services, "yalla-api")
+				assertWantErr(t, tc.name, err, tc.wantErr)
+			})
+		}
+	})
 }
 
 // analyzerCase is a Dockerfile fixture for the self-check loop.
@@ -1092,6 +1326,118 @@ func minimalCanonicalWorkerDockerfile() string {
 		"ENTRYPOINT [\"/usr/local/bin/yalla-worker\"]",
 		"",
 	}, "\n")
+}
+
+func minimalCanonicalComposeServices() map[string]composeService {
+	env := map[string]string{
+		"YALLA_PROFILE":          "local",
+		"YALLA_API_ADDR":         "0.0.0.0:8080",
+		"YALLA_PUBLIC_URL":       "http://localhost:8080",
+		"YALLA_DATABASE_URL":     "postgres://yalla:${YALLA_POSTGRES_PASSWORD:?set}@postgres:5432/yalla?sslmode=disable",
+		"YALLA_SIGNING_KEYS":     "${YALLA_SIGNING_KEYS:?set}",
+		"YALLA_SECRET_KEYS":      "${YALLA_SECRET_KEYS:?set}",
+		"YALLA_DOKPLOY_BASE_URL": "${YALLA_DOKPLOY_BASE_URL:?set}",
+		"YALLA_DOKPLOY_TOKEN":    "${YALLA_DOKPLOY_TOKEN:?set}",
+	}
+	apiEnv := map[string]string{}
+	for k, v := range env {
+		apiEnv[k] = v
+	}
+	workerEnv := map[string]string{}
+	for k, v := range env {
+		workerEnv[k] = v
+	}
+	delete(workerEnv, "YALLA_API_ADDR")
+	delete(workerEnv, "YALLA_PUBLIC_URL")
+	return map[string]composeService{
+		"postgres": {
+			Image: "postgres:16",
+			Environment: map[string]string{
+				"POSTGRES_USER":     "yalla",
+				"POSTGRES_PASSWORD": "${YALLA_POSTGRES_PASSWORD:?set}",
+				"POSTGRES_DB":       "yalla",
+			},
+			Healthcheck: map[string]interface{}{"test": []interface{}{"CMD-SHELL", "pg_isready"}},
+		},
+		"yalla-api": {
+			Build:       composeBuild{Context: ".", Dockerfile: "Dockerfile"},
+			Environment: apiEnv,
+			DependsOn:   map[string]interface{}{"postgres": map[string]interface{}{"condition": "service_healthy"}},
+			Ports:       []string{"8080:8080"},
+			Profiles:    []string{"control-plane"},
+			ReadOnly:    true,
+			CapDrop:     []string{"ALL"},
+			SecurityOpt: []string{"no-new-privileges:true"},
+			Tmpfs:       []string{"/tmp"},
+			Restart:     "unless-stopped",
+			Logging:     map[string]interface{}{"driver": "json-file"},
+		},
+		"yalla-worker": {
+			Build:       composeBuild{Context: ".", Dockerfile: "Dockerfile.worker"},
+			Environment: workerEnv,
+			DependsOn:   map[string]interface{}{"postgres": map[string]interface{}{"condition": "service_healthy"}},
+			Profiles:    []string{"control-plane"},
+			ReadOnly:    true,
+			CapDrop:     []string{"ALL"},
+			SecurityOpt: []string{"no-new-privileges:true"},
+			Tmpfs:       []string{"/tmp"},
+			Restart:     "unless-stopped",
+			Logging:     map[string]interface{}{"driver": "json-file"},
+		},
+	}
+}
+
+func mutateComposeService(services map[string]composeService, name string, mutate func(composeService) composeService) map[string]composeService {
+	out := make(map[string]composeService, len(services))
+	for k, v := range services {
+		out[k] = cloneComposeService(v)
+	}
+	out[name] = mutate(out[name])
+	return out
+}
+
+func cloneComposeService(s composeService) composeService {
+	s.Environment = cloneStringMap(s.Environment)
+	s.DependsOn = cloneInterfaceMap(s.DependsOn)
+	s.Ports = append([]string(nil), s.Ports...)
+	s.Profiles = append([]string(nil), s.Profiles...)
+	s.CapDrop = append([]string(nil), s.CapDrop...)
+	s.SecurityOpt = append([]string(nil), s.SecurityOpt...)
+	s.Tmpfs = append([]string(nil), s.Tmpfs...)
+	s.Command = append([]string(nil), s.Command...)
+	if s.Healthcheck != nil {
+		s.Healthcheck = cloneInterfaceMap(s.Healthcheck)
+	}
+	if s.Logging != nil {
+		s.Logging = cloneInterfaceMap(s.Logging)
+	}
+	return s
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneInterfaceMap(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		if nested, ok := v.(map[string]interface{}); ok {
+			out[k] = cloneInterfaceMap(nested)
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // loadDockerfile reads and parses the production Dockerfile. A
@@ -1377,7 +1723,24 @@ type composeFile struct {
 // require a parser change here.
 type composeService struct {
 	Image       string                 `yaml:"image"`
+	Build       composeBuild           `yaml:"build"`
+	Command     []string               `yaml:"command"`
+	Environment map[string]string      `yaml:"environment"`
+	DependsOn   map[string]interface{} `yaml:"depends_on"`
+	Ports       []string               `yaml:"ports"`
+	Profiles    []string               `yaml:"profiles"`
+	ReadOnly    bool                   `yaml:"read_only"`
+	CapDrop     []string               `yaml:"cap_drop"`
+	SecurityOpt []string               `yaml:"security_opt"`
+	Tmpfs       []string               `yaml:"tmpfs"`
 	Healthcheck map[string]interface{} `yaml:"healthcheck"`
+	Restart     string                 `yaml:"restart"`
+	Logging     map[string]interface{} `yaml:"logging"`
+}
+
+type composeBuild struct {
+	Context    string `yaml:"context"`
+	Dockerfile string `yaml:"dockerfile"`
 }
 
 // loadComposeServices reads and decodes `docker-compose.yml` and
@@ -1431,6 +1794,120 @@ func matchPostgresHasHealthcheck(services map[string]composeService) error {
 		return fmt.Errorf("services.postgres.healthcheck is missing or empty — the integration-test harness has no deterministic readiness gate")
 	}
 	return nil
+}
+
+func matchComposeControlPlaneService(services map[string]composeService, name, dockerfile, entrypoint string) error {
+	svc, ok := services[name]
+	if !ok {
+		return fmt.Errorf("services.%s is missing — the local stack must include the backend service", name)
+	}
+	if svc.Build.Context != "." {
+		return fmt.Errorf("services.%s.build.context is %q — must be %q so the repo root Docker build context is used", name, svc.Build.Context, ".")
+	}
+	if svc.Build.Dockerfile != dockerfile {
+		return fmt.Errorf("services.%s.build.dockerfile is %q — must reference %s", name, svc.Build.Dockerfile, dockerfile)
+	}
+	if len(svc.Command) != 0 {
+		return fmt.Errorf("services.%s.command overrides the image entrypoint — %s must remain the runtime binary", name, entrypoint)
+	}
+	if err := matchDependsOnHealthyPostgres(name, svc.DependsOn); err != nil {
+		return err
+	}
+	if svc.Restart != "unless-stopped" {
+		return fmt.Errorf("services.%s.restart is %q — local operations stack should restart unless stopped", name, svc.Restart)
+	}
+	if !stringSliceContains(svc.Profiles, "control-plane") {
+		return fmt.Errorf("services.%s.profiles must include control-plane so Postgres-only test workflows remain available", name)
+	}
+	if _, ok := svc.Logging["driver"]; !ok {
+		return fmt.Errorf("services.%s.logging.driver is missing — structured stdout logs must have an explicit compose logging contract", name)
+	}
+	return nil
+}
+
+func matchComposeAPIHealthContract(services map[string]composeService) error {
+	svc, ok := services["yalla-api"]
+	if !ok {
+		return fmt.Errorf("services.yalla-api is missing — the local stack cannot expose API health endpoints")
+	}
+	if !stringSliceContains(svc.Ports, "8080:8080") {
+		return fmt.Errorf("services.yalla-api.ports must publish 8080:8080 so operators can probe /healthz and /readyz")
+	}
+	if got := svc.Environment["YALLA_API_ADDR"]; got != "0.0.0.0:8080" {
+		return fmt.Errorf("services.yalla-api.environment.YALLA_API_ADDR is %q — must bind 0.0.0.0:8080 inside the container", got)
+	}
+	if got := svc.Environment["YALLA_PUBLIC_URL"]; got != "http://localhost:8080" {
+		return fmt.Errorf("services.yalla-api.environment.YALLA_PUBLIC_URL is %q — must document the local probe URL", got)
+	}
+	return nil
+}
+
+func matchComposeNoBakedSecrets(services map[string]composeService) error {
+	for name, svc := range services {
+		for key, value := range svc.Environment {
+			if !secretShapedKey(key) {
+				continue
+			}
+			if !strings.HasPrefix(value, "${") {
+				return fmt.Errorf("services.%s.environment.%s bakes a secret-looking value — use required variable interpolation instead", name, key)
+			}
+		}
+	}
+	return nil
+}
+
+func matchComposeLeastPrivilege(services map[string]composeService, name string) error {
+	svc, ok := services[name]
+	if !ok {
+		return fmt.Errorf("services.%s is missing — cannot assert least-privilege runtime posture", name)
+	}
+	if !svc.ReadOnly {
+		return fmt.Errorf("services.%s.read_only must be true", name)
+	}
+	if !stringSliceContains(svc.CapDrop, "ALL") {
+		return fmt.Errorf("services.%s.cap_drop must include ALL", name)
+	}
+	if !stringSliceContains(svc.SecurityOpt, "no-new-privileges:true") {
+		return fmt.Errorf("services.%s.security_opt must include no-new-privileges:true", name)
+	}
+	if !stringSliceContains(svc.Tmpfs, "/tmp") {
+		return fmt.Errorf("services.%s.tmpfs must include /tmp so the read-only root filesystem remains usable", name)
+	}
+	return nil
+}
+
+func matchDependsOnHealthyPostgres(name string, dependsOn map[string]interface{}) error {
+	raw, ok := dependsOn["postgres"]
+	if !ok {
+		return fmt.Errorf("services.%s.depends_on.postgres is missing — backend services must wait for Postgres readiness", name)
+	}
+	dep, ok := raw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("services.%s.depends_on.postgres must be an object with condition: service_healthy", name)
+	}
+	if got, ok := dep["condition"].(string); !ok || got != "service_healthy" {
+		return fmt.Errorf("services.%s.depends_on.postgres.condition must be service_healthy", name)
+	}
+	return nil
+}
+
+func secretShapedKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, fragment := range forbiddenSecretEnvFragments {
+		if strings.Contains(upper, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // stageLabelForError returns a short human-readable identifier for a

@@ -77,6 +77,20 @@ posture across three surfaces:
 - **`docker-compose.yml`** — the matchers assert the `postgres`
   service's `image` matches `postgres:<digits>` (never `postgres` and
   never `postgres:latest`) and a non-empty `healthcheck` is declared.
+  The same file is now the local operations stack: keep `postgres`
+  available without profiles for integration tests, and put `yalla-api`
+  plus `yalla-worker` behind the `control-plane` profile. The API must
+  build from `Dockerfile`, publish `8080:8080`, bind
+  `YALLA_API_ADDR=0.0.0.0:8080`, and document local `/healthz` /
+  `/readyz` probing through `YALLA_PUBLIC_URL=http://localhost:8080`.
+  The worker must build from `Dockerfile.worker` and must not publish a
+  port. Both control-plane services must wait on
+  `postgres.condition=service_healthy`, use `restart: unless-stopped`,
+  set an explicit logging driver, run with `read_only: true`,
+  `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, and a
+  `/tmp` tmpfs. Any secret-shaped environment value in compose must use
+  required variable interpolation (`${VAR:?message}`), never a literal
+  default.
 - **`SECURITY.md`** — the test pins the verification-gates table row
   AND the dedicated `## Container Image Hardening` section so the
   public security posture stays in lockstep with the Dockerfile.

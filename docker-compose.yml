@@ -1,24 +1,40 @@
-# Local dependency stack for the Yalla control-plane backend.
+# Local operations stack for the Yalla control-plane backend.
 #
 # Postgres is the source of truth for tenants, users, API keys, ownership,
 # limits, desired state, audit events, and provisioning job state.
 #
-# Usage:
+# Postgres-only integration test usage:
+#   export YALLA_POSTGRES_PASSWORD="$(openssl rand -base64 24)"
 #   docker compose up -d postgres
-#   export YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+#   export YALLA_TEST_DATABASE_URL="postgres://yalla:${YALLA_POSTGRES_PASSWORD}@127.0.0.1:5432/yalla"
 #   go test ./...
+#
+# Full local control-plane usage:
+#   export YALLA_POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+#   export YALLA_SIGNING_KEYS="$(openssl rand -base64 32)"
+#   export YALLA_SECRET_KEYS="$(openssl rand -hex 32)"
+#   export YALLA_DOKPLOY_BASE_URL="https://dokploy.internal.example"
+#   export YALLA_DOKPLOY_TOKEN="set-this-in-your-shell"
+#   docker compose --profile control-plane up --build
+#   curl -fsS http://localhost:8080/healthz
+#   curl -fsS http://localhost:8080/readyz
+#   docker compose logs -f yalla-api yalla-worker
 #
 # The integration tests connect with YALLA_TEST_DATABASE_URL, create an
 # isolated throwaway database per test, and drop it on cleanup — so the
 # user must be able to CREATE DATABASE. The default superuser below has it.
 # Tests skip cleanly when YALLA_TEST_DATABASE_URL is unset.
+#
+# Secrets are never committed in this file. Secret-shaped environment values
+# use required variable interpolation so Docker Compose fails before creating
+# a container if the operator forgot to provide them.
 
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: yalla
-      POSTGRES_PASSWORD: yalla
+      POSTGRES_PASSWORD: "${YALLA_POSTGRES_PASSWORD:?set YALLA_POSTGRES_PASSWORD in your shell}"
       POSTGRES_DB: yalla
     ports:
       - "5432:5432"
@@ -27,8 +43,83 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+    restart: unless-stopped
     volumes:
       - yalla_pgdata:/var/lib/postgresql/data
+    networks:
+      - yalla-control-plane
+
+  yalla-api:
+    profiles:
+      - control-plane
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      YALLA_PROFILE: local
+      YALLA_API_ADDR: "0.0.0.0:8080"
+      YALLA_PUBLIC_URL: "http://localhost:8080"
+      YALLA_DATABASE_URL: "postgres://yalla:${YALLA_POSTGRES_PASSWORD:?set YALLA_POSTGRES_PASSWORD in your shell}@postgres:5432/yalla?sslmode=disable"
+      YALLA_SIGNING_KEYS: "${YALLA_SIGNING_KEYS:?set YALLA_SIGNING_KEYS in your shell}"
+      YALLA_SECRET_KEYS: "${YALLA_SECRET_KEYS:?set YALLA_SECRET_KEYS in your shell}"
+      YALLA_DOKPLOY_BASE_URL: "${YALLA_DOKPLOY_BASE_URL:?set YALLA_DOKPLOY_BASE_URL in your shell}"
+      YALLA_DOKPLOY_TOKEN: "${YALLA_DOKPLOY_TOKEN:?set YALLA_DOKPLOY_TOKEN in your shell}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - yalla-control-plane
+
+  yalla-worker:
+    profiles:
+      - control-plane
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      YALLA_PROFILE: local
+      YALLA_DATABASE_URL: "postgres://yalla:${YALLA_POSTGRES_PASSWORD:?set YALLA_POSTGRES_PASSWORD in your shell}@postgres:5432/yalla?sslmode=disable"
+      YALLA_SIGNING_KEYS: "${YALLA_SIGNING_KEYS:?set YALLA_SIGNING_KEYS in your shell}"
+      YALLA_SECRET_KEYS: "${YALLA_SECRET_KEYS:?set YALLA_SECRET_KEYS in your shell}"
+      YALLA_DOKPLOY_BASE_URL: "${YALLA_DOKPLOY_BASE_URL:?set YALLA_DOKPLOY_BASE_URL in your shell}"
+      YALLA_DOKPLOY_TOKEN: "${YALLA_DOKPLOY_TOKEN:?set YALLA_DOKPLOY_TOKEN in your shell}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - yalla-control-plane
 
 volumes:
   yalla_pgdata:
+
+networks:
+  yalla-control-plane:
+    driver: bridge

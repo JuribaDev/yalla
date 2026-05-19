@@ -188,10 +188,21 @@ Operators are expected to run the image with `--read-only`,
 comment documents the canonical `docker run` invocation; the worker
 Dockerfile documents the corresponding no-port runtime contract.
 
-The local integration-test stack (`docker-compose.yml`) MUST pin
-the Postgres image to a major version tag (`postgres:16`, not
-`postgres` and not `postgres:latest`) and declare a `healthcheck`
-so the integration-test harness has a deterministic readiness gate.
+The local operations stack (`docker-compose.yml`) MUST keep the
+Postgres-only integration-test workflow available while also
+versioning an opt-in `control-plane` profile for `yalla-api` and
+`yalla-worker`. The Postgres image is pinned to a major version tag
+(`postgres:16`, not `postgres` and not `postgres:latest`) and
+declares a `healthcheck` so the integration-test harness has a
+deterministic readiness gate. The API and worker services build from
+the production `Dockerfile` / `Dockerfile.worker`, wait for
+`postgres.condition=service_healthy`, run with a read-only root
+filesystem, `cap_drop: [ALL]`, `no-new-privileges:true`, and a `/tmp`
+tmpfs, and use required environment-variable interpolation for every
+secret-shaped value. `yalla-api` publishes `8080:8080` so operators
+can probe `GET /healthz` and `GET /readyz`; `yalla-worker` still has
+no HTTP listener and is observed through structured stdout logs plus
+durable job state.
 
 ## TLS Termination and Proxy Header Trust
 
