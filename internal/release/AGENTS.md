@@ -402,6 +402,20 @@ transcripts. Any future incident-response runbook change should update the
 runbook, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh`
 in the same edit.
 
+## Tenant import playbook artifact (BE-0554)
+
+`tenant_import_playbook_static_test.go` pins the production tenant import
+playbook at `docs/operations/tenant-import.md`: the playbook must document the
+support-only `POST /v1/admin/dokploy/import` workflow, Import dry-run review,
+`OwnerAssignment`, `support.manage` / `admin.import`, tenant-scoped
+`dokploy_refs`, durable job response shape, exact redacted environment
+variables, exact verification commands, stable `yalla.output.v1` /
+`yalla.error.v1` envelopes, idempotent retry, break-glass recovery, worker
+pause/resume recovery, no ad hoc write SQL, no raw Dokploy repair calls, and
+the opt-in live-Dokploy smoke warning. Any future tenant-import playbook change
+should update the playbook, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## On-call dashboard artifact (BE-0421)
 
 `on_call_dashboard_artifact_static_test.go` pins the production on-call

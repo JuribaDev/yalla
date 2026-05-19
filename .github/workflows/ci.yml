@@ -189,6 +189,9 @@ jobs:
       - name: Incident response runbook artifact static tests
         run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
 
+      - name: Tenant import playbook artifact static tests
+        run: go test ./internal/release/... -run TestTenantImportPlaybookArtifact
+
       - name: On-call dashboard artifact static tests
         run: go test ./internal/release/... -run TestOnCallDashboardArtifact
 

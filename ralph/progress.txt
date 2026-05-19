@@ -39916,3 +39916,35 @@ change that widened Reason to caller-supplied data.
   - Incident-response documentation should record stable evidence shapes instead of full transcripts: command names, target environment, timestamp, incident ID, package-level `ok` / `PASS`, envelope examples, structured-log key presence, and metric section names.
   - Static documentation tests depend on exact substrings; keep load-bearing phrases on one line when pinning them.
 ---
+
+## 2026-05-19 20:55 +03 - BE-0554
+- What was implemented
+  - Added `docs/operations/tenant-import.md` documenting the support-only `POST /v1/admin/dokploy/import` workflow, preconditions, required redacted environment variables (`YALLA_API_BASE_URL`, `YALLA_ADMIN_API_KEY`, `YALLA_IMPORT_OWNER_ORGANIZATION_ID`, `YALLA_IMPORT_DOKPLOY_ORGANIZATION_ID`, `YALLA_IMPORT_IDEMPOTENCY_KEY`), dry-run review gate, exact commit command, expected `yalla.output.v1` / `yalla.error.v1` envelope shapes, verification commands, failure recovery (validation retry, break-glass, worker pause/resume, no ad hoc SQL), and the opt-in external live-Dokploy smoke warning.
+  - Added `internal/release/tenant_import_playbook_static_test.go` with four tests: import contract coverage, commands/environment/outputs coverage, recovery/redaction coverage (including forbidden secret substrings), and release-gate wiring verification.
+  - Wired the new static artifact gate into `scripts/verify.sh`, `.github/workflows/ci.yml`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+- Files changed
+  - `docs/operations/tenant-import.md`
+  - `internal/release/tenant_import_playbook_static_test.go`
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test ./internal/release/... -run TestTenantImportPlaybookArtifact`
+  - `scripts/verify.sh`
+- Results
+  - All required and focused checks passed.
+  - `scripts/verify.sh` passed.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - Documentation artifacts follow the same static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - The tenant import playbook static test reuses the existing `projectRoot` and `readTextFile` helpers from the release package; no new test infrastructure was needed.
+---

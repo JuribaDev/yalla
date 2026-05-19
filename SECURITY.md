@@ -124,6 +124,7 @@ defined in `.github/workflows/ci.yml`:
 | Quota implementation guide artifact | `go test ./internal/release/... -run TestQuotaImplementationGuideArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Repository conventions artifact | `go test ./internal/release/... -run TestRepositoryConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Tenant import playbook artifact | `go test ./internal/release/... -run TestTenantImportPlaybookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release checklist artifact | `go test ./internal/release/... -run TestReleaseChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -650,6 +651,38 @@ values.
 
 CI pins the incident response runbook with
 `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact`.
+
+## Tenant Import Playbook Artifact
+
+The production tenant import playbook lives at
+`docs/operations/tenant-import.md`. It documents the support-only workflow for
+materializing pre-existing Dokploy resources into Yalla source-of-truth rows
+through `POST /v1/admin/dokploy/import`, durable jobs, tenant-scoped
+`dokploy_refs`, and audit events. The playbook keeps the control boundary
+explicit: customer, agent, and CI traffic goes through the Yalla API; Postgres
+owns source of truth; `yalla-worker` performs the import; and Dokploy remains a
+private dependency. Customers must never receive Dokploy API tokens.
+
+The artifact requires operator-managed runtime configuration in
+`/etc/yalla/control-plane.env` or `YALLA_CONTROL_PLANE_ENV_FILE`; documents the
+required redacted variables (`YALLA_API_BASE_URL`, `YALLA_ADMIN_API_KEY`,
+`YALLA_IMPORT_OWNER_ORGANIZATION_ID`,
+`YALLA_IMPORT_DOKPLOY_ORGANIZATION_ID`, and
+`YALLA_IMPORT_IDEMPOTENCY_KEY`); and pins exact verification commands including
+`go test -run TestImportDryRun ./...`, the playbook static test,
+`go test ./...`, `go test -race ./...`, `go vet ./...`, and
+`scripts/verify.sh`.
+
+The playbook explains expected `yalla.output.v1` / `yalla.error.v1` envelopes
+with `request_id`, `correlation_id`, and queued `job_id`, plus failure recovery
+for validation errors, authorization errors, unhealthy workers, partial import
+failures, idempotent retry, break-glass support access, and the prohibition on
+ad hoc write SQL or raw Dokploy repair calls. It also documents the opt-in
+external live-Dokploy smoke test and states that it must never run against
+production.
+
+CI pins the tenant import playbook with
+`go test ./internal/release/... -run TestTenantImportPlaybookArtifact`.
 
 ## On-Call Dashboard Artifact
 
