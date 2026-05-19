@@ -109,6 +109,13 @@ do not mix customer API handlers into CLI packages.
   resolved. It records low-cardinality HTTP series only by method, normalized
   route path, status code, and status class; request IDs and org/principal IDs
   are latest-sample log-join hints, not dashboard labels.
+- `telemetry.TraceSpanMetrics` follows the same low-cardinality collector
+  pattern for distributed trace spans: group only by span `name`, `kind`,
+  normalized `route`, `component`, `outcome`, `status_class`, and stable
+  `error_code`; keep request/correlation/org/principal/resource/job IDs and
+  redacted targets only as latest-sample incident hints. The HTTP stack records
+  server spans through `telemetry.TraceHTTPSpans`, and `/metrics` exposes the
+  process snapshot under `data.trace_spans`.
 - `telemetry.QuotaUsageMetrics` follows the same low-cardinality collector
   pattern for quota decisions: group only by `resource`, `enforcement_mode`,
   `outcome`, and bounded `reason`; keep request/correlation/org/principal/job

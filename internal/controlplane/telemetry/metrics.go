@@ -1239,7 +1239,7 @@ func RequestMetrics(metrics *HTTPMetrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			rec := &statusRecorder{ResponseWriter: w, ctx: r.Context(), status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			metrics.record(r, rec.status, rec.bytes, time.Since(start))
 		})

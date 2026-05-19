@@ -7958,8 +7958,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: distributed trace spans."
+      "passes": true,
+      "notes": "Implemented low-cardinality distributed trace-span metrics with HTTP server-span middleware, request/correlation/org/principal/resource/job latest-sample hints, /metrics exposure, redacted targets, success/failure tests, and operator documentation."
     },
     {
       "id": "BE-0372",

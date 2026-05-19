@@ -20,6 +20,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	quotaMetrics := telemetry.NewQuotaUsageMetrics()
 	auditMetrics := telemetry.NewAuditEventMetrics()
 	policyMetrics := telemetry.NewPolicyDecisionMetrics()
+	traceMetrics := telemetry.NewTraceSpanMetrics()
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
 		Path:       "/api/projects/proj_metrics_probe",
@@ -56,6 +57,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	handler := NewHandler(
 		runtime.BuildInfo{Version: "test"}, nil, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
+		traceMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -85,6 +87,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			QuotaUsage          telemetry.QuotaUsageMetricsSnapshot        `json:"quota_usage"`
 			AuditEvents         telemetry.AuditEventMetricsSnapshot        `json:"audit_events"`
 			PolicyDecisions     telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
+			TraceSpans          telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -123,10 +126,30 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	if len(env.Data.PolicyDecisions.Series) != 1 || env.Data.PolicyDecisions.Series[0].Decision != "denied" || env.Data.PolicyDecisions.Series[0].OrganizationID != "org_metrics_policy" {
 		t.Fatalf("policy decision series = %+v, want denied project.create with safe org hint", env.Data.PolicyDecisions.Series)
 	}
+	if env.Data.TraceSpans.TotalSpans < 2 {
+		t.Fatalf("trace total_spans = %d, want at least healthz and missing spans", env.Data.TraceSpans.TotalSpans)
+	}
+	foundRequestFailure := false
 	for _, metric := range env.Data.Requests {
 		if metric.Route == "unmatched" {
-			return
+			foundRequestFailure = true
+			break
 		}
 	}
-	t.Fatalf("metrics response did not include unmatched route series: %+v", env.Data.Requests)
+	if !foundRequestFailure {
+		t.Fatalf("metrics response did not include unmatched route series: %+v", env.Data.Requests)
+	}
+	foundSuccess := false
+	foundFailure := false
+	for _, span := range env.Data.TraceSpans.Series {
+		if span.Name == "http.request" && span.Kind == "server" && span.Route == "/healthz" && span.Outcome == "success" {
+			foundSuccess = true
+		}
+		if span.Name == "http.request" && span.Kind == "server" && span.Route == "unmatched" && span.Outcome == "error" && span.StatusClass == "4xx" {
+			foundFailure = true
+		}
+	}
+	if !foundSuccess || !foundFailure {
+		t.Fatalf("trace spans missing success=%v failure=%v: %+v", foundSuccess, foundFailure, env.Data.TraceSpans.Series)
+	}
 }

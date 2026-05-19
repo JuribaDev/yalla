@@ -99,6 +99,69 @@ func findHTTPRequestMetric(metrics []HTTPRequestMetric, method, route string, st
 	return nil
 }
 
+func TestTraceSpanMetricsRecordsHTTPSpansForSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+
+	spans := NewTraceSpanMetrics()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fail" {
+			SetResource(r.Context(), "project", "proj_trace_failure")
+			http.Error(w, "failed", http.StatusInternalServerError)
+			return
+		}
+		SetOrgID(r.Context(), "org_trace_safe")
+		SetPrincipalID(r.Context(), "usr_trace_safe")
+		SetResource(r.Context(), "project", "proj_trace_success")
+		w.WriteHeader(http.StatusCreated)
+	})
+	wrapped := Correlate(RequestLogging(nil)(TraceHTTPSpans(spans)(handler)))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects", nil)
+	req.Pattern = "/v1/projects"
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/fail?token=secret-query-value", nil)
+	req.Pattern = "/v1/failures/{id}"
+	rec = httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
+	snapshot := spans.Snapshot()
+	if snapshot.TotalSpans != 2 {
+		t.Fatalf("total_spans = %d, want 2", snapshot.TotalSpans)
+	}
+	success := findTraceSpanMetric(snapshot.Series, "http.request", "server", "/v1/projects", "success")
+	if success == nil {
+		t.Fatalf("missing success span metric: %+v", snapshot.Series)
+	}
+	if success.Count != 1 || success.StatusClass != "2xx" || success.OrganizationID != "org_trace_safe" || success.PrincipalID != "usr_trace_safe" {
+		t.Errorf("success span = %+v, want 2xx with safe org/principal hints", *success)
+	}
+	if success.RequestID == "" || success.CorrelationID == "" || success.ResourceID != "proj_trace_success" {
+		t.Errorf("success span = %+v, want request/correlation/resource hints", *success)
+	}
+
+	failure := findTraceSpanMetric(snapshot.Series, "http.request", "server", "/v1/failures/{id}", "error")
+	if failure == nil {
+		t.Fatalf("missing failure span metric: %+v", snapshot.Series)
+	}
+	if failure.Count != 1 || failure.StatusClass != "5xx" || failure.LastDurationMS < 0 {
+		t.Errorf("failure span = %+v, want 5xx error span with non-negative duration", *failure)
+	}
+	if strings.Contains(failure.Target, "secret-query-value") {
+		t.Errorf("failure target leaked secret query value: %q", failure.Target)
+	}
+}
+
+func findTraceSpanMetric(metrics []TraceSpanMetric, name, kind, route, outcome string) *TraceSpanMetric {
+	for i := range metrics {
+		if metrics[i].Name == name && metrics[i].Kind == kind && metrics[i].Route == route && metrics[i].Outcome == outcome {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
 func TestJobQueueMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
 	t.Parallel()
 

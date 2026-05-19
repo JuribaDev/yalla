@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Trace-span metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.TraceSpanMetrics` groups by `(name, kind, route, component, outcome, status_class, error_code)`, stores request/correlation/org/principal/resource/job IDs plus redacted targets only as latest-sample incident hints, is emitted by `telemetry.TraceHTTPSpans` for HTTP server spans, and `/metrics` exposes the snapshot under `data.trace_spans`.
 - Structured HTTP error logs are a telemetry/envelope bridge: `apienvelope.WriteErrorStatus` records the stable public `error_code` through a structural `RecordErrorCode` interface implemented by telemetry's response recorder, while `RequestLogging` emits low-cardinality `status_class`/`outcome` plus correlation hints (`request_id`, `correlation_id`, org/principal/resource/job IDs) without parsing response bodies or logging headers/bodies.
 - Policy decision metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.PolicyDecisionMetrics` groups by `(action, resource_kind, decision, reason)`, stores request/correlation/org/project/environment/service/resource/principal/job IDs only as latest-sample incident hints, is emitted from `policy.Engine.Authorize` / `AuthorizeCtx`, and `/metrics` exposes the snapshot under `data.policy_decisions`.
 - Backoffice policy is split by operational domain: `pricing.manage`, `metering.manage`, `billing.manage`, `feature_flags.manage`, `support.manage`, and `config.publish`. Draft/edit routes use the domain manage action; production-impacting publish/archive/rollback routes use `config.publish`; support break-glass/import/reconcile/read routes use `support.manage`. Keep the release support-access static guard pinned to `ActionSupportManage -> CapSupport`.
@@ -37950,4 +37951,44 @@ change that widened Reason to caller-supplied data.
   - Existing `ActionAdmin*` constants are compatibility aliases only; use the new domain action constants for route metadata and new tests.
   - Backoffice routes with `{org_id}` no longer get support cross-tenant behavior unless they use `support.manage`; pricing/metering/config roles must authorize against their own organization scope or an org-scoped grant.
   - The release support-access static analyzer is part of the authorization contract and must be updated whenever the support action string changes.
+---
+## 2026-05-19 11:20 +03 - BE-0371
+- What was implemented
+  - Added `telemetry.TraceSpanMetrics` with low-cardinality span series grouped by name, kind, route, component, outcome, status class, and stable error code.
+  - Added `telemetry.TraceHTTPSpans` middleware for HTTP server spans, carrying request/correlation IDs plus safe latest-sample organization, principal, resource, job, and redacted target hints.
+  - Exposed trace spans through `GET /metrics` as `data.trace_spans` and updated the OpenAPI route description.
+  - Added operator documentation in `docs/operations/distributed-trace-spans.md` and refreshed the existing HTTP metrics overview.
+  - Added reusable guidance to `internal/controlplane/AGENTS.md`.
+- Files changed
+  - `internal/controlplane/telemetry/tracing.go`
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `docs/operations/distributed-trace-spans.md`
+  - `docs/operations/http-request-metrics.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed; documented)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - Core checks passed.
+  - `golangci-lint run ./...` passed after adding comments for exported trace-span kind constants.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups
+  - This story implements in-process span aggregation and HTTP server spans. Future worker/Dokploy stories can call `RecordTraceSpan` for worker/client spans without changing the `/metrics` contract.
+- **Learnings for future iterations:**
+  - The trace-span collector should stay in the same low-cardinality family as HTTP, policy, audit, quota, and Dokploy metrics; never promote request/resource IDs into grouping keys.
+  - `TraceHTTPSpans` should run inside `RequestLogging` so auth/resource enrichment already stored on the request context is available as latest-sample hints.
+  - Nested telemetry middleware must preserve `statusRecorder.ctx` so `apienvelope.WriteErrorStatus` can attach the stable `error_code` to the shared request-field holder.
 ---
