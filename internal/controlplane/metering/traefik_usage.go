@@ -123,6 +123,8 @@ func metricResource(key string) (store.QuotaResource, bool) {
 	switch key {
 	case "http_requests":
 		return store.QuotaResourceHTTPRequests, true
+	case "http_response_bytes":
+		return store.QuotaResourceHTTPResponseBytes, true
 	default:
 		return "", false
 	}

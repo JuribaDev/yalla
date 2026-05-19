@@ -12024,7 +12024,7 @@
       ],
       "type": "tracked-metric",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Tracked metric: http_response_bytes."
     },
     {
