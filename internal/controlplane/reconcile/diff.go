@@ -274,6 +274,18 @@ func diffService(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService
 		// repairs against a service whose kind we no longer trust.
 		return
 	}
+	if ds.Type == dokploy.ServiceDatabase && normaliseEngine(ds.Engine) != normaliseEngine(as.Engine) {
+		plan.Actions = append(plan.Actions, Action{
+			Type:    ActionReviewServiceTypeChange,
+			Kind:    DriftDangerous,
+			Reason:  ReasonServiceTypeChanged,
+			Service: ref,
+		})
+		// Database engine drift is a subtype mismatch. Do not apply safe
+		// env/domain repairs against a database whose storage engine no
+		// longer matches Yalla's source of truth.
+		return
+	}
 	diffBuild(plan, ref, ds, as)
 	diffEnvVars(plan, ref, ds, as)
 	diffDomains(plan, ref, ds, as)
@@ -559,6 +571,10 @@ func unionKeys(desired map[string]DesiredEnvVar, actual map[string]ActualEnvVar)
 
 func normaliseHost(host string) string {
 	return strings.ToLower(strings.TrimSpace(host))
+}
+
+func normaliseEngine(engine string) string {
+	return strings.ToLower(strings.TrimSpace(engine))
 }
 
 func normaliseBuildForDiff(in dokploy.BuildSettings) dokploy.BuildSettings {

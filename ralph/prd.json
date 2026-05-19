@@ -6799,8 +6799,8 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
-      "notes": "Drift coverage for postgres."
+      "passes": true,
+      "notes": "Drift coverage for postgres. Added postgres-specific reconciliation coverage for deleted upstream database resources, database engine drift, missing managed domains, and unmanaged extra database resources. Database engine drift now follows the dangerous service subtype mismatch path (review_service_type_change / service_type_changed) and stops before env/domain safe repairs so the reconciler never mutates a database whose storage engine no longer matches Yalla source of truth."
     },
     {
       "id": "BE-0311",

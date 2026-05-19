@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Database engine drift is a service subtype mismatch in reconciliation: when both desired and actual are `dokploy.ServiceDatabase` but `Engine` differs after trim/case normalization, emit one dangerous `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` action and return before env/domain safe repairs. This prevents auto-mutating a database resource whose storage engine no longer matches Yalla source of truth.
 - `E_INTERNAL` is the backend's generic programming/unexpected-failure contract: use `apierr.Internal(cause)`, render HTTP 500, keep the public message fixed as "an unexpected internal error occurred", omit public hints/details, preserve the cause only for server-side logging, and keep nil-error envelope fallback on the same message/docs-link contract.
 - Reconciliation service-type mismatches are dangerous review-only drift: once desired and actual `dokploy.ServiceType` differ, `diffService` must emit `ActionReviewServiceTypeChange` and stop before build/env/domain safe repairs. Safe repairs against an untrusted upstream type can mutate the wrong Dokploy resource shape.
 - Secret-open failures are a distinct public error contract: use `apierr.SecretDecryption()` / `E_SECRET_DECRYPTION` for failures opening sealed secret material (provider mismatch, unknown key, invalid ciphertext). It is HTTP 500, non-retryable, MessageGeneric, preserves the cause only for server-side diagnostics, and public envelopes must not expose plaintext, ciphertext, provider ids, key ids, or crypto details.
@@ -36513,4 +36514,17 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `E_INTERNAL` should be reserved for programming or unexpected backend failures. It should never include recovery hints or structured details on the public wire; attach the root cause only through `Wrap` for server-side diagnostics.
   - The nil-error path in `apienvelope.WriteError` is part of the public `E_INTERNAL` contract because it is the defensive renderer fallback when a caller has no typed error value.
+---
+
+## 2026-05-19 04:46 +03 - BE-0310
+- Implemented postgres drift reconciliation verification for deleted upstream database resources, changed upstream database engine, missing managed domains, and unmanaged extra database resources.
+- Updated the pure reconciler so database engine drift is treated as dangerous service subtype drift (`review_service_type_change` / `service_type_changed`) and stops before env/domain safe repairs.
+- Files changed: `internal/controlplane/reconcile/diff.go`, `internal/controlplane/reconcile/database_postgres_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/reconcile -run TestPostgresReconcile -count=1` failed before implementation with engine drift ignored or safe-repaired; after implementation it passed. Also ran `gofmt -w .`, `go mod tidy`, `go test ./...`, `go test -race ./...`, `go vet ./...`, `go test ./internal/controlplane/...`, `go test -race ./internal/controlplane/...`, `go test -run TestReconciliation ./...`, and `go test -run TestFakeDokploy ./...`.
+- Results: all required checks passed. `goimports` is not installed in this environment, so it could not be run.
+- Remaining risks or follow-ups: BE-0312/0314/0316/0318 should reuse the same database-engine drift behavior for the other database subtypes and add per-engine verification files.
+- **Learnings for future iterations:**
+  - The reconciler already had a dangerous early-return for `ServiceType` drift; database `Engine` drift needs the same early-return semantics because it is the database subtype boundary.
+  - Use the existing `ActionReviewServiceTypeChange` and `ReasonServiceTypeChanged` contract for database engine mismatch rather than adding a new public drift reason.
+  - Seed sensitive database URLs in tests and assert classification fields stay value-free; only repair-only fields should ever carry desired values.
 ---

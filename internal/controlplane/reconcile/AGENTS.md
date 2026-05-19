@@ -30,6 +30,11 @@ produces a deterministic Plan of actions classified as `DriftSafe`,
   `review_service_type_change` action; do not also emit build, env-var, or
   domain safe repairs against an upstream resource whose shape is no longer
   trusted.
+- **Database engine drift is subtype drift.** For `dokploy.ServiceDatabase`,
+  the `Engine` value is the database subtype boundary. If desired and actual
+  engines differ after normalization, emit one dangerous
+  `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` action and
+  stop before env/domain safe repairs.
 - **Unmanaged means quarantine, never delete.** A Dokploy resource without a
   Yalla counterpart is recorded via `UnmanagedRecorder` only. The engine
   never auto-deletes unmanaged resources and adapters never expose them on a
