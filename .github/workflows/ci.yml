@@ -141,6 +141,9 @@ jobs:
       - name: Database migration command artifact static tests
         run: go test ./internal/release/... -run TestDatabaseMigrationCommand
 
+      - name: Database migration authoring artifact static tests
+        run: go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

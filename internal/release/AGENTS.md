@@ -150,6 +150,20 @@ plus structured JSON log checks. Any future migration-command change should
 update the script, `deploy/operations` runbook, SECURITY.md verification-gates
 row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Database migration authoring artifact (BE-0542)
+
+`database_migration_authoring_static_test.go` pins the developer-facing
+migration authoring guide at `docs/development/database-migration-authoring.md`:
+the guide must document paired `NNNN_description.up.sql` /
+`NNNN_description.down.sql` files under
+`internal/controlplane/store/migrate/migrations`, `schema_migrations`, the local
+Postgres environment with redacted placeholders, exact migration verification
+commands, expected outputs, failure recovery, stable JSON envelope expectations,
+isolated Postgres integration tests, fake-Dokploy-by-default behavior, and
+secret redaction. Any future migration-authoring-doc change should update the
+guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
+the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command

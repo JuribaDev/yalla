@@ -262,6 +262,12 @@ if ! go test ./internal/release/... -run TestDatabaseMigrationCommand; then
   required_failed=1
 fi
 
+# Required: database migration authoring artifact static tests
+step "go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact"
+if ! go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

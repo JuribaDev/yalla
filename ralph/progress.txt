@@ -1,4 +1,13 @@
 ## Codebase Patterns
+- Database migration authoring docs follow the static-release-gate pattern:
+  keep `docs/development/database-migration-authoring.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and
+  `internal/release/database_migration_authoring_static_test.go` in lockstep;
+  document paired `NNNN_description.up.sql` /
+  `NNNN_description.down.sql` files, `schema_migrations`, redacted local
+  Postgres env vars, exact migration verification commands, expected outputs,
+  dirty-migration and rollback recovery, stable JSON envelopes, isolated
+  Postgres integration tests, fake-Dokploy-by-default behavior, and redaction.
 - Local development documentation artifacts follow the same static-release-gate
   pattern as operations artifacts: keep
   `docs/development/local-development.md`, SECURITY.md, CI,
@@ -39387,4 +39396,14 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Documentation stories can be made production-grade by treating markdown as a versioned contract and pinning exact commands, redaction rules, expected outputs, and gate wiring in `internal/release`.
   - Static doc tests use simple substring checks, so required phrases should stay contiguous in Markdown when they are part of the contract.
+---
+## 2026-05-19 17:54 +03 - BE-0542
+- What was implemented: Added the database migration authoring guide and pinned it as a release-gated documentation artifact. The guide covers paired migration file naming, `schema_migrations`, redacted local Postgres environment setup, exact migration verification commands, expected outputs, failure recovery for unhealthy Postgres, dirty migration states, downgrade failures, backup/forward-fix recovery, stable JSON envelope expectations, isolated Postgres integration tests, and redaction.
+- Files changed: `docs/development/database-migration-authoring.md`, `internal/release/database_migration_authoring_static_test.go`, `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, `internal/release/AGENTS.md`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact` before implementation failed on the missing artifact and gate wiring; after implementation it passed. Also ran `gofmt -w .`; `goimports -w .` was skipped because `goimports` is not installed in the direct shell; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test -run TestMigrations ./...`; `go test -run TestMigrationsEmptyDB ./...`; `go test -run TestMigrationsDowngradeSafety ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `golangci-lint run ./...`; commit hook ran `scripts/verify.sh --strict --release`, including `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results: Required formatting, module tidy, full tests, race detector, vet, focused migration-authoring artifact static test, migration-focused suites, control-plane package suites, installed optional lint, vulnerability scan, static analysis, and snapshot release build passed. `goimports` is not installed in the direct shell and was reported explicitly.
+- Remaining risks or follow-ups: No runtime API, migration SQL, or persistence behavior changed. Future migration-authoring documentation changes should keep the markdown artifact, SECURITY.md verification gate row, CI step, verify step, static release test, and `internal/release/AGENTS.md` synchronized.
+- **Learnings for future iterations:**
+  - Developer documentation under `docs/development` should be treated like operations artifacts when it governs production-sensitive behavior: add a focused `internal/release` static test and wire it through CI, `scripts/verify.sh`, and SECURITY.md.
+  - Static doc tests use literal substring matching, so required contractual phrases must stay contiguous even when Markdown prose is wrapped for readability.
 ---

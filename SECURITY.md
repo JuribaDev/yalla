@@ -108,6 +108,7 @@ defined in `.github/workflows/ci.yml`:
 | Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Database migration authoring artifact | `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -296,6 +297,28 @@ the API through `/healthz` and `/readyz` and inspect structured JSON logs with
 
 CI pins the command, runbook, binary flag, and release gate with
 `go test ./internal/release/... -run TestDatabaseMigrationCommand`.
+
+## Database Migration Authoring Artifact
+
+The database migration authoring guide lives at
+`docs/development/database-migration-authoring.md`. It documents how to create
+paired `NNNN_description.up.sql` and `NNNN_description.down.sql` files under
+`internal/controlplane/store/migrate/migrations`, how the embedded runner
+records versions in `schema_migrations`, and how developers verify migrations
+against isolated Postgres databases before merge.
+
+The guide keeps runtime secrets operator-managed and uses only
+`<redacted:...>` placeholders for local environment values. It documents the
+canonical checks: `go test -run TestMigrations ./...`,
+`go test -run TestMigrationsEmptyDB ./...`,
+`go test -run TestMigrationsDowngradeSafety ./...`, `go test ./...`,
+`go test -race ./...`, `go vet ./...`, and `scripts/verify.sh`. It also
+documents failure recovery for unhealthy local Postgres, dirty migration
+states, downgrade failures, and production rollback through backup or forward
+fixes rather than ad hoc SQL.
+
+CI pins the guide and release gate with
+`go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact`.
 
 ## Seed Admin Command Artifact
 
