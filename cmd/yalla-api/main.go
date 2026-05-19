@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/store/migrate"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
@@ -34,6 +36,12 @@ var (
 )
 
 func main() {
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		slog.Error("invalid yalla-api command line", "error", err.Error())
+		os.Exit(2)
+	}
+
 	// Resolve configuration before anything else so a misconfigured process
 	// fails fast with a deterministic exit code instead of half-starting.
 	cfg, err := config.LoadFromEnv()
@@ -74,6 +82,23 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	// signal.NotifyContext cancels ctx on SIGINT/SIGTERM; every lifecycle
+	// component below derives its shutdown from that single context. The
+	// migration-only command uses the same cancellation semantics as the HTTP
+	// server path so operators can interrupt a blocked database operation
+	// cleanly.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if opts.migrateOnly {
+		if err := runMigrationCommand(ctx, pool, logger); err != nil {
+			logger.Error("migration command failed", "error", err.Error())
+			os.Exit(1)
+		}
+		logger.Info("migration command completed")
+		return
+	}
 
 	// The persistence layer, the credential adapter, and the authenticator are
 	// resolved once at startup and shared across every request. The
@@ -480,11 +505,6 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// signal.NotifyContext cancels ctx on SIGINT/SIGTERM; every lifecycle
-	// component below derives its shutdown from that single context.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	// Run startup checks in the background so the server can answer probes
 	// immediately; /readyz only flips to ready once the checks pass.
 	go func() {
@@ -508,6 +528,48 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("yalla control-plane api stopped")
+}
+
+type cliOptions struct {
+	migrateOnly bool
+}
+
+func parseOptions(args []string) (cliOptions, error) {
+	var opts cliOptions
+	fs := flag.NewFlagSet("yalla-api", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&opts.migrateOnly, "migrate-only", false, "apply embedded database migrations and exit without starting the HTTP API")
+	if err := fs.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+	return opts, nil
+}
+
+func runMigrationCommand(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) error {
+	migrator, err := migrate.New(pool, logger)
+	if err != nil {
+		return err
+	}
+	status, err := migrator.Status(ctx)
+	if err != nil {
+		return err
+	}
+	logger.Info("migration command starting",
+		"current_version", status.Current,
+		"pending_count", len(status.Pending),
+		"dirty", status.Dirty)
+	if err := migrator.Up(ctx); err != nil {
+		return err
+	}
+	status, err = migrator.Status(ctx)
+	if err != nil {
+		return err
+	}
+	logger.Info("migration command applied embedded migrations",
+		"current_version", status.Current,
+		"pending_count", len(status.Pending),
+		"dirty", status.Dirty)
+	return nil
 }
 
 // runStartupChecks verifies the dependencies the API needs before it can serve

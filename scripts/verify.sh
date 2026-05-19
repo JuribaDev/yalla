@@ -256,6 +256,12 @@ if ! go test ./internal/release/... -run TestSystemdArtifact; then
   required_failed=1
 fi
 
+# Required: database migration command artifact static tests
+step "go test ./internal/release/... -run TestDatabaseMigrationCommand"
+if ! go test ./internal/release/... -run TestDatabaseMigrationCommand; then
+  required_failed=1
+fi
+
 # 33. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then

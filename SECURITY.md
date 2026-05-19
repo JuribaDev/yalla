@@ -107,6 +107,7 @@ defined in `.github/workflows/ci.yml`:
 | Rate limit bypass resistance | `go test ./internal/release/... -run TestRateLimitBypassResistance` and `go test ./internal/controlplane/httpapi/... -run TestRateLimitBypassResistance` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -262,6 +263,28 @@ Operators can dry-run the unit syntax with
 `systemd-analyze verify deploy/systemd/yalla-api.service deploy/systemd/yalla-worker.service`.
 CI pins the artifact with
 `go test ./internal/release/... -run TestSystemdArtifact`.
+
+## Database Migration Command Artifact
+
+The production database migration command lives at
+`deploy/operations/migrate-database.sh` with the runbook in
+`deploy/operations/README.md`. It runs the API binary's embedded migration
+runner through `/usr/local/bin/yalla-api --migrate-only`, so the SQL ladder
+applied in production is exactly the version compiled into the backend
+release. The worker binary remains separate: the script stops `yalla-worker`
+before applying schema changes and restarts both `yalla-api` and
+`yalla-worker` after a successful migration.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+signing keys, secret-encryption keys, Dokploy endpoints, Dokploy tokens, API
+keys, cookies, or rendered environment values; `--dry-run` prints only command
+shape plus redacted `YALLA_*` variable names. After `--apply`, operators verify
+the API through `/healthz` and `/readyz` and inspect structured JSON logs with
+`journalctl -u yalla-api -u yalla-worker -o json`.
+
+CI pins the command, runbook, binary flag, and release gate with
+`go test ./internal/release/... -run TestDatabaseMigrationCommand`.
 
 ## TLS Termination and Proxy Header Trust
 

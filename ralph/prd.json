@@ -8775,8 +8775,8 @@
       ],
       "type": "operations-artifact",
       "priority": 3,
-      "passes": false,
-      "notes": "Operations artifact: database migration command."
+      "passes": true,
+      "notes": "Implemented production database migration command artifact: deploy/operations/migrate-database.sh, deploy/operations/README.md, yalla-api --migrate-only, release static gate, CI/verify wiring, SECURITY.md documentation, and operations AGENTS guidance. Verification passed: gofmt, go mod tidy, go test ./..., go test -race ./..., go vet ./..., go test ./internal/controlplane/..., go test -race ./internal/controlplane/..., go test -run TestMigrations ./..., go test ./internal/release/... -run TestDatabaseMigrationCommand, dry-run script execution, and golangci-lint run ./.... goimports/staticcheck/govulncheck were not installed."
     },
     {
       "id": "BE-0415",

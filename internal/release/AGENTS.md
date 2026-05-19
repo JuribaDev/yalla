@@ -139,6 +139,17 @@ logs. Any future systemd artifact change should update the unit files,
 `deploy/systemd` runbook, SECURITY.md verification-gates row, CI step,
 and `scripts/verify.sh` in the same edit.
 
+## Database migration command artifact (BE-0414)
+
+`database_migration_command_static_test.go` pins the checked-in migration
+command under `deploy/operations/`: the script must call
+`/usr/local/bin/yalla-api --migrate-only`, stop `yalla-worker` before schema
+changes, keep secrets in `/etc/yalla/control-plane.env`, provide a dry-run
+plan with redacted environment names only, and document `/healthz` + `/readyz`
+plus structured JSON log checks. Any future migration-command change should
+update the script, `deploy/operations` runbook, SECURITY.md verification-gates
+row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing
