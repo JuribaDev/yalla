@@ -11758,8 +11758,8 @@
       ],
       "type": "metering-source",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented internal/controlplane/metering Traefik Prometheus source adapter with bounded query_range collection, counter-reset/gap normalization, status and histogram labels, deterministic raw-sample checksum metadata, and fake Prometheus tests. No public HTTP surface was added in this source-adapter story, so envelope route criteria are not applicable until a public/admin metering API consumes it."
     },
     {
       "id": "BE-0572",

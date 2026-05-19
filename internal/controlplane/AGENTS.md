@@ -198,6 +198,11 @@ do not mix customer API handlers into CLI packages.
   `Resolver.ResolveWithQuerier(ctx, tx, orgID, at)` so quota checks observe the
   same transaction snapshot as the desired-state write. Standalone API/read
   paths may call `Resolver.Resolve`, which opens its own read transaction.
+- Metering source adapters live in `internal/controlplane/metering`. They should
+  emit deterministic, unattributed source samples with bounded window metadata,
+  query-version metadata, and raw-sample checksums; tenant/resource attribution,
+  quarantining, `usage_events` writes, and billing-grade aggregation belong to
+  later attribution/aggregation layers.
 - Idempotency for mutating endpoints is `httpapi.RequireIdempotency(store, ttl)`
   — middleware installed **inside** `RequireAuth` (it reads
   `policy.PrincipalFromContext` to scope the `Idempotency-Key` to a principal
