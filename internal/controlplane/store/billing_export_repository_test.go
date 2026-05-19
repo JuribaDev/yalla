@@ -67,6 +67,13 @@ func TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess(t *testi
 	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	plan := seededPlan(ctx, t, s, pricing, "pro")
+	upsertEntitlementOrFail(ctx, t, s, pricing, store.UpsertPlanEntitlementInput{
+		PlanID:          plan.ID,
+		EntitlementKey:  string(store.QuotaResourceHTTPRequests),
+		LimitValue:      int64Ptr(40),
+		EnforcementMode: store.EnforcementModeMetered,
+		Metadata:        []byte(`{"unit":"request","overage_behavior":"warn"}`),
+	})
 	sub := createSubscriptionOrFail(ctx, t, s, subs, store.CreateSubscriptionInput{
 		OrganizationID:     org.ID,
 		PlanID:             plan.ID,
@@ -126,6 +133,21 @@ func TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess(t *testi
 	}
 	if prepared.Items[1].Key != string(store.QuotaResourceHTTPRequests) || prepared.Items[1].Quantity != 42 {
 		t.Fatalf("second item = %+v, want http_requests 42", prepared.Items[1])
+	}
+	if prepared.Items[1].EntitlementKey == nil || *prepared.Items[1].EntitlementKey != string(store.QuotaResourceHTTPRequests) {
+		t.Fatalf("second item entitlement_key = %v, want http_requests", prepared.Items[1].EntitlementKey)
+	}
+	if prepared.Items[1].OveragePolicyMode == nil || *prepared.Items[1].OveragePolicyMode != "warn" {
+		t.Fatalf("second item overage_policy_mode = %v, want warn", prepared.Items[1].OveragePolicyMode)
+	}
+	if prepared.Items[1].OverageDecision == nil || *prepared.Items[1].OverageDecision != "warned" {
+		t.Fatalf("second item overage_decision = %v, want warned", prepared.Items[1].OverageDecision)
+	}
+	if prepared.Items[1].IncludedQuantity == nil || *prepared.Items[1].IncludedQuantity != 40 {
+		t.Fatalf("second item included_quantity = %v, want 40", prepared.Items[1].IncludedQuantity)
+	}
+	if prepared.Items[1].OverageQuantity == nil || *prepared.Items[1].OverageQuantity != 2 {
+		t.Fatalf("second item overage_quantity = %v, want 2", prepared.Items[1].OverageQuantity)
 	}
 
 	succeeded := markBillingExportSucceededOrFail(ctx, t, s, exports, store.MarkBillingExportSucceededInput{

@@ -44,11 +44,16 @@ type ExportBatch struct {
 
 // ExportItem is one usage-counter line in a provider-neutral batch.
 type ExportItem struct {
-	CounterID string
-	Key       string
-	Unit      string
-	Quantity  float64
-	Source    string
+	CounterID         string
+	Key               string
+	Unit              string
+	Quantity          float64
+	Source            string
+	EntitlementKey    *string
+	OveragePolicyMode *string
+	OverageDecision   *string
+	IncludedQuantity  *float64
+	OverageQuantity   *float64
 }
 
 // BatchFromStoreExport projects the durable store snapshot into the provider
@@ -57,11 +62,16 @@ func BatchFromStoreExport(export store.BillingExport) ExportBatch {
 	items := make([]ExportItem, 0, len(export.Items))
 	for _, item := range export.Items {
 		items = append(items, ExportItem{
-			CounterID: item.CounterID,
-			Key:       item.Key,
-			Unit:      item.Unit,
-			Quantity:  item.Quantity,
-			Source:    item.Source,
+			CounterID:         item.CounterID,
+			Key:               item.Key,
+			Unit:              item.Unit,
+			Quantity:          item.Quantity,
+			Source:            item.Source,
+			EntitlementKey:    item.EntitlementKey,
+			OveragePolicyMode: item.OveragePolicyMode,
+			OverageDecision:   item.OverageDecision,
+			IncludedQuantity:  item.IncludedQuantity,
+			OverageQuantity:   item.OverageQuantity,
 		})
 	}
 	return ExportBatch{

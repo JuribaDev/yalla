@@ -84,15 +84,20 @@ func (e BillingExport) LogValue() slog.Value {
 // BillingExportItem snapshots one usage counter into an export so provider
 // retries submit the same billing basis even if counters are replayed later.
 type BillingExportItem struct {
-	ID             string
-	OrganizationID string
-	ExportID       string
-	CounterID      string
-	Key            string
-	Unit           string
-	Quantity       float64
-	Source         string
-	CreatedAt      time.Time
+	ID                string
+	OrganizationID    string
+	ExportID          string
+	CounterID         string
+	Key               string
+	Unit              string
+	Quantity          float64
+	Source            string
+	EntitlementKey    *string
+	OveragePolicyMode *string
+	OverageDecision   *string
+	IncludedQuantity  *float64
+	OverageQuantity   *float64
+	CreatedAt         time.Time
 }
 
 // PrepareBillingExportInput identifies the export group to create or replay.
@@ -130,7 +135,7 @@ func NewBillingExportRepository() *BillingExportRepository { return &BillingExpo
 
 const billingExportColumns = `id, organization_id, subscription_id, provider, period_start, period_end, status, attempt_count, requested_at, last_attempt_at, next_attempt_at, exported_at, provider_response_id, last_error_summary, created_at, updated_at`
 
-const billingExportItemColumns = `id, organization_id, export_id, counter_id, key, unit, quantity, source, created_at`
+const billingExportItemColumns = `id, organization_id, export_id, counter_id, key, unit, quantity, source, entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity, created_at`
 
 // Prepare creates the idempotent export group and snapshots all counters for
 // that organization and billing period. A duplicate group returns the existing
@@ -367,7 +372,7 @@ func (r *BillingExportRepository) insertOrGet(ctx context.Context, tx *Tx, id st
 
 func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, export BillingExport) error {
 	rows, err := tx.Query(ctx,
-		`SELECT id, key, unit, quantity, source
+		`SELECT id, key, unit, quantity, source, entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity
 		   FROM usage_counters
 		  WHERE organization_id = $1
 		    AND period_start = $2
@@ -381,8 +386,10 @@ func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, exp
 	defer rows.Close()
 	for rows.Next() {
 		var counterID, key, unit, source string
+		var entitlementKey, overagePolicyMode, overageDecision *string
+		var includedQuantity, overageQuantity *float64
 		var quantity float64
-		if err := rows.Scan(&counterID, &key, &unit, &quantity, &source); err != nil {
+		if err := rows.Scan(&counterID, &key, &unit, &quantity, &source, &entitlementKey, &overagePolicyMode, &overageDecision, &includedQuantity, &overageQuantity); err != nil {
 			return apierr.StoreUnavailable(err)
 		}
 		if math.IsNaN(quantity) || math.IsInf(quantity, 0) {
@@ -394,10 +401,12 @@ func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, exp
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO billing_export_items
-			    (id, organization_id, export_id, counter_id, key, unit, quantity, source)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			    (id, organization_id, export_id, counter_id, key, unit, quantity, source,
+			     entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			 ON CONFLICT (organization_id, export_id, counter_id) DO NOTHING`,
 			itemID, export.OrganizationID, export.ID, counterID, key, unit, quantity, source,
+			entitlementKey, overagePolicyMode, overageDecision, includedQuantity, overageQuantity,
 		); err != nil {
 			return mapWriteError(err, "snapshot billing export item")
 		}
@@ -472,7 +481,9 @@ func scanBillingExportItem(row pgx.Row) (BillingExportItem, error) {
 	var item BillingExportItem
 	if err := row.Scan(
 		&item.ID, &item.OrganizationID, &item.ExportID, &item.CounterID,
-		&item.Key, &item.Unit, &item.Quantity, &item.Source, &item.CreatedAt,
+		&item.Key, &item.Unit, &item.Quantity, &item.Source,
+		&item.EntitlementKey, &item.OveragePolicyMode, &item.OverageDecision,
+		&item.IncludedQuantity, &item.OverageQuantity, &item.CreatedAt,
 	); err != nil {
 		return BillingExportItem{}, err
 	}

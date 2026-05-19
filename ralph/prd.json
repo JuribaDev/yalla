@@ -11910,8 +11910,8 @@
       ],
       "type": "pricing-enforcement",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented metered overage policy hooks at usage aggregation and billing export boundaries. Plan/subscription entitlement metadata now flows into runtime entitlement resolution, usage counters store entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity, and overage_evaluated_at, overage decisions append audit_events with request/correlation ids, and billing export items snapshot the overage fields for provider adapters without changing quota code. Tests cover allow, warn, block, and require_admin_review decisions plus billing export consumption."
     },
     {
       "id": "BE-0580",

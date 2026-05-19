@@ -308,6 +308,11 @@ Postgres persistence for control-plane source-of-truth state.
   `quantity` as frozen for billing auditability. Late-arriving events for that
   closed period should create net-new `usage_counter_adjustments` rows; replay
   must subtract prior adjustments so it does not duplicate the same delta.
+- Overage policy decisions are stamped on `usage_counters` during aggregation
+  from resolved entitlement metadata (`overage_behavior`). Keep this hook out
+  of quota/resource mutation code. Each decision must append an `audit_events`
+  row with request/correlation identifiers, and billing exports must snapshot
+  the counter's overage fields so provider retries remain deterministic.
 
 ## Subscriptions and entitlement overrides (`0050_subscriptions_entitlement_overrides`)
 

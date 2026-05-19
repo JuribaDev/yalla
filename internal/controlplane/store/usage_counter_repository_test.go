@@ -231,6 +231,111 @@ func TestUsageCounterRepositoryAggregateValidationAndTenantScope(t *testing.T) {
 	}
 }
 
+func TestUsageCounterRepositoryAppliesOveragePolicyModes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		mode     string
+		decision string
+	}{
+		{mode: "allow", decision: "allowed"},
+		{mode: "warn", decision: "warned"},
+		{mode: "block", decision: "blocked"},
+		{mode: "require_admin_review", decision: "admin_review_required"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Parallel()
+			db := testutil.RequireMigratedDB(t)
+			s := newStore(t, db)
+			ctx := context.Background()
+			f := testutil.NewFactory(t)
+			org := seedOrg(t, db, f, "overage-"+tc.mode)
+			pricing := store.NewPricingPlanRepository()
+			subs := store.NewSubscriptionRepository()
+			events := store.NewUsageEventRepository()
+			counters := store.NewUsageCounterRepository()
+			periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+			plan := seededPlan(ctx, t, s, pricing, "pro")
+			upsertEntitlementOrFail(ctx, t, s, pricing, store.UpsertPlanEntitlementInput{
+				PlanID:          plan.ID,
+				EntitlementKey:  string(store.QuotaResourceHTTPRequests),
+				LimitValue:      int64Ptr(10),
+				EnforcementMode: store.EnforcementModeMetered,
+				Metadata:        []byte(`{"unit":"request","overage_behavior":"` + tc.mode + `"}`),
+			})
+			createSubscriptionOrFail(ctx, t, s, subs, store.CreateSubscriptionInput{
+				OrganizationID:     org.ID,
+				PlanID:             plan.ID,
+				Status:             store.SubscriptionStatusActive,
+				CurrentPeriodStart: periodStart,
+				CurrentPeriodEnd:   periodEnd,
+				Provider:           "manual",
+			})
+			appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+				OrganizationID: org.ID,
+				Resource:       store.QuotaResourceHTTPRequests,
+				EventType:      store.UsageEventTypeConsumed,
+				Quantity:       14,
+				Unit:           "request",
+				Source:         "traefik",
+				IdempotencyKey: "overage-" + tc.mode,
+				OccurredAt:     periodStart.Add(time.Hour),
+			})
+
+			result := aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+				OrganizationID:     org.ID,
+				PeriodStart:        periodStart,
+				PeriodEnd:          periodEnd,
+				AggregatedAt:       periodEnd.Add(time.Hour),
+				AggregationVersion: 1,
+				RequestID:          "req_overage_" + tc.mode,
+				CorrelationID:      "corr_overage_" + tc.mode,
+			})
+			if len(result.Counters) != 1 {
+				t.Fatalf("counters = %d, want 1", len(result.Counters))
+			}
+			counter := result.Counters[0]
+			if counter.EntitlementKey == nil || *counter.EntitlementKey != string(store.QuotaResourceHTTPRequests) {
+				t.Fatalf("entitlement_key = %v, want http_requests", counter.EntitlementKey)
+			}
+			if counter.OveragePolicyMode == nil || *counter.OveragePolicyMode != tc.mode {
+				t.Fatalf("overage_policy_mode = %v, want %s", counter.OveragePolicyMode, tc.mode)
+			}
+			if counter.OverageDecision == nil || *counter.OverageDecision != tc.decision {
+				t.Fatalf("overage_decision = %v, want %s", counter.OverageDecision, tc.decision)
+			}
+			if counter.IncludedQuantity == nil || *counter.IncludedQuantity != 10 {
+				t.Fatalf("included_quantity = %v, want 10", counter.IncludedQuantity)
+			}
+			if counter.OverageQuantity == nil || *counter.OverageQuantity != 4 {
+				t.Fatalf("overage_quantity = %v, want 4", counter.OverageQuantity)
+			}
+
+			var auditCount int
+			err := db.QueryRow(ctx,
+				`SELECT count(*)
+				   FROM audit_events
+				  WHERE organization_id = $1
+				    AND action = 'usage.overage.evaluate'
+				    AND resource_id = $2
+				    AND request_id = $3
+				    AND correlation_id = $4
+				    AND metadata->>'overage_policy_mode' = $5
+				    AND metadata->>'overage_decision' = $6`,
+				org.ID, counter.ID, "req_overage_"+tc.mode, "corr_overage_"+tc.mode, tc.mode, tc.decision,
+			).Scan(&auditCount)
+			if err != nil {
+				t.Fatalf("count overage audit events: %v", err)
+			}
+			if auditCount != 1 {
+				t.Fatalf("overage audit events = %d, want 1", auditCount)
+			}
+		})
+	}
+}
+
 func TestUsageCounterRepositoryAggregateRollsBackOnPartialFailure(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
