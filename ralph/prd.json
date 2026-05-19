@@ -11777,8 +11777,8 @@
       ],
       "type": "metering-source",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented a Traefik attribution layer that extracts explicit Yalla service labels and deterministic Dokploy/Traefik service names, resolves them through a store-backed services + dokploy_refs join, returns full org/project/environment/service scope plus confidence/source metadata, and quarantines missing-ref, deleted-service, and unmanaged samples so they are never billed automatically. No public HTTP surface was added in this source-attribution story, so JSON envelope criteria remain not applicable until an API consumes the attribution result."
     },
     {
       "id": "BE-0573",

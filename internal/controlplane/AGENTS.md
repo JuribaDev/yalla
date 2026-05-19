@@ -203,6 +203,11 @@ do not mix customer API handlers into CLI packages.
   query-version metadata, and raw-sample checksums; tenant/resource attribution,
   quarantining, `usage_events` writes, and billing-grade aggregation belong to
   later attribution/aggregation layers.
+- Metering attribution is the first layer allowed to map source samples to
+  tenants. Traefik attribution should prefer explicit Yalla labels, then
+  deterministic Dokploy/Traefik names containing the service id, require a
+  matching service-level `dokploy_refs` row, and quarantine missing-ref,
+  deleted-service, and unmanaged samples instead of billing them.
 - Idempotency for mutating endpoints is `httpapi.RequireIdempotency(store, ttl)`
   — middleware installed **inside** `RequireAuth` (it reads
   `policy.PrincipalFromContext` to scope the `Idempotency-Key` to a principal

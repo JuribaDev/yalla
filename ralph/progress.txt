@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Traefik metric attribution is a separate layer after source collection: extract explicit Yalla service labels before deterministic Dokploy/Traefik names containing `svc_<id>`/`svc-<id>`, resolve only services that still have a service-level `dokploy_refs` mapping, attach full org/project/environment/service scope plus attribution source/confidence metadata, and quarantine missing-ref, deleted-service, and unmanaged samples so they never become billing-grade `usage_events` automatically.
 - Traefik metering source collection lives under `internal/controlplane/metering` and should stay source-only: query bounded Prometheus windows, normalize counters into deterministic unattributed samples, attach `query_version` plus raw-sample checksum metadata, and leave tenant attribution/quarantine plus `usage_events` writes to later attribution/aggregation layers.
 - Billing-period usage counters are replayed from append-only `usage_events` through `store.UsageCounterRepository.AggregateUsageEvents`: open periods upsert deterministic `(organization_id, key, unit, period_start, period_end, source)` counters, while previously closed counters keep their frozen quantity and record net-new late-arriving usage in `usage_counter_adjustments` so replays are idempotent and invoice adjustments stay auditable.
 - Billing-grade usage events are append-only and written through `store.UsageEventRepository.Append`: validate the tenant-owned organization/project/environment/service scope before insert, redact metadata at the repository boundary, assign the active subscription period with a UTC calendar-month fallback, and use `(organization_id, source, idempotency_key)` for replay-safe idempotency; corrections are new `adjusted` rows, never updates.
@@ -36823,4 +36824,48 @@ change that widened Reason to caller-supplied data.
   - Keep source adapters deterministic and side-effect-free; query collection, attribution, and billing writes are separate layers.
   - Raw Prometheus sample checksums should be computed from the fixed query set and response bodies so duplicate windows can be audited and replayed.
   - Missing service or histogram bucket labels should be counted as dropped source series at this layer, not guessed or billed.
+---
+## 2026-05-19 06:22 +03 - BE-0572
+- What was implemented
+  - Added `internal/controlplane/metering` Traefik attribution contracts and attributor logic for explicit Yalla service labels plus deterministic Dokploy/Traefik service names containing `svc_<id>` or `svc-<id>`.
+  - Added a store-backed `StoreTraefikResolver` that resolves candidate services through a read-only services + service-level `dokploy_refs` join and returns full organization/project/environment/service scope.
+  - Added quarantine output for missing refs, deleted services, and unmanaged resources so unknown samples are retained for review/replay but never billed automatically.
+  - Updated `ralph/prd.json` to mark BE-0572 passing after verification.
+- Files changed
+  - `internal/controlplane/metering/attribution.go`
+  - `internal/controlplane/metering/attribution_store.go`
+  - `internal/controlplane/metering/attribution_test.go`
+  - `internal/controlplane/metering/attribution_store_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/metering -run TestTraefikAttributor`
+  - `go test ./internal/controlplane/metering -run TestStoreTraefikResolverUsesDokployRefsAndServiceState`
+  - `go test ./internal/controlplane/metering`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run 'TestTraefik|TestMigrations' ./internal/controlplane/...`
+  - `golangci-lint run ./...`
+  - Direct PATH probes initially did not find `staticcheck` or `govulncheck`, but the pre-commit hook later ran them through `scripts/verify.sh --strict --release`.
+  - Pre-commit hook: `scripts/verify.sh --strict --release`
+- Results
+  - Required formatting, module cleanup, tests, race detector, and vet checks passed.
+  - Focused control-plane, Traefik, and migration-named suites passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - The pre-commit strict verification passed, including `govulncheck ./...`, `staticcheck ./...`, GoReleaser config validation, snapshot release build, and opt-in skip of external live-Dokploy smoke.
+  - Postgres-backed attribution integration test uses `testutil.RequireMigratedDB` and skips with the standard reason when `YALLA_TEST_DATABASE_URL` is unset; it requires no live Dokploy server.
+- Remaining risks or follow-ups
+  - Attribution currently resolves service candidates and returns attributed/quarantined samples; later metric tracking stories must decide which attributed samples become append-only `usage_events`.
+  - No public HTTP surface was added, so envelope/auth/not-found HTTP contract criteria remain not applicable until an API exposes metering attribution state.
+- **Learnings for future iterations:**
+  - Keep Traefik source collection and attribution separate: collection remains deterministic and unattributed, attribution owns tenant mapping and quarantine decisions.
+  - A sample is billable only after it resolves to a non-deleted Yalla service that still has a service-level `dokploy_refs` row for application/compose/database.
+  - Missing refs, deleted services, and unmanaged resources should be explicit quarantine records rather than dropped samples; this preserves auditability and allows replay after mappings are repaired.
 ---
