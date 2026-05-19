@@ -363,6 +363,20 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		{
 			endpoint: openapi.Endpoint{
 				Method:             http.MethodGet,
+				Path:               "/dashboards/control-plane.json",
+				OperationID:        "getControlPlaneDashboard",
+				Summary:            "Export control-plane dashboard JSON",
+				Description:        "Returns a yalla.output.v1 envelope containing the stable yalla.dashboard.v1 dashboard definition for Yalla Control Plane operations. The dashboard reads GET /metrics and groups only by low-cardinality metric dimensions such as route, status_class, outcome, component, job_type, severity, drift_kind, and redaction surface. Request ids, correlation ids, organization ids, principal ids, resource ids, and job ids are declared only as latest-sample join hints for incident response, never as dashboard grouping labels. Operators should import or mirror this JSON into their dashboard system, point the panels at the /metrics response data sections, and join the latest request_id, correlation_id, or job_id to structured logs, audit rows, drift findings, or provisioning jobs during incidents. The export is deterministic, contains no runtime tenant rows, and includes no secrets or submitted metric values.",
+				Tags:               []string{tagOperations},
+				SuccessDescription: "The stable control-plane dashboard JSON export.",
+			},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				apienvelope.WriteData(w, http.StatusOK, requestID(r), telemetry.OperationalDashboardExport())
+			},
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
 				Path:               "/readyz",
 				OperationID:        "getReadyz",
 				Summary:            "Readiness probe",

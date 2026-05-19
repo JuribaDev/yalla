@@ -183,6 +183,11 @@ do not mix customer API handlers into CLI packages.
   `data.secret_redaction_canaries`; operators should page on
   `outcome="failed"` and join the latest request/correlation/resource/job
   hints to logs or audit rows.
+- Dashboard JSON exports should describe how to render existing `/metrics`
+  sections instead of creating a second metrics pipeline. Keep exports
+  deterministic and tool-neutral, group panels only by low-cardinality metric
+  dimensions, and model request/correlation/org/principal/resource/job IDs as
+  incident join hints only.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

@@ -8091,8 +8091,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: dashboard JSON export."
+      "passes": true,
+      "notes": "Implemented the yalla.dashboard.v1 control-plane dashboard export at GET /dashboards/control-plane.json. The export is served through the yalla.output.v1 envelope, points panels at the existing /metrics sections, groups only by low-cardinality dimensions, keeps request/correlation/org/principal/resource/job ids as join hints, documents incident workflows, and is covered by telemetry and HTTP/OpenAPI contract tests."
     },
     {
       "id": "BE-0379",

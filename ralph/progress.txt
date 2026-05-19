@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Dashboard JSON exports are deterministic, tool-neutral contracts over the existing `/metrics` snapshot rather than a second metrics pipeline: define a `telemetry.DashboardExport` with `schema_version: yalla.dashboard.v1`, serve it through a normal `yalla.output.v1` HTTP envelope, point panels at `/metrics` data sections, group only by low-cardinality dimensions, and keep request/correlation/org/principal/resource/job identifiers as incident join hints.
 - Secret-redaction canary metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.SecretRedactionCanaryMetrics` groups by `(surface, vector, outcome, reason)`, stores request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, is emitted through `telemetry.ObserveSecretRedactionCanary` without accepting the raw canary secret, and `/metrics` exposes the snapshot under `data.secret_redaction_canaries`.
 - Reconciliation drift alert metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.ReconciliationDriftAlertMetrics` groups by `(drift_kind, action_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `reconcile.Reconciler` after completed ticks as firing per planned drift action or resolved `none/none/no_drift` for clean plans, and `/metrics` exposes the snapshot under `data.reconciliation_drift_alerts`.
 - Dead-letter alert metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness/SLO metrics: `telemetry.DeadLetterAlertMetrics` groups by `(job_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `worker.StoreClaimer` only after a `dead_letter` transition commits, and `/metrics` exposes the snapshot under `data.dead_letter_alerts`.
@@ -303,7 +304,6 @@
 - **Learnings for future iterations:**
   - The envelope renderer can expose telemetry-only metadata via a tiny structural interface on `http.ResponseWriter`; this avoids parsing JSON response bodies and avoids an import cycle from `apienvelope` to `telemetry`.
   - Keep high-cardinality org/principal/resource/job IDs as log-join hints only; use `method`, `route`, `status_class`, `outcome`, and `error_code` for dashboard filters.
----
 ## 2026-05-19 12:15 +03 - BE-0376
 - What was implemented
   - Added `telemetry.ReconciliationDriftAlertMetrics` with low-cardinality `(drift_kind, action_type, reason, severity, status)` series and safe latest-sample request/correlation/org/project/environment/service/resource/job hints.
@@ -350,7 +350,6 @@
   - Reconciliation drift alerts should stay separate from persisted drift findings: metrics are the low-cardinality incident trigger, while the support-only drift findings view is the detailed triage surface.
   - Emit alert observations after `Apply` completes so failure counts are known, but keep failure error strings out of metrics entirely.
   - A clean reconcile tick should emit a resolved `none/none/no_drift` observation so dashboards can distinguish "no drift" from "reconciler stopped emitting".
----
 
 
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
@@ -38265,4 +38264,43 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Redaction canary signals should never carry the raw probe secret; make the helper API accept only bounded dimensions and safe correlation hints.
   - Keep canary failures operationally useful by grouping on the redaction surface and vector while storing IDs only as latest-sample hints.
+---
+## 2026-05-19 13:05 +03 - BE-0378
+- What was implemented
+  - Added the stable `telemetry.DashboardExport` / `yalla.dashboard.v1` operations dashboard definition.
+  - Added `GET /dashboards/control-plane.json`, rendered through the `yalla.output.v1` envelope and documented in the route table/OpenAPI surface.
+  - The export points panels at existing `/metrics` sections, groups only by low-cardinality fields, and models request/correlation/org/principal/resource/job ids as incident join hints.
+  - Added operator documentation for importing the JSON and using the join hints during API error, provisioning stall, and redaction-regression incidents.
+- Files changed
+  - `internal/controlplane/telemetry/dashboard.go`
+  - `internal/controlplane/telemetry/dashboard_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/dashboard_test.go`
+  - `docs/operations/dashboard-json-export.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; not installed
+  - `go mod tidy`
+  - `go test ./internal/controlplane/telemetry ./internal/controlplane/httpapi`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; not installed
+  - `govulncheck ./...` attempted; not installed
+- Results
+  - Required checks passed.
+  - Focused telemetry/httpapi checks and focused control-plane checks passed.
+  - Optional `golangci-lint` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups
+  - The export is vendor-neutral by design; a later operations-artifact story can add a Grafana-specific rendered dashboard if needed.
+- **Learnings for future iterations:**
+  - Dashboard exports should stay deterministic and describe how to render existing `/metrics` sections instead of duplicating telemetry collection.
+  - Treat organization, resource, service, and job identifiers as latest-sample incident join hints only; tests should reject them in `group_by`.
 ---
