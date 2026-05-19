@@ -17,12 +17,27 @@ type StoreTraefikResolver struct {
 	store *store.Store
 }
 
+// StoreContainerResolver resolves container samples against Yalla's source of
+// truth. A service must both exist in services and have a service-level
+// dokploy_refs mapping before it is considered attributable.
+type StoreContainerResolver struct {
+	store *store.Store
+}
+
 // NewStoreTraefikResolver builds the Postgres-backed Traefik resolver.
 func NewStoreTraefikResolver(s *store.Store) (*StoreTraefikResolver, error) {
 	if s == nil {
 		return nil, errors.New("metering: nil store")
 	}
 	return &StoreTraefikResolver{store: s}, nil
+}
+
+// NewStoreContainerResolver builds the Postgres-backed container resolver.
+func NewStoreContainerResolver(s *store.Store) (*StoreContainerResolver, error) {
+	if s == nil {
+		return nil, errors.New("metering: nil store")
+	}
+	return &StoreContainerResolver{store: s}, nil
 }
 
 // ResolveTraefikService resolves one extracted service id to tenant scope.
@@ -66,6 +81,47 @@ func (r *StoreTraefikResolver) ResolveTraefikService(ctx context.Context, in Tra
 	return attr, nil
 }
 
+// ResolveContainerService resolves one extracted service id to tenant scope.
+func (r *StoreContainerResolver) ResolveContainerService(ctx context.Context, in ContainerResolveInput) (ContainerResourceAttribution, error) {
+	if r == nil || r.store == nil {
+		return ContainerResourceAttribution{}, errors.New("metering: nil StoreContainerResolver")
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return ContainerResourceAttribution{}, ErrContainerUnmanagedResource
+	}
+
+	var attr ContainerResourceAttribution
+	err := r.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		row := q.QueryRow(ctx,
+			`SELECT s.organization_id, s.project_id, s.environment_id, s.id, s.status
+			   FROM services s
+			   JOIN dokploy_refs dr
+			     ON dr.organization_id = s.organization_id
+			    AND dr.yalla_kind = 'service'
+			    AND dr.yalla_id = s.id
+			    AND dr.dokploy_resource IN ('application', 'compose', 'database')
+			  WHERE s.id = $1
+			  ORDER BY dr.id ASC
+			  LIMIT 1`,
+			serviceID)
+		var status string
+		if err := row.Scan(&attr.OrganizationID, &attr.ProjectID, &attr.EnvironmentID, &attr.ServiceID, &status); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrContainerAttributionNotFound
+			}
+			return apierr.StoreUnavailable(err)
+		}
+		attr.Deleted = store.ServiceStatus(status) == store.ServiceStatusDeleted
+		attr.Source, attr.Confidence = resolveStoreContainerAttributionSource(in)
+		return nil
+	})
+	if err != nil {
+		return ContainerResourceAttribution{}, err
+	}
+	return attr, nil
+}
+
 func resolveStoreAttributionSource(in TraefikResolveInput) (TraefikAttributionSource, TraefikAttributionConfidence) {
 	serviceID := strings.TrimSpace(in.ServiceID)
 	for _, key := range []string{"yalla_service_id", "yalla.service.id", "service_id", "com.yalla.service_id"} {
@@ -74,4 +130,14 @@ func resolveStoreAttributionSource(in TraefikResolveInput) (TraefikAttributionSo
 		}
 	}
 	return TraefikAttributionSourceName, TraefikAttributionConfidenceMedium
+}
+
+func resolveStoreContainerAttributionSource(in ContainerResolveInput) (ContainerAttributionSource, ContainerAttributionConfidence) {
+	serviceID := strings.TrimSpace(in.ServiceID)
+	for _, key := range []string{"yalla_service_id", "yalla.service.id", "service_id", "com.yalla.service_id", "io.yalla.service_id"} {
+		if normalizeServiceID(in.Labels[key]) == serviceID {
+			return ContainerAttributionSourceLabel, ContainerAttributionConfidenceHigh
+		}
+	}
+	return ContainerAttributionSourceName, ContainerAttributionConfidenceMedium
 }

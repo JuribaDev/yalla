@@ -60,6 +60,60 @@ func TestStoreTraefikResolverUsesDokployRefsAndServiceState(t *testing.T) {
 	}
 }
 
+func TestStoreContainerResolverUsesDokployRefsAndServiceState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	s, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	org := f.Organization("alpha")
+	proj := f.Project(org, "alpha")
+	env := f.Environment(proj, "prod")
+	active := f.Service(env, "api")
+	withoutRef := f.Service(env, "no-ref")
+	deleted := f.Service(env, "deleted")
+	seedTraefikResolverFixture(ctx, t, s, org, proj, env, active, withoutRef, deleted)
+
+	resolver, err := NewStoreContainerResolver(s)
+	if err != nil {
+		t.Fatalf("NewStoreContainerResolver: %v", err)
+	}
+	attr, err := resolver.ResolveContainerService(ctx, ContainerResolveInput{
+		ServiceID:   active.ID,
+		ContainerID: "ctr-" + active.ID,
+		Labels:      map[string]string{"yalla_service_id": active.ID},
+	})
+	if err != nil {
+		t.Fatalf("ResolveContainerService(active): %v", err)
+	}
+	if attr.OrganizationID != org.ID || attr.ProjectID != proj.ID || attr.EnvironmentID != env.ID || attr.ServiceID != active.ID {
+		t.Fatalf("resolved scope = (%q,%q,%q,%q), want seeded hierarchy", attr.OrganizationID, attr.ProjectID, attr.EnvironmentID, attr.ServiceID)
+	}
+	if attr.Deleted {
+		t.Fatal("active service resolved as deleted")
+	}
+	if attr.Source != ContainerAttributionSourceLabel || attr.Confidence != ContainerAttributionConfidenceHigh {
+		t.Fatalf("source/confidence = %q/%q, want label/high", attr.Source, attr.Confidence)
+	}
+
+	_, err = resolver.ResolveContainerService(ctx, ContainerResolveInput{ServiceID: withoutRef.ID})
+	if !errors.Is(err, ErrContainerAttributionNotFound) {
+		t.Fatalf("ResolveContainerService(without ref) = %v, want ErrContainerAttributionNotFound", err)
+	}
+
+	attr, err = resolver.ResolveContainerService(ctx, ContainerResolveInput{ServiceID: deleted.ID})
+	if err != nil {
+		t.Fatalf("ResolveContainerService(deleted): %v", err)
+	}
+	if !attr.Deleted || attr.ServiceID != deleted.ID {
+		t.Fatalf("deleted attr = %#v, want deleted service attribution", attr)
+	}
+}
+
 func seedTraefikResolverFixture(
 	ctx context.Context,
 	t *testing.T,

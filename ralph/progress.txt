@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Container resource metering uses the same source/attribution/emission split as Traefik and storage metrics: source adapters normalize bounded windows into `ContainerMetricSample` values, `StoreContainerResolver` requires a live service-level `dokploy_refs` mapping before attribution, ambiguous or deleted services are quarantined before billing, and `ContainerUsageEmitter` writes only fully scoped billing-grade samples to append-only `usage_events`.
 - Dokploy monitoring source adapters are operational inputs, not billing oracles: call typed Dokploy client methods (`application.readAppMonitoring`, `user.getContainerMetrics`, `server.getServerMetrics`, `user.getServerMetrics`), normalize numeric leaves into `source=dokploy` samples with explicit `billing_grade`, keep query version/checksum metadata, and degrade optional unavailable monitoring sources by returning stable error-code entries while relying on Dokploy dependency metrics for telemetry. Monitoring endpoints that require node URL/token query params must pass a safe endpoint template into client logs/errors/metrics, and `dokployfake.RecordedRequest.RawQuery` must redact secret-shaped query keys.
 - Billing exports are provider-neutral snapshots over existing `usage_counters`: persist one `billing_exports` row per `(organization_id, subscription_id, period_start, period_end, provider)`, snapshot immutable line items into `billing_export_items`, store only safe provider response ids, record failed attempts with redacted summaries plus `next_attempt_at`, and expose provider adapters through `internal/controlplane/billing.ExportBatch` rather than coupling metering to Stripe/manual SDKs.
 - Dashboard JSON exports are deterministic, tool-neutral contracts over the existing `/metrics` snapshot rather than a second metrics pipeline: define a `telemetry.DashboardExport` with `schema_version: yalla.dashboard.v1`, serve it through a normal `yalla.output.v1` HTTP envelope, point panels at `/metrics` data sections, group only by low-cardinality dimensions, and keep request/correlation/org/principal/resource/job identifiers as incident join hints.
@@ -38361,4 +38362,43 @@ change that widened Reason to caller-supplied data.
   - Monitoring endpoints with node URL/token query parameters need a separate safe endpoint template in the typed Dokploy client; otherwise retry logs, wrapped errors, and dependency metrics can accidentally carry query strings.
   - `dokployfake.RecordedRequest.RawQuery` is part of the assertion fixture and must redact secret-shaped query keys just like headers and bodies.
   - Under `go test -race`, very small client timeouts can fail otherwise successful fake HTTP requests; timeout tests should set a comfortable client timeout and make the injected timeout fault clearly longer.
+---
+
+## 2026-05-19 13:36:39 +03 - BE-0574
+- What was implemented
+  - Completed the remaining container resource metering pieces: added a cAdvisor/Docker-style `ContainerRuntimeStatsCollector` that normalizes cumulative CPU counters into `container_cpu_millicore_seconds`, converts memory gauges into `container_memory_mb_hours`, handles CPU counter resets, skips missing containers, and attaches deterministic source/query/checksum metadata.
+  - Added `StoreContainerResolver` so container attribution resolves only services with service-level `dokploy_refs` mappings and marks deleted services for quarantine instead of billing.
+  - Marked `BE-0574` as passing in `ralph/prd.json` with notes describing the completed metering-source contract.
+- Files changed
+  - `internal/controlplane/metering/container_runtime.go`
+  - `internal/controlplane/metering/container_runtime_test.go`
+  - `internal/controlplane/metering/attribution_store.go`
+  - `internal/controlplane/metering/attribution_store_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestRedaction ./...`
+  - `golangci-lint run ./...`
+  - pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint` passed with 0 issues.
+  - Pre-commit release verification also passed `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot build checks; live Dokploy smoke remained skipped because it is opt-in.
+  - `goimports` was not installed in the interactive shell, so only `gofmt` was run manually.
+- Remaining risks or follow-ups
+  - No public HTTP surface was added for this source story; JSON envelope behavior remains covered by existing API surfaces and will apply when a future API consumes these metering outputs.
+  - The runtime stats collector is intentionally a typed input-port adapter; concrete Docker/cAdvisor transport wiring can be added behind `ContainerRuntimeStatsClient` without changing attribution or usage emission.
+- **Learnings for future iterations:**
+  - Container metrics should follow the source adapter -> attribution/quarantine -> append-only usage_events pattern, not write usage counters directly.
+  - Deleted services can still resolve through `dokploy_refs`, but attribution must surface the deleted flag so the attributor quarantines instead of billing.
+  - Runtime CPU counters need reset-aware delta math; if the current cumulative value is lower than the previous value, treat the current value as post-reset usage for the bounded window.
 ---

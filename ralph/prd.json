@@ -11815,8 +11815,8 @@
       ],
       "type": "metering-source",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Completed container resource metering with billing-grade container_cpu_millicore_seconds and container_memory_mb_hours definitions/resources, Dokploy monitoring sample normalization, cAdvisor/Docker-style runtime stats collection with counter-reset handling, dokploy_refs-backed service attribution with ambiguous/deleted-service quarantine, idempotent usage_events emission, aggregation into usage_counters, tenant-isolation coverage, and redaction-safe metadata. No public HTTP surface was added in this metering-source story, so JSON envelope route criteria remain not applicable until an API consumes the metering output."
     },
     {
       "id": "BE-0575",
