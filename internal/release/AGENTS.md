@@ -188,6 +188,20 @@ canary to pass, and write only redacted reports. Any future restore-rehearsal
 change should update the script, `deploy/operations` runbook, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Rollback checklist artifact (BE-0424)
+
+`rollback_checklist_artifact_static_test.go` pins the rollback checklist at
+`docs/operations/rollback-checklist.md`: the artifact must reference
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, preserve the
+Yalla API -> Postgres source of truth -> worker -> private Dokploy API
+boundary, keep runtime secrets operator-managed, require backup and restore
+rehearsal evidence before destructive rollback, route schema changes through
+`/usr/local/bin/yalla-api --migrate-only`, document `/healthz`, `/readyz`,
+`/version`, `/metrics`, stable JSON envelopes, structured log redaction, and
+opt-in external Dokploy smoke tests. Any future rollback-checklist change
+should update the checklist, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Config example files artifact (BE-0418)
 
 `config_examples_static_test.go` pins the canonical production environment

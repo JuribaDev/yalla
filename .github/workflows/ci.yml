@@ -168,6 +168,9 @@ jobs:
       - name: Release checklist artifact static tests
         run: go test ./internal/release/... -run TestReleaseChecklistArtifact
 
+      - name: Rollback checklist artifact static tests
+        run: go test ./internal/release/... -run TestRollbackChecklistArtifact
+
       - name: Race detector
         run: go test -race ./...
 

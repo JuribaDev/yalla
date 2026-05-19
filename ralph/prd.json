@@ -8965,8 +8965,8 @@
       ],
       "type": "operations-artifact",
       "priority": 3,
-      "passes": false,
-      "notes": "Operations artifact: rollback checklist."
+      "passes": true,
+      "notes": "Completed production rollback checklist artifact with static release tests, CI/verify/SECURITY wiring, least-privilege and redaction requirements, health/readiness/log expectations, backup/restore rehearsal and migration rollback safety, and opt-in Dokploy smoke guidance."
     },
     {
       "id": "BE-0425",

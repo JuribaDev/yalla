@@ -117,6 +117,7 @@ defined in `.github/workflows/ci.yml`:
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release checklist artifact | `go test ./internal/release/... -run TestReleaseChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Rollback checklist artifact | `go test ./internal/release/... -run TestRollbackChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -523,6 +524,30 @@ against production.
 
 CI pins the release checklist artifact with
 `go test ./internal/release/... -run TestReleaseChecklistArtifact`.
+
+## Rollback Checklist Artifact
+
+The production rollback checklist lives at
+`docs/operations/rollback-checklist.md`. It binds rollback decisions to the
+versioned backend binaries (`/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`), the Customer / Agent / CI -> Postgres source
+of truth -> provisioning worker -> private Dokploy API boundary, stable
+`yalla.output.v1` and `yalla.error.v1` envelopes, request IDs, correlation
+IDs, migration reversibility, backup freshness, restore rehearsal evidence,
+and durable job safety.
+
+The checklist requires runtime secrets to stay in operator-managed
+configuration such as `/etc/yalla/control-plane.env`, requires dry-run output
+to show only redacted `YALLA_*` variable names, and requires rollback to use
+versioned operations instead of ad hoc SQL. It documents `/healthz`,
+`/readyz`, `/version`, `/metrics`, structured JSON logs, dead-letter alerts,
+least-privilege access, redaction of tokens, API keys, cookies, database URLs,
+Dokploy tokens, request bodies, response bodies, and rendered environment
+values, plus the opt-in external live-Dokploy smoke test that must never run
+against production.
+
+CI pins the rollback checklist artifact with
+`go test ./internal/release/... -run TestRollbackChecklistArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 
