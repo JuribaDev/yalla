@@ -12499,8 +12499,8 @@
       ],
       "type": "backoffice-pricing-api",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented versioned global/plan/organization overage policy APIs with effective_at precedence, audited store service, migration, runtime usage-counter policy resolution, OpenAPI route metadata, and contract/store tests. Full go test, race, vet, focused backend suites, and golangci-lint passed; goimports/staticcheck/govulncheck were not installed."
     },
     {
       "id": "BE-0611",

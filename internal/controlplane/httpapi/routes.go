@@ -225,6 +225,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminAttributionRuleManager AdminAttributionRuleManager
 	var adminUsageAggregationScheduleManager AdminUsageAggregationScheduleManager
 	var adminBillingProviderManager AdminBillingProviderManager
+	var adminOveragePolicyManager AdminOveragePolicyManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -285,6 +286,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminBillingProviderManager); ok {
 			adminBillingProviderManager = v
+		}
+		if v, ok := opt.(AdminOveragePolicyManager); ok {
+			adminOveragePolicyManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -659,6 +663,52 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The entitlement was deleted.",
 			},
 			handler: deleteAdminPlanEntitlementHandler(adminPlanManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/overage-policies/global/{entitlement_key}",
+				OperationID:        "upsertAdminGlobalOveragePolicy",
+				Summary:            "Configure a global overage policy",
+				Description:        "Creates or replaces one effective-time version of the global overage policy for an entitlement. Runtime quota and billing aggregation resolve organization overrides first, plan overrides second, and this global policy last. Action pricing.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionPricingManage),
+				PathParams:         []openapi.PathParam{{Name: "entitlement_key", Description: "The entitlement key whose overage behavior is configured."}},
+				SuccessDescription: "The global overage policy was persisted and audited.",
+			},
+			handler: upsertAdminGlobalOveragePolicyHandler(adminOveragePolicyManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/plans/{plan_id}/overage-policies/{entitlement_key}",
+				OperationID:        "upsertAdminPlanOveragePolicy",
+				Summary:            "Configure a plan overage policy",
+				Description:        "Creates or replaces one effective-time version of a plan-specific overage policy. Plan policies override global policy and are overridden by organization-specific policy. Action pricing.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionPricingManage),
+				PathParams:         []openapi.PathParam{{Name: "plan_id", Description: "The pricing plan version this policy targets."}, {Name: "entitlement_key", Description: "The entitlement key whose overage behavior is configured."}},
+				SuccessDescription: "The plan overage policy was persisted and audited.",
+			},
+			handler: upsertAdminPlanOveragePolicyHandler(adminOveragePolicyManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/organizations/{org_id}/overage-policies/{entitlement_key}",
+				OperationID:        "upsertAdminOrganizationOveragePolicy",
+				Summary:            "Configure an organization overage policy",
+				Description:        "Creates or replaces one effective-time version of an organization-specific overage policy. Organization policies are the highest-precedence runtime and billing overage policy layer. Action pricing.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionPricingManage),
+				PathParams:         []openapi.PathParam{{Name: "org_id", Description: "The organization this policy targets."}, {Name: "entitlement_key", Description: "The entitlement key whose overage behavior is configured."}},
+				SuccessDescription: "The organization overage policy was persisted and audited.",
+			},
+			handler:  upsertAdminOrganizationOveragePolicyHandler(adminOveragePolicyManager),
+			resolver: organizationIDResolver,
 		},
 		{
 			endpoint: openapi.Endpoint{

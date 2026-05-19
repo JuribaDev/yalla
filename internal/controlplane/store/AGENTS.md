@@ -88,6 +88,15 @@ Postgres persistence for control-plane source-of-truth state.
   are retained for audit/config history but are excluded from runtime export
   loops.
 
+## Overage policies
+
+- `admin_overage_policies` is versioned backoffice runtime pricing config.
+  Resolve precedence as organization override, then plan override, then global
+  default, bounded by `effective_at <= at`. Usage aggregation should consult
+  this table before falling back to legacy plan-entitlement
+  `metadata.overage_behavior`, so billing exports inherit the same decision
+  through `usage_counters`.
+
 ## Tenant hierarchy schema
 
 - The `Organization -> Project -> Environment -> Service` chain is in

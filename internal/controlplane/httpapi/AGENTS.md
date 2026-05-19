@@ -208,6 +208,16 @@ payloads expose only `credential_set` plus non-secret provider metadata. The
 side-effect-free test route validates local provider config and fake-counter
 mapping without contacting Stripe or another live provider.
 
+## Backoffice overage policies
+
+Backoffice overage policy routes use `policy.ActionPricingManage` and share the
+admin plan audit-context shape. Keep the public route family split by scope:
+global policies under `/v1/admin/overage-policies/global/{entitlement_key}`,
+plan policies under `/v1/admin/plans/{plan_id}/overage-policies/{entitlement_key}`,
+and organization overrides under
+`/v1/admin/organizations/{org_id}/overage-policies/{entitlement_key}` with
+`organizationIDResolver`.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an

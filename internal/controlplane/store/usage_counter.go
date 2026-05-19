@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -278,7 +279,10 @@ func (r *UsageCounterRepository) applyOveragePolicy(ctx context.Context, tx *Tx,
 	if ent.LimitValue == nil {
 		return counter, nil
 	}
-	mode := overagePolicyMode(ent.Metadata)
+	mode, err := r.resolveOveragePolicyMode(ctx, tx, counter.OrganizationID, ent, in.AggregatedAt)
+	if err != nil {
+		return UsageCounter{}, err
+	}
 	if mode == "" {
 		return counter, nil
 	}
@@ -303,7 +307,7 @@ func (r *UsageCounterRepository) applyOveragePolicy(ctx context.Context, tx *Tx,
 		}
 	}
 	evaluatedAt := in.AggregatedAt
-	counter, err := scanUsageCounter(tx.QueryRow(ctx,
+	counter, err = scanUsageCounter(tx.QueryRow(ctx,
 		`UPDATE usage_counters
 		    SET entitlement_key = $2,
 		        overage_policy_mode = $3,
@@ -325,6 +329,17 @@ func (r *UsageCounterRepository) applyOveragePolicy(ctx context.Context, tx *Tx,
 		return UsageCounter{}, err
 	}
 	return counter, nil
+}
+
+func (r *UsageCounterRepository) resolveOveragePolicyMode(ctx context.Context, tx *Tx, organizationID string, ent EffectiveEntitlement, at time.Time) (string, error) {
+	policy, err := NewOveragePolicyRepository().ResolveRuntime(ctx, tx, organizationID, ent.PlanID, ent.EntitlementKey, at)
+	if err == nil {
+		return string(policy.Mode), nil
+	}
+	if yerr.From(err).Code != yerr.CodeNotFound {
+		return "", err
+	}
+	return overagePolicyMode(ent.Metadata), nil
 }
 
 func overagePolicyMode(metadata []byte) string {
