@@ -36538,3 +36538,13 @@ change that widened Reason to caller-supplied data.
   - The reconcile engine already classifies database engine changes as `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` and returns before safe env/domain repairs.
   - Per-engine reconciliation verification can mirror the postgres database test shape while setting the desired and actual `ServiceDatabase.Engine` values to the target subtype.
 ---
+## 2026-05-19 04:54 +03 - BE-0314
+- What was implemented: Added MariaDB-specific reconcile verification coverage for managed database drift. The tests pin dangerous review-only handling for engine drift, no safe repair after subtype mismatch, deleted upstream database review, missing managed domain repair, unmanaged extra database quarantine, and classification redaction for database values.
+- Files changed: `internal/controlplane/reconcile/database_mariadb_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./internal/controlplane/reconcile -run 'TestMariadbReconcile' -count=1`; `go test ./internal/controlplane/reconcile -run 'TestMariadbReconcile|TestFakeDokploy' -count=1`; `go test ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test ./...`; `go test -race ./internal/controlplane/...`; `go vet ./...`; `go test -race ./...`; `golangci-lint run ./...`.
+- Results: All executed checks passed. `goimports` was not installed for the manual import-format pass. The pre-commit strict verification also passed `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and snapshot release checks.
+- Remaining risks or follow-ups: None for BE-0314. The next unfinished story is BE-0316 for Mongo drift reconciliation.
+- **Learnings for future iterations:**
+  - Database drift verification stories can usually reuse the postgres/mysql reconcile test shape because `diffService` handles database engine subtype drift generically.
+  - For database reconcile verification, keep the engine-drift test value-bearing but assert that only value-free classification fields are inspected for leaks.
+---
