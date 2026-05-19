@@ -196,6 +196,108 @@ func findSlowQueryMetric(metrics []SlowQueryMetric, operation, queryKind, outcom
 	return nil
 }
 
+func TestSLOBurnRateMetricsRecordsLowCardinalityAlerts(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewSLOBurnRateMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req_slo_burn", CorrelationID: "corr_slo_burn"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org_slo_safe")
+	SetPrincipalID(ctx, "usr_slo_safe")
+	SetResource(ctx, "service", "svc_slo_safe")
+	SetJobID(ctx, "job_slo_safe")
+
+	metrics.RecordSLOBurnRate(ctx, SLOBurnRateObservation{
+		Objective:      "api_availability",
+		Window:         "5m",
+		Severity:       "page",
+		Status:         "firing",
+		Signal:         "http_5xx_ratio",
+		BurnRate:       14.25,
+		ErrorBudgetPct: 2.5,
+		OrganizationID: "org_slo_override",
+		JobID:          "job_slo_override",
+	})
+	metrics.RecordSLOBurnRate(context.Background(), SLOBurnRateObservation{
+		Objective: "api_availability",
+		Window:    "1h",
+		Severity:  "ticket",
+		Status:    "resolved",
+		Signal:    "http_5xx_ratio",
+		BurnRate:  0.5,
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalObservations != 2 {
+		t.Fatalf("total_observations = %d, want 2", snapshot.TotalObservations)
+	}
+	firing := findSLOBurnRateMetric(snapshot.Series, "api_availability", "5m", "page", "firing", "http_5xx_ratio")
+	if firing == nil {
+		t.Fatalf("missing firing SLO burn-rate metric: %+v", snapshot.Series)
+	}
+	if firing.Count != 1 || firing.LastBurnRate != 14.25 || firing.LastErrorBudgetPct != 2.5 {
+		t.Errorf("firing metric = %+v, want count=1 burn=14.25 budget=2.5", *firing)
+	}
+	if firing.RequestID != "req_slo_burn" || firing.CorrelationID != "corr_slo_burn" ||
+		firing.OrganizationID != "org_slo_override" || firing.PrincipalID != "usr_slo_safe" ||
+		firing.ResourceKind != "service" || firing.ResourceID != "svc_slo_safe" ||
+		firing.JobID != "job_slo_override" {
+		t.Errorf("firing hints = %+v, want request/resource/job correlation", *firing)
+	}
+	resolved := findSLOBurnRateMetric(snapshot.Series, "api_availability", "1h", "ticket", "resolved", "http_5xx_ratio")
+	if resolved == nil {
+		t.Fatalf("missing resolved SLO burn-rate metric: %+v", snapshot.Series)
+	}
+	if resolved.RequestID != "" || resolved.OrganizationID != "" {
+		t.Errorf("resolved metric without context = %+v, want no unsafe identifiers", *resolved)
+	}
+}
+
+func TestSLOBurnRateMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewSLOBurnRateMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req\nbad", CorrelationID: "corr_slo_safe"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org unsafe")
+	SetPrincipalID(ctx, "usr_slo_safe")
+	SetResource(ctx, "service\nbad", "svc_slo_safe")
+
+	metrics.RecordSLOBurnRate(ctx, SLOBurnRateObservation{
+		Objective:      "api_availability:prod",
+		Window:         "5000m",
+		Severity:       "wake-the-world",
+		Status:         "maybe",
+		Signal:         "http_5xx_ratio?api_key=secret",
+		BurnRate:       -2,
+		ErrorBudgetPct: -10,
+	})
+
+	snapshot := metrics.Snapshot()
+	got := findSLOBurnRateMetric(snapshot.Series, "other", "other", "other", "unknown", "other")
+	if got == nil {
+		t.Fatalf("missing bounded-cardinality SLO burn-rate metric: %+v", snapshot.Series)
+	}
+	if got.LastBurnRate != 0 || got.LastErrorBudgetPct != 0 {
+		t.Errorf("bounded metric = %+v, want negative numeric values clamped to zero", *got)
+	}
+	if got.RequestID != "" || got.CorrelationID != "corr_slo_safe" {
+		t.Errorf("correlation hints = %q/%q, want unsafe request dropped and safe correlation kept", got.RequestID, got.CorrelationID)
+	}
+	if got.OrganizationID != "" || got.PrincipalID != "usr_slo_safe" || got.ResourceKind != "" || got.ResourceID != "svc_slo_safe" {
+		t.Errorf("identifier hints = %+v, want only SafeID-clean values", *got)
+	}
+}
+
+func findSLOBurnRateMetric(metrics []SLOBurnRateMetric, objective, window, severity, status, signal string) *SLOBurnRateMetric {
+	for i := range metrics {
+		if metrics[i].Objective == objective && metrics[i].Window == window && metrics[i].Severity == severity && metrics[i].Status == status && metrics[i].Signal == signal {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
 func TestTraceSpanMetricsRecordsHTTPSpansForSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 

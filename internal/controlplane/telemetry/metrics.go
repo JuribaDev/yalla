@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -45,6 +46,11 @@ var DefaultSlowQueryMetrics = NewSlowQueryMetrics()
 // DefaultReadinessDegradationMetrics is the process-wide readiness probe
 // collector used by the HTTP API unless tests or embedders inject their own.
 var DefaultReadinessDegradationMetrics = NewReadinessDegradationMetrics()
+
+// DefaultSLOBurnRateMetrics is the process-wide SLO burn-rate alert collector
+// used by operational alert adapters unless tests or embedders inject their
+// own collector.
+var DefaultSLOBurnRateMetrics = NewSLOBurnRateMetrics()
 
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
@@ -563,6 +569,72 @@ type readinessDegradationMetricSeries struct {
 	ReadinessDegradationMetric
 }
 
+// SLOBurnRateObservation is one operational burn-rate alert observation.
+// Objective, Window, Severity, Status, and Signal are bounded aggregate
+// dimensions. Identifiers and numeric values describe only the latest sample,
+// so operators can join a hot series to logs or job rows without turning
+// tenant/resource ids into labels.
+type SLOBurnRateObservation struct {
+	Objective      string
+	Window         string
+	Severity       string
+	Status         string
+	Signal         string
+	BurnRate       float64
+	ErrorBudgetPct float64
+	OrganizationID string
+	PrincipalID    string
+	ResourceKind   string
+	ResourceID     string
+	JobID          string
+}
+
+// SLOBurnRateMetric is one aggregate SLO burn-rate alert series.
+type SLOBurnRateMetric struct {
+	Objective          string  `json:"objective"`
+	Window             string  `json:"window"`
+	Severity           string  `json:"severity"`
+	Status             string  `json:"status"`
+	Signal             string  `json:"signal"`
+	Count              int64   `json:"count"`
+	LastBurnRate       float64 `json:"last_burn_rate"`
+	LastErrorBudgetPct float64 `json:"last_error_budget_pct"`
+	RequestID          string  `json:"request_id,omitempty"`
+	CorrelationID      string  `json:"correlation_id,omitempty"`
+	OrganizationID     string  `json:"organization_id,omitempty"`
+	PrincipalID        string  `json:"principal_id,omitempty"`
+	ResourceKind       string  `json:"resource_kind,omitempty"`
+	ResourceID         string  `json:"resource_id,omitempty"`
+	JobID              string  `json:"job_id,omitempty"`
+}
+
+// SLOBurnRateMetricsSnapshot is the JSON-serializable operational view exposed
+// to operators, tests, and the /metrics endpoint.
+type SLOBurnRateMetricsSnapshot struct {
+	TotalObservations int64               `json:"total_observations"`
+	Series            []SLOBurnRateMetric `json:"series"`
+}
+
+// SLOBurnRateMetrics stores low-cardinality SLO burn-rate alert counters. It
+// is safe for concurrent use by API and worker goroutines.
+type SLOBurnRateMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[sloBurnRateMetricKey]*sloBurnRateMetricSeries
+}
+
+type sloBurnRateMetricKey struct {
+	objective string
+	window    string
+	severity  string
+	status    string
+	signal    string
+}
+
+type sloBurnRateMetricSeries struct {
+	SLOBurnRateMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -604,6 +676,11 @@ func NewSlowQueryMetrics() *SlowQueryMetrics {
 // collector.
 func NewReadinessDegradationMetrics() *ReadinessDegradationMetrics {
 	return &ReadinessDegradationMetrics{series: make(map[readinessDegradationMetricKey]*readinessDegradationMetricSeries)}
+}
+
+// NewSLOBurnRateMetrics returns an empty SLO burn-rate alert collector.
+func NewSLOBurnRateMetrics() *SLOBurnRateMetrics {
+	return &SLOBurnRateMetrics{series: make(map[sloBurnRateMetricKey]*sloBurnRateMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -858,6 +935,41 @@ func (m *ReadinessDegradationMetrics) Snapshot() ReadinessDegradationSnapshot {
 			return a.Status < b.Status
 		}
 		return a.Reason < b.Reason
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all SLO burn-rate alert metrics
+// currently held by the collector.
+func (m *SLOBurnRateMetrics) Snapshot() SLOBurnRateMetricsSnapshot {
+	if m == nil {
+		return SLOBurnRateMetricsSnapshot{Series: []SLOBurnRateMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := SLOBurnRateMetricsSnapshot{
+		TotalObservations: m.total,
+		Series:            make([]SLOBurnRateMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.SLOBurnRateMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Objective != b.Objective {
+			return a.Objective < b.Objective
+		}
+		if a.Window != b.Window {
+			return a.Window < b.Window
+		}
+		if a.Severity != b.Severity {
+			return a.Severity < b.Severity
+		}
+		if a.Status != b.Status {
+			return a.Status < b.Status
+		}
+		return a.Signal < b.Signal
 	})
 	return out
 }
@@ -1293,6 +1405,72 @@ func (m *ReadinessDegradationMetrics) RecordReadinessProbe(ctx context.Context, 
 	series.JobID = safeMetricID(event.JobID)
 }
 
+// RecordSLOBurnRate aggregates one SLO burn-rate alert observation.
+func (m *SLOBurnRateMetrics) RecordSLOBurnRate(ctx context.Context, event SLOBurnRateObservation) {
+	if m == nil {
+		return
+	}
+	objective := metricSLOToken(event.Objective, "unknown")
+	window := metricSLOWindow(event.Window)
+	severity := metricSLOSeverity(event.Severity)
+	status := metricSLOStatus(event.Status)
+	signal := metricSLOToken(event.Signal, "unknown")
+
+	corr := FromContext(ctx)
+	orgID, principalID, resourceKind, resourceID, jobID := "", "", "", "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ = f.logSnapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+	if strings.TrimSpace(event.ResourceKind) != "" {
+		resourceKind = strings.TrimSpace(event.ResourceKind)
+	}
+	if strings.TrimSpace(event.ResourceID) != "" {
+		resourceID = strings.TrimSpace(event.ResourceID)
+	}
+	if strings.TrimSpace(event.JobID) != "" {
+		jobID = strings.TrimSpace(event.JobID)
+	}
+
+	key := sloBurnRateMetricKey{
+		objective: objective,
+		window:    window,
+		severity:  severity,
+		status:    status,
+		signal:    signal,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &sloBurnRateMetricSeries{SLOBurnRateMetric: SLOBurnRateMetric{
+			Objective: objective,
+			Window:    window,
+			Severity:  severity,
+			Status:    status,
+			Signal:    signal,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.LastBurnRate = clampMetricFloat(event.BurnRate)
+	series.LastErrorBudgetPct = clampMetricFloat(event.ErrorBudgetPct)
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.ResourceKind = safeMetricID(resourceKind)
+	series.ResourceID = safeMetricID(resourceID)
+	series.JobID = safeMetricID(jobID)
+}
+
 func metricMethod(method string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
@@ -1438,6 +1616,56 @@ func metricReadinessStatus(status string) string {
 	}
 }
 
+func metricSLOWindow(window string) string {
+	switch strings.TrimSpace(window) {
+	case "1m", "5m", "15m", "30m", "1h", "6h", "24h":
+		return strings.TrimSpace(window)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricSLOSeverity(severity string) string {
+	switch strings.TrimSpace(severity) {
+	case "page", "ticket", "info":
+		return strings.TrimSpace(severity)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricSLOStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "firing", "resolved", "suppressed":
+		return strings.TrimSpace(status)
+	case "":
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+func metricSLOToken(value, empty string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return empty
+	}
+	if len(value) > 80 {
+		return "other"
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-' {
+			continue
+		}
+		return "other"
+	}
+	return value
+}
+
 func metricQuotaResource(resource string) string {
 	resource = strings.TrimSpace(resource)
 	if resource == "" {
@@ -1550,6 +1778,13 @@ func safeMetricID(id string) string {
 
 func clampMetricCount(n int64) int64 {
 	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func clampMetricFloat(n float64) float64 {
+	if n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
 		return 0
 	}
 	return n

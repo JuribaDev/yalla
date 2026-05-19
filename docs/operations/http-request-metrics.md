@@ -4,9 +4,9 @@ Yalla exposes in-process operational metrics at `GET /metrics`. The endpoint
 uses the standard `yalla.output.v1` envelope and includes HTTP request metrics,
 distributed trace-span metrics, private Dokploy dependency metrics, quota usage
 metrics, audit event metrics, policy decision metrics, datastore slow-query
-metrics, and readiness degradation metrics. It is intended for operators,
-agents, and incident tooling that need a quick view of API behavior without
-reading application logs first.
+metrics, readiness degradation metrics, and SLO burn-rate alert metrics. It is
+intended for operators, agents, and incident tooling that need a quick view of
+API behavior without reading application logs first.
 
 The metric series are intentionally low cardinality:
 
@@ -79,3 +79,31 @@ Incident workflow:
 3. Copy the latest `request_id` or `correlation_id` into structured log
    search to inspect the matching `/readyz` probe and adjacent startup logs.
 4. Treat absent tenant identifiers as expected for unauthenticated probes.
+
+## SLO Burn-Rate Alerts
+
+SLO burn-rate alert metrics live under `data.slo_burn_rates`. Series are
+grouped only by:
+
+- `objective` such as `api_availability`
+- `window` (`1m`, `5m`, `15m`, `30m`, `1h`, `6h`, or `24h`)
+- `severity` (`page`, `ticket`, or `info`)
+- `status` (`firing`, `resolved`, or `suppressed`)
+- `signal` such as `http_5xx_ratio`
+
+Each series includes `last_burn_rate`, `last_error_budget_pct`, and the latest
+safe request, correlation, organization, principal, resource, and job hints.
+Those identifiers are for log joins during incidents; do not use them as
+dashboard labels. Unknown or unsafe label values collapse to `unknown` or
+`other`, and unsafe identifiers are omitted.
+
+Incident workflow:
+
+1. Alert on `data.slo_burn_rates.series` where `status="firing"` and the
+   `last_burn_rate` exceeds the objective's configured paging threshold.
+2. Use `objective`, `window`, `severity`, and `signal` to identify the affected
+   SLO and source signal without grouping by tenant identifiers.
+3. Copy the latest `request_id`, `correlation_id`, or `job_id` into structured
+   log search to find the concrete request or worker execution.
+4. Use organization/resource hints only after confirming the matching log or
+   job row; absent hints are expected for global process objectives.

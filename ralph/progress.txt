@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- SLO burn-rate metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness metrics: `telemetry.SLOBurnRateMetrics` groups by `(objective, window, severity, status, signal)`, stores burn-rate/error-budget numbers plus request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.slo_burn_rates`.
 - Readiness degradation metrics follow the existing low-cardinality telemetry collector pattern: `/readyz` emits one `telemetry.ReadinessDegradationMetrics` observation per configured dependency gate, grouped by `(check, status, reason)` with request/correlation/org/principal/job IDs kept only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.readiness_degradation`.
 - Store slow-query observability is centralized at the `store.Store` boundary, not inside individual repositories: `Store.Read`/`Write`, `Tx`, and the read-only querier wrappers observe query duration, emit logs only after the slow threshold, and record `telemetry.SlowQueryMetrics` grouped by `(operation, query_kind, outcome)`. The signal deliberately omits SQL text, bind args, table names, DSNs, and driver error strings; request/correlation/org/principal/resource/job IDs are latest-sample incident hints exposed under `/metrics` as `data.slow_queries`.
 - Trace-span metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.TraceSpanMetrics` groups by `(name, kind, route, component, outcome, status_class, error_code)`, stores request/correlation/org/principal/resource/job IDs plus redacted targets only as latest-sample incident hints, is emitted by `telemetry.TraceHTTPSpans` for HTTP server spans, and `/metrics` exposes the snapshot under `data.trace_spans`.
@@ -300,6 +301,7 @@
   - The envelope renderer can expose telemetry-only metadata via a tiny structural interface on `http.ResponseWriter`; this avoids parsing JSON response bodies and avoids an import cycle from `apienvelope` to `telemetry`.
   - Keep high-cardinality org/principal/resource/job IDs as log-join hints only; use `method`, `route`, `status_class`, `outcome`, and `error_code` for dashboard filters.
 ---
+
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
 - Optimistic concurrency on mutable customer-data tables: migration 0011 adds a bigint version column (DEFAULT 1, CHECK > 0) + bump_version() BEFORE UPDATE trigger to organizations/projects/environments/services. The trigger overwrites NEW.version with OLD.version+1 on every UPDATE (including no-op data UPDATEs), so the application cannot freeze the sequence. Repository UPDATE methods accept ifMatchVersion *int64: nil = no precondition, non-nil = WHERE id=$1 AND version=$N; on no rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (apierr.ConflictStale carrying the row's current version). Service-layer Update/ScheduleDeletion also pre-check the version after the read so a no-op data patch still surfaces the conflict against the right row. The HTTP layer parses RFC 7232 strong ETag values (`"<n>"`, lenient unquoted form accepted; weak/wildcard/multi-value rejected as 400 E_INVALID_INPUT) from If-Match, mirrors the row's authoritative version into the ETag response header on every success path (GET/POST/PATCH/DELETE), and surfaces stale writes as 409 E_CONFLICT carrying current_version under the new structured error.details map (apierr.DetailKeyCurrentVersion). yerr.Error.Details (map[string]string, set by WithDetail) is the agent-friendly counterpart to Hint; apienvelope renders it through the same regex redaction backstop used for Message/Hint.
 - Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.
@@ -38090,4 +38092,46 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Readiness telemetry should live beside the existing in-memory collectors in `internal/controlplane/telemetry` and be injected through `NewHandler` route options for deterministic tests.
   - `/readyz` records one observation per configured gate, not one aggregate process-level row, so operators can see the specific blocking dependency without high-cardinality labels.
+---
+## 2026-05-19 11:52 +03 - BE-0374
+- What was implemented
+  - Added `telemetry.SLOBurnRateMetrics` with low-cardinality `(objective, window, severity, status, signal)` series and safe latest-sample request/correlation/org/principal/resource/job hints.
+  - Exposed the SLO burn-rate snapshot from `GET /metrics` under `data.slo_burn_rates`.
+  - Added telemetry tests for firing/resolved observations, bounded labels, safe identifier handling, and numeric clamping.
+  - Extended the `/metrics` contract test and operator documentation for burn-rate incident workflows.
+  - Marked BE-0374 passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `docs/operations/http-request-metrics.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/telemetry ./internal/controlplane/httpapi -run 'TestSLOBurnRate|TestMetricsEndpointReturnsEnvelopeSnapshot'` (red first, then green)
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed on the interactive shell PATH.
+  - No Postgres-backed integration tests were required by this observability-only story; the migration/policy/quota/fake-Dokploy filters were still run and passed according to the existing harness behavior.
+- Remaining risks or follow-ups
+  - This story adds the in-process alert signal and `/metrics` projection; future alert-manager/exporter integration can consume `data.slo_burn_rates` without adding tenant IDs as labels.
+- **Learnings for future iterations:**
+  - SLO burn-rate alert observations should use objective/window/severity/status/signal as the only grouping dimensions and keep org/resource/job data as latest-sample hints for log joins.
+  - Bound unknown SLO label values to `unknown` or `other`, and clamp negative or non-finite numeric values before they can enter the JSON metrics snapshot.
 ---

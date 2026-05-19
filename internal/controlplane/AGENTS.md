@@ -153,6 +153,11 @@ do not mix customer API handlers into CLI packages.
   reason)`. Request/correlation/org/principal/job identifiers are latest-sample
   hints only, and `/metrics` exposes the snapshot under
   `data.readiness_degradation`.
+- SLO burn-rate metrics follow the same low-cardinality collector pattern:
+  `telemetry.SLOBurnRateMetrics` groups only by `(objective, window, severity,
+  status, signal)`. Request/correlation/org/principal/resource/job identifiers
+  and the latest burn-rate numbers are incident hints only, and `/metrics`
+  exposes the snapshot under `data.slo_burn_rates`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

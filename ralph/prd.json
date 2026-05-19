@@ -8015,8 +8015,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: SLO burn-rate alerts."
+      "passes": true,
+      "notes": "Implemented SLO burn-rate alert metrics with low-cardinality objective/window/severity/status/signal series, safe latest-sample request/correlation/org/principal/resource/job hints, /metrics exposure under data.slo_burn_rates, telemetry and HTTP contract coverage, and operator documentation."
     },
     {
       "id": "BE-0375",

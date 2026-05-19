@@ -23,9 +23,24 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	traceMetrics := telemetry.NewTraceSpanMetrics()
 	slowQueryMetrics := telemetry.NewSlowQueryMetrics()
 	readinessMetrics := telemetry.NewReadinessDegradationMetrics()
+	sloMetrics := telemetry.NewSLOBurnRateMetrics()
 	readiness := runtime.NewReadiness("database", "migrations", "queue")
 	readiness.MarkReady("migrations")
 	readiness.MarkReady("queue")
+	sloMetrics.RecordSLOBurnRate(telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_slo_metrics",
+		CorrelationID: "corr_slo_metrics",
+	}), telemetry.SLOBurnRateObservation{
+		Objective:      "api_availability",
+		Window:         "5m",
+		Severity:       "page",
+		Status:         "firing",
+		Signal:         "http_5xx_ratio",
+		BurnRate:       12,
+		ErrorBudgetPct: 1.5,
+		OrganizationID: "org_metrics_slo",
+		JobID:          "job_metrics_slo",
+	})
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
 		Path:       "/api/projects/proj_metrics_probe",
@@ -67,7 +82,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	handler := NewHandler(
 		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
-		traceMetrics, slowQueryMetrics, readinessMetrics,
+		traceMetrics, slowQueryMetrics, readinessMetrics, sloMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -105,6 +120,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			TraceSpans          telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
 			SlowQueries         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
 			Readiness           telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
+			SLOBurnRates        telemetry.SLOBurnRateMetricsSnapshot       `json:"slo_burn_rates"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -154,6 +170,12 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if env.Data.Readiness.TotalProbes == 0 {
 		t.Fatalf("readiness total_probes = %d, want readyz probe observations", env.Data.Readiness.TotalProbes)
+	}
+	if env.Data.SLOBurnRates.TotalObservations != 1 {
+		t.Fatalf("slo burn-rate total_observations = %d, want 1", env.Data.SLOBurnRates.TotalObservations)
+	}
+	if len(env.Data.SLOBurnRates.Series) != 1 || env.Data.SLOBurnRates.Series[0].Objective != "api_availability" || env.Data.SLOBurnRates.Series[0].OrganizationID != "org_metrics_slo" {
+		t.Fatalf("slo burn-rate series = %+v, want api_availability with safe org hint", env.Data.SLOBurnRates.Series)
 	}
 	foundReadyzFailure := false
 	for _, series := range env.Data.Readiness.Series {

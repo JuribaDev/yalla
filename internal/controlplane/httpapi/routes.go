@@ -62,6 +62,7 @@ type metricsSnapshot struct {
 	TraceSpanSnapshot         telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
 	SlowQuerySnapshot         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
 	ReadinessSnapshot         telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
+	SLOBurnRateSnapshot       telemetry.SLOBurnRateMetricsSnapshot       `json:"slo_burn_rates"`
 }
 
 // healthzPayload is the data block of the GET /healthz success envelope.
@@ -227,6 +228,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	traceMetrics := telemetry.DefaultTraceSpanMetrics
 	slowQueryMetrics := telemetry.DefaultSlowQueryMetrics
 	readinessMetrics := telemetry.DefaultReadinessDegradationMetrics
+	sloBurnRateMetrics := telemetry.DefaultSLOBurnRateMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -294,6 +296,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(*telemetry.ReadinessDegradationMetrics); ok && v != nil {
 			readinessMetrics = v
 		}
+		if v, ok := opt.(*telemetry.SLOBurnRateMetrics); ok && v != nil {
+			sloBurnRateMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -319,7 +324,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Path:               "/metrics",
 				OperationID:        "getMetrics",
 				Summary:            "Read operational metrics",
-				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, distributed trace-span metrics, private Dokploy dependency metrics, quota usage decision metrics, audit-log append metrics, policy authorization decision metrics, datastore slow-query metrics, and readiness degradation metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; trace spans are grouped by span name, kind, matched route, component, outcome, status class, and stable error code; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code; policy decision series are grouped by action, resource kind, allow/deny decision, and stable policy reason; slow-query series are grouped only by store operation, SQL statement kind, and success/error outcome; readiness series are grouped by dependency check, passing/failing status, and bounded reason. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use trace_spans to find slow or failing spans by route/component/outcome, slow_queries to identify datastore pressure by statement kind, and readiness_degradation to identify the failing startup dependency gate, then join the latest request_id/correlation_id to structured logs before investigating tenant/resource identifiers. Secrets in request targets, Dokploy endpoint values, and SQL text are redacted or omitted before storage, and metric identifiers are emitted only when they pass the safe correlation-id character set.",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, distributed trace-span metrics, private Dokploy dependency metrics, quota usage decision metrics, audit-log append metrics, policy authorization decision metrics, datastore slow-query metrics, readiness degradation metrics, and SLO burn-rate alert metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; trace spans are grouped by span name, kind, matched route, component, outcome, status class, and stable error code; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code; policy decision series are grouped by action, resource kind, allow/deny decision, and stable policy reason; slow-query series are grouped only by store operation, SQL statement kind, and success/error outcome; readiness series are grouped by dependency check, passing/failing status, and bounded reason; SLO burn-rate series are grouped by objective, window, severity, firing status, and source signal. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use trace_spans to find slow or failing spans by route/component/outcome, slow_queries to identify datastore pressure by statement kind, readiness_degradation to identify the failing startup dependency gate, and slo_burn_rates to identify budget-consuming API or worker objectives, then join the latest request_id/correlation_id to structured logs before investigating tenant/resource identifiers. Secrets in request targets, Dokploy endpoint values, SQL text, and submitted signal names are redacted or bounded before storage, and metric identifiers are emitted only when they pass the safe correlation-id character set.",
 				Tags:               []string{tagOperations},
 				SuccessDescription: "The current in-process operational metric snapshot.",
 			},
@@ -333,6 +338,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 					TraceSpanSnapshot:         traceMetrics.Snapshot(),
 					SlowQuerySnapshot:         slowQueryMetrics.Snapshot(),
 					ReadinessSnapshot:         readinessMetrics.Snapshot(),
+					SLOBurnRateSnapshot:       sloBurnRateMetrics.Snapshot(),
 				})
 			},
 		},
