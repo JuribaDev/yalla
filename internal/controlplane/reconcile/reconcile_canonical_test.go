@@ -117,6 +117,7 @@ var reconcileDriftReasons = []reconcile.DriftReason{
 	reconcile.ReasonEnvVarMissing,
 	reconcile.ReasonEnvVarExtra,
 	reconcile.ReasonBuildConfigChanged,
+	reconcile.ReasonCronScheduleChanged,
 	reconcile.ReasonDomainMissing,
 	reconcile.ReasonDomainRenamed,
 	reconcile.ReasonServiceMissing,
@@ -136,6 +137,7 @@ var reconcileActionTypes = []reconcile.ActionType{
 	reconcile.ActionEnsureDomain,
 	reconcile.ActionRemoveExtraEnvVar,
 	reconcile.ActionUpdateBuildConfig,
+	reconcile.ActionUpdateCronSchedule,
 	reconcile.ActionReviewMissingService,
 	reconcile.ActionReviewMissingDatabase,
 	reconcile.ActionReviewRenamedDomain,
@@ -361,6 +363,25 @@ func reconcileScenarios() []reconcileScenario {
 			},
 			reasonTag:       reconcile.ReasonBuildConfigChanged,
 			typeTag:         reconcile.ActionUpdateBuildConfig,
+			seedValueMarker: true,
+		},
+		{
+			name: "cron schedule drift emits cron_schedule_changed safe update",
+			mutator: func(d *reconcile.DesiredOrganization, a *reconcile.ActualOrganization) {
+				d.Projects[0].Environments[0].Services[0].Role = dokploy.RoleCron
+				d.Projects[0].Environments[0].Services[0].CronSchedule = "0 2 * * * " + reconcileSecretMarker
+				d.Projects[0].Environments[0].Services[0].Domains = nil
+				a.Projects[0].Environments[0].Services[0].Role = dokploy.RoleCron
+				a.Projects[0].Environments[0].Services[0].CronSchedule = "15 3 * * *"
+				a.Projects[0].Environments[0].Services[0].Domains = nil
+			},
+			expect: reconcileExpect{
+				reason:     reconcile.ReasonCronScheduleChanged,
+				kind:       reconcile.DriftSafe,
+				actionType: reconcile.ActionUpdateCronSchedule,
+			},
+			reasonTag:       reconcile.ReasonCronScheduleChanged,
+			typeTag:         reconcile.ActionUpdateCronSchedule,
 			seedValueMarker: true,
 		},
 		{
@@ -774,6 +795,7 @@ func reconcileCheckOutcome(row reconcileScenario, plan reconcile.Plan) *reconcil
 				a.DesiredBuild.GitBranch,
 				a.DesiredBuild.GitCommit,
 				a.DesiredBuild.ArtifactURL,
+				a.DesiredCronSchedule,
 			} {
 				if strings.Contains(field, reconcileSecretMarker) {
 					markerInValueRoute = true

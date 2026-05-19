@@ -7027,7 +7027,7 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Drift coverage for cron."
     },
     {

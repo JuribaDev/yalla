@@ -641,10 +641,12 @@ type fakeRepairer struct {
 	envCalls    []envCall
 	removeCalls []removeCall
 	buildCalls  []buildCall
+	cronCalls   []cronCall
 	domainCalls []domainCall
 	envErr      error
 	removeErr   error
 	buildErr    error
+	cronErr     error
 	domainErr   error
 	mu          sync.Mutex
 }
@@ -664,6 +666,11 @@ type removeCall struct {
 type buildCall struct {
 	Ref   reconcile.ServiceRef
 	Build dokploy.BuildSettings
+}
+
+type cronCall struct {
+	Ref      reconcile.ServiceRef
+	Schedule string
 }
 
 type domainCall struct {
@@ -690,6 +697,13 @@ func (f *fakeRepairer) UpdateBuildConfig(_ context.Context, ref reconcile.Servic
 	defer f.mu.Unlock()
 	f.buildCalls = append(f.buildCalls, buildCall{Ref: ref, Build: build})
 	return f.buildErr
+}
+
+func (f *fakeRepairer) UpdateCronSchedule(_ context.Context, ref reconcile.ServiceRef, schedule string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cronCalls = append(f.cronCalls, cronCall{Ref: ref, Schedule: schedule})
+	return f.cronErr
 }
 
 func (f *fakeRepairer) EnsureDomain(_ context.Context, ref reconcile.ServiceRef, d reconcile.DesiredDomain) error {

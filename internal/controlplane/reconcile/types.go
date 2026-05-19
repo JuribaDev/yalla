@@ -51,6 +51,9 @@ const (
 	// ActionUpdateBuildConfig repairs a managed service whose Dokploy build
 	// settings drifted from Yalla's desired state.
 	ActionUpdateBuildConfig ActionType = "update_build_config"
+	// ActionUpdateCronSchedule repairs a managed cron service whose schedule
+	// drifted from Yalla's desired state.
+	ActionUpdateCronSchedule ActionType = "update_cron_schedule"
 	// ActionReviewMissingService records that a managed service has vanished
 	// from Dokploy.
 	ActionReviewMissingService ActionType = "review_missing_service"
@@ -91,6 +94,9 @@ const (
 	// settings differ from source of truth. Never carries the branch,
 	// commit, image, artifact URL, or path itself.
 	ReasonBuildConfigChanged DriftReason = "build_config_changed"
+	// ReasonCronScheduleChanged is emitted when a managed cron service's
+	// schedule differs from source of truth. Never carries the schedule value.
+	ReasonCronScheduleChanged DriftReason = "cron_schedule_changed"
 	// ReasonDomainMissing is emitted when a desired domain is absent on
 	// Dokploy.
 	ReasonDomainMissing DriftReason = "domain_missing"
@@ -183,6 +189,9 @@ type DesiredService struct {
 	// Build is the source-of-truth build configuration for application and
 	// compose services. It is ignored for database services.
 	Build dokploy.BuildSettings
+	// CronSchedule is the source-of-truth schedule for cron role services. It
+	// is ignored for web, worker, and database services.
+	CronSchedule string
 	// Engine is the database engine; required when Type is ServiceDatabase
 	// and ignored otherwise.
 	Engine string
@@ -246,9 +255,11 @@ type ActualService struct {
 	Type      dokploy.ServiceType
 	Role      dokploy.ServiceRole
 	Build     dokploy.BuildSettings
-	Engine    string
-	EnvVars   []ActualEnvVar
-	Domains   []ActualDomain
+	// CronSchedule is set for actual cron role services.
+	CronSchedule string
+	Engine       string
+	EnvVars      []ActualEnvVar
+	Domains      []ActualDomain
 }
 
 // ActualEnvironment is one environment read from Dokploy.

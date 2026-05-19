@@ -43,6 +43,12 @@ produces a deterministic Plan of actions classified as `DriftSafe`,
   repairs. Desired domains are web-only; for non-web desired roles, ignore
   desired domains so a bad adapter cannot auto-bind inbound HTTP to a worker
   or cron process.
+- **Cron schedule drift is safe only after role matches.** For desired
+  `RoleCron` services, compare trimmed cron schedules after service type and
+  role subtype checks. A mismatch emits `ActionUpdateCronSchedule` /
+  `ReasonCronScheduleChanged`; the schedule value travels only through
+  `Action.DesiredCronSchedule` to the Repairer and never through
+  classification fields, review events, logs, or unmanaged records.
 - **Unmanaged means quarantine, never delete.** A Dokploy resource without a
   Yalla counterpart is recorded via `UnmanagedRecorder` only. The engine
   never auto-deletes unmanaged resources and adapters never expose them on a

@@ -39,6 +39,9 @@ type Action struct {
 	// private repo refs or image/artifact locations and must only be consumed
 	// by a Repairer adapter.
 	DesiredBuild dokploy.BuildSettings
+	// DesiredCronSchedule is set for ActionUpdateCronSchedule. It can contain
+	// customer workflow timing and must only be consumed by a Repairer adapter.
+	DesiredCronSchedule string
 	// DesiredService is set for ActionEnsureService and review actions that
 	// need to communicate the desired service shape downstream.
 	DesiredService *DesiredService
@@ -298,12 +301,31 @@ func diffService(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService
 		// runtime shape no longer matches Yalla's source of truth.
 		return
 	}
+	diffCronSchedule(plan, ref, ds, as)
 	diffBuild(plan, ref, ds, as)
 	diffEnvVars(plan, ref, ds, as)
 	if normaliseRole(ds.Role) != "" && normaliseRole(ds.Role) != string(dokploy.RoleWeb) {
 		ds.Domains = nil
 	}
 	diffDomains(plan, ref, ds, as)
+}
+
+func diffCronSchedule(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService) {
+	if normaliseRole(ds.Role) != string(dokploy.RoleCron) {
+		return
+	}
+	desired := strings.TrimSpace(ds.CronSchedule)
+	actual := strings.TrimSpace(as.CronSchedule)
+	if desired == actual {
+		return
+	}
+	plan.Actions = append(plan.Actions, Action{
+		Type:                ActionUpdateCronSchedule,
+		Kind:                DriftSafe,
+		Reason:              ReasonCronScheduleChanged,
+		Service:             ref,
+		DesiredCronSchedule: desired,
+	})
 }
 
 func diffBuild(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService) {

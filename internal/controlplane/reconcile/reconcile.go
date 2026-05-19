@@ -44,6 +44,9 @@ type Repairer interface {
 	// UpdateBuildConfig converges the service's build settings to the
 	// desired source-of-truth spec.
 	UpdateBuildConfig(ctx context.Context, ref ServiceRef, build dokploy.BuildSettings) error
+	// UpdateCronSchedule converges a cron service's schedule to the desired
+	// source-of-truth spec.
+	UpdateCronSchedule(ctx context.Context, ref ServiceRef, schedule string) error
 	// EnsureDomain re-binds the desired domain on the Dokploy service named
 	// by ref.
 	EnsureDomain(ctx context.Context, ref ServiceRef, d DesiredDomain) error
@@ -268,6 +271,8 @@ func (r *Reconciler) applySafe(ctx context.Context, action Action) error {
 		return r.repairer.RemoveEnvVar(ctx, action.Service, action.EnvVarKey)
 	case ActionUpdateBuildConfig:
 		return r.repairer.UpdateBuildConfig(ctx, action.Service, action.DesiredBuild)
+	case ActionUpdateCronSchedule:
+		return r.repairer.UpdateCronSchedule(ctx, action.Service, action.DesiredCronSchedule)
 	case ActionEnsureDomain:
 		if action.DesiredDomain == nil {
 			return apierr.Internal(stderrors.New("reconcile: ensure_domain action with no payload"))
