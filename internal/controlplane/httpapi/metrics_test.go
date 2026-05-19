@@ -21,6 +21,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	auditMetrics := telemetry.NewAuditEventMetrics()
 	policyMetrics := telemetry.NewPolicyDecisionMetrics()
 	traceMetrics := telemetry.NewTraceSpanMetrics()
+	slowQueryMetrics := telemetry.NewSlowQueryMetrics()
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
 		Path:       "/api/projects/proj_metrics_probe",
@@ -54,10 +55,15 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		OrganizationID: "org_metrics_policy",
 		ResourceID:     "proj_metrics_policy",
 	})
+	slowQueryMetrics.RecordSlowQuery(context.Background(), telemetry.SlowQueryObservation{
+		Operation: "read",
+		QueryKind: "select",
+		Outcome:   "success",
+	})
 	handler := NewHandler(
 		runtime.BuildInfo{Version: "test"}, nil, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
-		traceMetrics,
+		traceMetrics, slowQueryMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -88,6 +94,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			AuditEvents         telemetry.AuditEventMetricsSnapshot        `json:"audit_events"`
 			PolicyDecisions     telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
 			TraceSpans          telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
+			SlowQueries         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -128,6 +135,12 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if env.Data.TraceSpans.TotalSpans < 2 {
 		t.Fatalf("trace total_spans = %d, want at least healthz and missing spans", env.Data.TraceSpans.TotalSpans)
+	}
+	if env.Data.SlowQueries.TotalQueries != 1 {
+		t.Fatalf("slow query total_queries = %d, want 1", env.Data.SlowQueries.TotalQueries)
+	}
+	if len(env.Data.SlowQueries.Series) != 1 || env.Data.SlowQueries.Series[0].Operation != "read" || env.Data.SlowQueries.Series[0].QueryKind != "select" {
+		t.Fatalf("slow query series = %+v, want read/select metric", env.Data.SlowQueries.Series)
 	}
 	foundRequestFailure := false
 	for _, metric := range env.Data.Requests {

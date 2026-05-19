@@ -38,6 +38,10 @@ var DefaultAuditEventMetrics = NewAuditEventMetrics()
 // their own collector.
 var DefaultPolicyDecisionMetrics = NewPolicyDecisionMetrics()
 
+// DefaultSlowQueryMetrics is the process-wide datastore slow-query collector
+// used by the store unless tests or embedders inject their own collector.
+var DefaultSlowQueryMetrics = NewSlowQueryMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -451,6 +455,60 @@ type policyDecisionMetricSeries struct {
 	PolicyDecisionMetric
 }
 
+// SlowQueryObservation is one datastore query observation that exceeded the
+// configured slow-query threshold. Operation, QueryKind, and Outcome are the
+// only aggregate dimensions; identifiers are latest-sample incident hints.
+type SlowQueryObservation struct {
+	Operation string
+	QueryKind string
+	Outcome   string
+	Duration  time.Duration
+	Threshold time.Duration
+}
+
+// SlowQueryMetric is one aggregate datastore slow-query series.
+type SlowQueryMetric struct {
+	Operation       string `json:"operation"`
+	QueryKind       string `json:"query_kind"`
+	Outcome         string `json:"outcome"`
+	Count           int64  `json:"count"`
+	TotalDurationMS int64  `json:"total_duration_ms"`
+	LastDurationMS  int64  `json:"last_duration_ms"`
+	ThresholdMS     int64  `json:"threshold_ms"`
+	RequestID       string `json:"request_id,omitempty"`
+	CorrelationID   string `json:"correlation_id,omitempty"`
+	OrganizationID  string `json:"organization_id,omitempty"`
+	PrincipalID     string `json:"principal_id,omitempty"`
+	ResourceKind    string `json:"resource_kind,omitempty"`
+	ResourceID      string `json:"resource_id,omitempty"`
+	JobID           string `json:"job_id,omitempty"`
+}
+
+// SlowQueryMetricsSnapshot is the JSON-serializable operational view exposed
+// to operators, tests, and metrics endpoints.
+type SlowQueryMetricsSnapshot struct {
+	TotalQueries int64             `json:"total_queries"`
+	Series       []SlowQueryMetric `json:"series"`
+}
+
+// SlowQueryMetrics stores low-cardinality datastore slow-query counters. It is
+// safe for concurrent use by API and worker goroutines.
+type SlowQueryMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[slowQueryMetricKey]*slowQueryMetricSeries
+}
+
+type slowQueryMetricKey struct {
+	operation string
+	queryKind string
+	outcome   string
+}
+
+type slowQueryMetricSeries struct {
+	SlowQueryMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -481,6 +539,11 @@ func NewAuditEventMetrics() *AuditEventMetrics {
 // metrics collector.
 func NewPolicyDecisionMetrics() *PolicyDecisionMetrics {
 	return &PolicyDecisionMetrics{series: make(map[policyDecisionMetricKey]*policyDecisionMetricSeries)}
+}
+
+// NewSlowQueryMetrics returns an empty datastore slow-query metrics collector.
+func NewSlowQueryMetrics() *SlowQueryMetrics {
+	return &SlowQueryMetrics{series: make(map[slowQueryMetricKey]*slowQueryMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -677,6 +740,35 @@ func (m *PolicyDecisionMetrics) Snapshot() PolicyDecisionMetricsSnapshot {
 			return a.Decision < b.Decision
 		}
 		return a.Reason < b.Reason
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all datastore slow-query metrics
+// currently held by the collector.
+func (m *SlowQueryMetrics) Snapshot() SlowQueryMetricsSnapshot {
+	if m == nil {
+		return SlowQueryMetricsSnapshot{Series: []SlowQueryMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := SlowQueryMetricsSnapshot{
+		TotalQueries: m.total,
+		Series:       make([]SlowQueryMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.SlowQueryMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Operation != b.Operation {
+			return a.Operation < b.Operation
+		}
+		if a.QueryKind != b.QueryKind {
+			return a.QueryKind < b.QueryKind
+		}
+		return a.Outcome < b.Outcome
 	})
 	return out
 }
@@ -1011,6 +1103,60 @@ func (m *HTTPMetrics) record(r *http.Request, status, bytes int, latency time.Du
 	series.Target = target
 }
 
+// RecordSlowQuery aggregates one datastore slow-query observation.
+func (m *SlowQueryMetrics) RecordSlowQuery(ctx context.Context, event SlowQueryObservation) {
+	if m == nil {
+		return
+	}
+	operation := metricStoreOperation(event.Operation)
+	queryKind := metricQueryKind(event.QueryKind)
+	outcome := metricStoreOutcome(event.Outcome)
+	durationMS := event.Duration.Milliseconds()
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	thresholdMS := event.Threshold.Milliseconds()
+	if thresholdMS < 0 {
+		thresholdMS = 0
+	}
+
+	corr := FromContext(ctx)
+	orgID, principalID, resourceKind, resourceID, jobID := "", "", "", "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ = f.logSnapshot()
+	}
+
+	key := slowQueryMetricKey{
+		operation: operation,
+		queryKind: queryKind,
+		outcome:   outcome,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &slowQueryMetricSeries{SlowQueryMetric: SlowQueryMetric{
+			Operation: operation,
+			QueryKind: queryKind,
+			Outcome:   outcome,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.TotalDurationMS += durationMS
+	series.LastDurationMS = durationMS
+	series.ThresholdMS = thresholdMS
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.ResourceKind = safeMetricID(resourceKind)
+	series.ResourceID = safeMetricID(resourceID)
+	series.JobID = safeMetricID(jobID)
+}
+
 func metricMethod(method string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
@@ -1078,6 +1224,39 @@ func metricJobQueueEvent(event JobQueueEventName) JobQueueEventName {
 		return event
 	default:
 		return "other"
+	}
+}
+
+func metricStoreOperation(operation string) string {
+	switch strings.TrimSpace(operation) {
+	case "read", "write":
+		return strings.TrimSpace(operation)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricQueryKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "select", "insert", "update", "delete", "with", "begin", "commit", "rollback":
+		return strings.ToLower(strings.TrimSpace(kind))
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricStoreOutcome(outcome string) string {
+	switch strings.TrimSpace(outcome) {
+	case "success", "error":
+		return strings.TrimSpace(outcome)
+	case "":
+		return "unknown"
+	default:
+		return "error"
 	}
 }
 

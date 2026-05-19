@@ -139,6 +139,14 @@ do not mix customer API handlers into CLI packages.
   `policy.WithDecisionMetrics`; production engines default to
   `telemetry.DefaultPolicyDecisionMetrics`, and `/metrics` exposes the snapshot
   under `data.policy_decisions`.
+- Datastore slow-query observability follows the same low-cardinality collector
+  pattern: `store.Store` observes repository calls at the `Read`/`Write`
+  boundary, emits warning logs only after the slow-query threshold is exceeded,
+  and records `telemetry.SlowQueryMetrics` grouped by `(operation, query_kind,
+  outcome)`. SQL text, bind values, table names, DSNs, and driver error strings
+  must not be logged or stored; request/correlation/org/principal/resource/job
+  identifiers are latest-sample incident hints only, exposed under
+  `/metrics` as `data.slow_queries`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

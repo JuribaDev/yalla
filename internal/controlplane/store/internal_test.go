@@ -1,13 +1,18 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -41,6 +46,99 @@ func TestValidateCreateProjectInputAccepted(t *testing.T) {
 	if got.Slug != "web-api" || got.DisplayName != "Web API" {
 		t.Errorf("validateCreateProjectInput = %+v, want slug/name web-api/Web API", got)
 	}
+}
+
+func TestStoreObserveSlowQueryEmitsLogAndMetricWithSafeCorrelation(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	metrics := telemetry.NewSlowQueryMetrics()
+	s := &Store{
+		logger:             logger,
+		slowQueryThreshold: 100 * time.Millisecond,
+		slowQueryMetrics:   metrics,
+	}
+	ctx := telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_store_slow_query",
+		CorrelationID: "corr_store_slow_query",
+	})
+	ctx = telemetry.WithLogFields(ctx)
+	telemetry.SetOrgID(ctx, "org_store_slow")
+	telemetry.SetPrincipalID(ctx, "usr_store_slow")
+	telemetry.SetResource(ctx, "project", "proj_store_slow")
+	telemetry.SetJobID(ctx, "job_store_slow")
+
+	s.observeQuery(ctx, "read", "SELECT * FROM api_keys WHERE secret_hash = 'super-secret-token'", 150*time.Millisecond, nil)
+
+	raw := buf.String()
+	if raw == "" {
+		t.Fatal("slow query log was not emitted")
+	}
+	if strings.Contains(raw, "super-secret-token") || strings.Contains(raw, "api_keys") || strings.Contains(raw, "secret_hash") {
+		t.Fatalf("slow query log leaked SQL text or secret material: %s", raw)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("decode slow query log: %v", err)
+	}
+	if record["msg"] != "store slow query observed" || record["operation"] != "read" || record["query_kind"] != "select" || record["outcome"] != "success" {
+		t.Fatalf("slow query log record = %+v, want low-cardinality operation/query_kind/outcome", record)
+	}
+	if record["request_id"] != "req_store_slow_query" || record["correlation_id"] != "corr_store_slow_query" ||
+		record["org_id"] != "org_store_slow" || record["principal_id"] != "usr_store_slow" ||
+		record["resource_kind"] != "project" || record["resource_id"] != "proj_store_slow" ||
+		record["job_id"] != "job_store_slow" {
+		t.Fatalf("slow query log correlation fields = %+v", record)
+	}
+
+	snapshot := metrics.Snapshot()
+	got := findStoreSlowQueryMetric(snapshot.Series, "read", "select", "success")
+	if got == nil {
+		t.Fatalf("missing slow query metric: %+v", snapshot.Series)
+	}
+	if got.RequestID != "req_store_slow_query" || got.OrganizationID != "org_store_slow" || got.ResourceID != "proj_store_slow" {
+		t.Fatalf("slow query metric hints = %+v, want request/org/resource hints", *got)
+	}
+}
+
+func TestStoreObserveQuerySkipsFastQueriesAndRecordsFailures(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	metrics := telemetry.NewSlowQueryMetrics()
+	s := &Store{
+		logger:             slog.New(slog.NewJSONHandler(&buf, nil)),
+		slowQueryThreshold: 100 * time.Millisecond,
+		slowQueryMetrics:   metrics,
+	}
+
+	s.observeQuery(context.Background(), "write", "UPDATE projects SET display_name = $1", 99*time.Millisecond, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("fast query produced log: %s", buf.String())
+	}
+	if got := metrics.Snapshot().TotalQueries; got != 0 {
+		t.Fatalf("fast query metric count = %d, want 0", got)
+	}
+
+	s.observeQuery(context.Background(), "write", "UPDATE projects SET display_name = $1", 101*time.Millisecond, errors.New("postgres://user:secret@db/yalla"))
+	raw := buf.String()
+	if strings.Contains(raw, "postgres://user:secret@db/yalla") {
+		t.Fatalf("slow query failure log leaked error detail: %s", raw)
+	}
+	got := findStoreSlowQueryMetric(metrics.Snapshot().Series, "write", "update", "error")
+	if got == nil {
+		t.Fatalf("missing slow query failure metric: %+v", metrics.Snapshot().Series)
+	}
+}
+
+func findStoreSlowQueryMetric(metrics []telemetry.SlowQueryMetric, operation, queryKind, outcome string) *telemetry.SlowQueryMetric {
+	for i := range metrics {
+		if metrics[i].Operation == operation && metrics[i].QueryKind == queryKind && metrics[i].Outcome == outcome {
+			return &metrics[i]
+		}
+	}
+	return nil
 }
 
 func TestValidateCreateProjectInputTrimsWhitespace(t *testing.T) {

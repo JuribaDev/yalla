@@ -7977,8 +7977,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: slow query logging."
+      "passes": true,
+      "notes": "Implemented centralized store slow-query logging and metrics at the Read/Write boundary with low-cardinality operation/query_kind/outcome series, safe request/correlation/org/principal/resource/job hints, /metrics exposure, redaction tests, and operator documentation."
     },
     {
       "id": "BE-0373",

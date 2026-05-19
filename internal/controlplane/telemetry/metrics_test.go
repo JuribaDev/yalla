@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequestMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
@@ -93,6 +94,102 @@ func TestRequestMetricsBoundsCardinalityAndRedactsTarget(t *testing.T) {
 func findHTTPRequestMetric(metrics []HTTPRequestMetric, method, route string, status int) *HTTPRequestMetric {
 	for i := range metrics {
 		if metrics[i].Method == method && metrics[i].Route == route && metrics[i].StatusCode == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
+func TestSlowQueryMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewSlowQueryMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req_slow_query", CorrelationID: "corr_slow_query"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org_slow_query")
+	SetPrincipalID(ctx, "usr_slow_query")
+	SetResource(ctx, "service", "svc_slow_query")
+	SetJobID(ctx, "job_slow_query")
+
+	metrics.RecordSlowQuery(ctx, SlowQueryObservation{
+		Operation: "read",
+		QueryKind: "select",
+		Outcome:   "success",
+		Duration:  1500 * time.Millisecond,
+		Threshold: 250 * time.Millisecond,
+	})
+	metrics.RecordSlowQuery(context.Background(), SlowQueryObservation{
+		Operation: "write",
+		QueryKind: "insert",
+		Outcome:   "error",
+		Duration:  275 * time.Millisecond,
+		Threshold: 250 * time.Millisecond,
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalQueries != 2 {
+		t.Fatalf("total_queries = %d, want 2", snapshot.TotalQueries)
+	}
+	read := findSlowQueryMetric(snapshot.Series, "read", "select", "success")
+	if read == nil {
+		t.Fatalf("missing read/select/success slow-query metric: %+v", snapshot.Series)
+	}
+	if read.Count != 1 || read.LastDurationMS != 1500 || read.ThresholdMS != 250 {
+		t.Errorf("read slow-query metric = %+v, want count=1 last=1500 threshold=250", *read)
+	}
+	if read.RequestID != "req_slow_query" || read.CorrelationID != "corr_slow_query" ||
+		read.OrganizationID != "org_slow_query" || read.PrincipalID != "usr_slow_query" ||
+		read.ResourceKind != "service" || read.ResourceID != "svc_slow_query" ||
+		read.JobID != "job_slow_query" {
+		t.Errorf("read slow-query hints = %+v, want request/resource/job correlation", *read)
+	}
+
+	write := findSlowQueryMetric(snapshot.Series, "write", "insert", "error")
+	if write == nil {
+		t.Fatalf("missing write/insert/error slow-query metric: %+v", snapshot.Series)
+	}
+	if write.RequestID != "" || write.OrganizationID != "" {
+		t.Errorf("write slow-query metric without context = %+v, want no unsafe identifiers", *write)
+	}
+}
+
+func TestSlowQueryMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewSlowQueryMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{
+		RequestID:     "req\nbad",
+		CorrelationID: "corr_slow_safe",
+	})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org bad")
+	SetPrincipalID(ctx, "usr_slow_safe")
+	SetResource(ctx, "service\nbad", "svc_slow_safe")
+
+	metrics.RecordSlowQuery(ctx, SlowQueryObservation{
+		Operation: "COPY users TO PROGRAM",
+		QueryKind: "select * from secrets where token='topsecret'",
+		Outcome:   "weird",
+		Duration:  time.Second,
+		Threshold: time.Millisecond,
+	})
+
+	snapshot := metrics.Snapshot()
+	got := findSlowQueryMetric(snapshot.Series, "other", "other", "error")
+	if got == nil {
+		t.Fatalf("missing bounded-cardinality slow-query metric: %+v", snapshot.Series)
+	}
+	if got.RequestID != "" || got.CorrelationID != "corr_slow_safe" {
+		t.Errorf("correlation hints = %q/%q, want unsafe request dropped and safe correlation kept", got.RequestID, got.CorrelationID)
+	}
+	if got.OrganizationID != "" || got.PrincipalID != "usr_slow_safe" || got.ResourceKind != "" || got.ResourceID != "svc_slow_safe" {
+		t.Errorf("identifier hints = %+v, want only SafeID-clean values", *got)
+	}
+}
+
+func findSlowQueryMetric(metrics []SlowQueryMetric, operation, queryKind, outcome string) *SlowQueryMetric {
+	for i := range metrics {
+		if metrics[i].Operation == operation && metrics[i].QueryKind == queryKind && metrics[i].Outcome == outcome {
 			return &metrics[i]
 		}
 	}

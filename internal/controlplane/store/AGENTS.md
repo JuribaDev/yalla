@@ -2,6 +2,15 @@
 
 Postgres persistence for control-plane source-of-truth state.
 
+## Observability
+
+- Slow-query logging is centralized in `Store.Read`, `Store.Write`, and the
+  transaction/query wrappers in `store.go`. Repository methods should not log
+  SQL themselves. The slow-query signal uses only `operation`, `query_kind`,
+  `outcome`, duration, threshold, and safe correlation hints; never add raw SQL,
+  bind parameters, table names, driver errors, DSNs, or secret-looking values to
+  the log or `telemetry.SlowQueryMetrics`.
+
 ## Migrations (`store/migrate`)
 
 - Schema changes are **versioned SQL files**, never ad-hoc DDL. They live in

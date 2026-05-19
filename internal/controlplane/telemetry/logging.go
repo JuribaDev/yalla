@@ -38,6 +38,14 @@ func withRequestFields(ctx context.Context) context.Context {
 	return context.WithValue(ctx, fieldsKey{}, &requestFields{})
 }
 
+// WithLogFields returns a child context that can be enriched through SetOrgID,
+// SetPrincipalID, SetResource, and SetJobID outside the HTTP request logging
+// middleware. Worker and store code can use it when they need the same safe
+// incident-hint fields as an HTTP request context.
+func WithLogFields(ctx context.Context) context.Context {
+	return withRequestFields(ctx)
+}
+
 func fieldsFromContext(ctx context.Context) *requestFields {
 	if ctx == nil {
 		return nil
@@ -114,6 +122,40 @@ func (f *requestFields) logSnapshot() (orgID, principalID, resourceKind, resourc
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.orgID, f.principalID, f.resourceKind, f.resourceID, f.jobID, f.errorCode
+}
+
+// LogHintAttrs returns the safe correlation and request hint attributes stored
+// on ctx. It is for non-HTTP observability emitters such as datastore slow
+// query logging that need to join back to request or job logs without logging
+// request bodies, headers, SQL text, or other secret-bearing values.
+func LogHintAttrs(ctx context.Context) []any {
+	var attrs []any
+	c := FromContext(ctx)
+	if SafeID(c.RequestID) {
+		attrs = append(attrs, slog.String("request_id", c.RequestID))
+	}
+	if SafeID(c.CorrelationID) {
+		attrs = append(attrs, slog.String("correlation_id", c.CorrelationID))
+	}
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ := f.logSnapshot()
+		if SafeID(orgID) {
+			attrs = append(attrs, slog.String("org_id", orgID))
+		}
+		if SafeID(principalID) {
+			attrs = append(attrs, slog.String("principal_id", principalID))
+		}
+		if SafeID(resourceKind) {
+			attrs = append(attrs, slog.String("resource_kind", resourceKind))
+		}
+		if SafeID(resourceID) {
+			attrs = append(attrs, slog.String("resource_id", resourceID))
+		}
+		if SafeID(jobID) {
+			attrs = append(attrs, slog.String("job_id", jobID))
+		}
+	}
+	return attrs
 }
 
 // logRedactor scrubs well-known secret transport patterns (Authorization

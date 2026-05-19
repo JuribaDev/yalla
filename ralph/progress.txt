@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Store slow-query observability is centralized at the `store.Store` boundary, not inside individual repositories: `Store.Read`/`Write`, `Tx`, and the read-only querier wrappers observe query duration, emit logs only after the slow threshold, and record `telemetry.SlowQueryMetrics` grouped by `(operation, query_kind, outcome)`. The signal deliberately omits SQL text, bind args, table names, DSNs, and driver error strings; request/correlation/org/principal/resource/job IDs are latest-sample incident hints exposed under `/metrics` as `data.slow_queries`.
 - Trace-span metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.TraceSpanMetrics` groups by `(name, kind, route, component, outcome, status_class, error_code)`, stores request/correlation/org/principal/resource/job IDs plus redacted targets only as latest-sample incident hints, is emitted by `telemetry.TraceHTTPSpans` for HTTP server spans, and `/metrics` exposes the snapshot under `data.trace_spans`.
 - Structured HTTP error logs are a telemetry/envelope bridge: `apienvelope.WriteErrorStatus` records the stable public `error_code` through a structural `RecordErrorCode` interface implemented by telemetry's response recorder, while `RequestLogging` emits low-cardinality `status_class`/`outcome` plus correlation hints (`request_id`, `correlation_id`, org/principal/resource/job IDs) without parsing response bodies or logging headers/bodies.
 - Policy decision metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.PolicyDecisionMetrics` groups by `(action, resource_kind, decision, reason)`, stores request/correlation/org/project/environment/service/resource/principal/job IDs only as latest-sample incident hints, is emitted from `policy.Engine.Authorize` / `AuthorizeCtx`, and `/metrics` exposes the snapshot under `data.policy_decisions`.
@@ -37991,4 +37992,60 @@ change that widened Reason to caller-supplied data.
   - The trace-span collector should stay in the same low-cardinality family as HTTP, policy, audit, quota, and Dokploy metrics; never promote request/resource IDs into grouping keys.
   - `TraceHTTPSpans` should run inside `RequestLogging` so auth/resource enrichment already stored on the request context is available as latest-sample hints.
   - Nested telemetry middleware must preserve `statusRecorder.ctx` so `apienvelope.WriteErrorStatus` can attach the stable `error_code` to the shared request-field holder.
+---
+
+## 2026-05-19 11:32 +03 - BE-0372
+- What was implemented
+  - Added centralized datastore slow-query observability at the `store.Store` read/write boundary.
+  - Added `telemetry.SlowQueryMetrics` with low-cardinality `(operation, query_kind, outcome)` series and safe latest-sample request/correlation/org/principal/resource/job hints.
+  - Exposed slow-query snapshots at `/metrics` under `data.slow_queries` and updated OpenAPI route metadata.
+  - Added structured slow-query warning logs that include duration/threshold and correlation hints while omitting SQL text, bind args, table names, DSNs, and driver error strings.
+  - Updated operator documentation and module AGENTS guidance for the slow-query signal.
+- Files changed
+  - `internal/controlplane/store/store.go`
+  - `internal/controlplane/store/internal_test.go`
+  - `internal/controlplane/store/sql_injection_static_test.go`
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/telemetry/logging.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `docs/operations/http-request-metrics.md`
+  - `docs/operations/structured-error-logs.md`
+  - `internal/controlplane/AGENTS.md`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; tool is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; tool is not installed in this environment.
+  - `govulncheck ./...` attempted; tool is not installed in this environment.
+  - Pre-commit `scripts/verify.sh --strict --release`.
+- Results
+  - Required Go formatting, module tidy, full tests, race detector, and vet passed.
+  - Focused backend checks passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - Pre-commit strict verification passed, including its `govulncheck`,
+    `staticcheck`, `golangci-lint`, GoReleaser check, and snapshot release
+    steps.
+  - No live Dokploy or external Postgres dependency was required for this story.
+- Remaining risks or follow-ups
+  - Slow-query threshold is currently the store default (`250ms`) with constructor options for tests/embedders; no runtime config key was added in this story.
+  - `QueryRow` duration is measured through `Scan`, which is the point where pgx surfaces the result/error for single-row calls.
+- **Learnings for future iterations:**
+  - Store wrappers that forward a `sql string` parameter to pgx must be included in the SQL-injection static-test passthrough exemption; repository call sites remain the real SQL-constant enforcement boundary.
+  - Slow-query observability should never log raw SQL, even table names, because variable/resource table names and predicates can reveal sensitive implementation detail during incidents.
+  - `/metrics` snapshots should add new observability families as explicit named data fields and keep high-cardinality IDs as latest-sample hints only.
 ---

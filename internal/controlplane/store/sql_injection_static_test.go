@@ -179,15 +179,14 @@ func leak(db interface{ Exec(ctx any, sql string, args ...any) }, b builder) {
 // .Exec/.Query/.QueryRow call whose SQL argument is not a constant-string
 // expression. An empty return means file is clean.
 //
-// One exemption: the methods on (*Tx) that define the Querier surface
-// (`(*Tx).Exec`, `(*Tx).Query`, `(*Tx).QueryRow`) are by design thin
-// pass-through wrappers that forward a SQL string parameter to pgx; the SQL
-// safety contract is satisfied at the CALLERS of those methods, every one of
-// which is itself a repository site this scan visits. Inside the wrapper
-// itself, the SQL argument is — and must be — the function parameter named
-// `sql`. The exemption is recognised structurally: the enclosing function
-// declaration must be a method on `*Tx` whose name matches the call's method
-// name. No other shape is exempt.
+// One exemption family: the methods on (*Tx) and readQuerier that define the
+// Querier surface are by design thin pass-through wrappers that forward a SQL
+// string parameter to pgx; the SQL safety contract is satisfied at the CALLERS
+// of those methods, every one of which is itself a repository site this scan
+// visits. Inside the wrapper itself, the SQL argument is — and must be — the
+// function parameter named `sql`. The exemption is recognised structurally:
+// the enclosing function declaration must be a method on the wrapper type
+// whose name matches the call's method name. No other shape is exempt.
 func findUnsafeSQLArgs(fset *token.FileSet, file *ast.File) []string {
 	consts := collectStringConsts(file)
 	var out []string
@@ -240,22 +239,18 @@ func findUnsafeSQLArgs(fset *token.FileSet, file *ast.File) []string {
 	return out
 }
 
-// isTxQuerierPassthrough reports whether fd is one of the three methods that
-// define the Querier surface on `*Tx`. Those methods (`Exec`, `Query`,
-// `QueryRow`) are pure forwarders: they accept a `sql string` parameter and
-// hand it to pgx unchanged. They are the lone place in the store package
-// where the SQL argument to a `.Exec`/`.Query`/`.QueryRow` invocation is
-// legitimately a string parameter rather than a constant expression.
+// isTxQuerierPassthrough reports whether fd is one of the methods that define
+// the Querier surface on `*Tx` or readQuerier. Those methods (`Exec`, `Query`,
+// `QueryRow`) are pure forwarders with observability: they accept a
+// `sql string` parameter and hand it to pgx unchanged. They are the lone place
+// in the store package where the SQL argument to a
+// `.Exec`/`.Query`/`.QueryRow` invocation is legitimately a string parameter
+// rather than a constant expression.
 func isTxQuerierPassthrough(fd *ast.FuncDecl) bool {
 	if fd.Recv == nil || len(fd.Recv.List) != 1 {
 		return false
 	}
-	star, ok := fd.Recv.List[0].Type.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	id, ok := star.X.(*ast.Ident)
-	if !ok || id.Name != "Tx" {
+	if !isQuerierWrapperReceiver(fd.Recv.List[0].Type) {
 		return false
 	}
 	if fd.Name == nil {
@@ -266,6 +261,18 @@ func isTxQuerierPassthrough(fd *ast.FuncDecl) bool {
 		return true
 	}
 	return false
+}
+
+func isQuerierWrapperReceiver(expr ast.Expr) bool {
+	switch v := expr.(type) {
+	case *ast.StarExpr:
+		id, ok := v.X.(*ast.Ident)
+		return ok && id.Name == "Tx"
+	case *ast.Ident:
+		return v.Name == "readQuerier"
+	default:
+		return false
+	}
 }
 
 // findSprintfSQL walks file's AST and returns one diagnostic string per
