@@ -114,6 +114,19 @@ structured logs in the Dockerfile header. Do not collapse API and
 worker image entrypoints into one runtime image unless the static
 contract and SECURITY.md are deliberately updated in the same edit.
 
+## Kubernetes operations artifact (BE-0412)
+
+`kubernetes_artifact_static_test.go` pins the checked-in Kubernetes
+baseline under `deploy/kubernetes/`: the manifest must define separate
+`yalla-api` and `yalla-worker` Deployments that reference the production
+image names, bind secret-shaped configuration through
+`secretKeyRef` from an operator-created secret instead of checking in a
+Secret object, preserve least-privilege pod security settings, and keep
+API `/healthz` + `/readyz` probes documented. Any future Kubernetes or
+Helm artifact change should update the manifest, `deploy/kubernetes`
+runbook, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

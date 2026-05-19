@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Kubernetes operations artifacts should be pinned by static release tests and an offline render path: keep `deploy/kubernetes/yalla-control-plane.yaml`, `deploy/kubernetes/README.md`, `deploy/kubernetes/kustomization.yaml`, SECURITY.md, CI, and `scripts/verify.sh` in lockstep; never check in Secret objects; bind runtime credentials from `yalla-control-plane-secrets`; preserve separate API/worker workloads and least-privilege pod security.
 - Success-envelope soft-limit alerts are structured `yalla.output.v1.warnings`, not endpoint `data`: emit them through `apienvelope.WriteDataWithWarnings` with stable codes plus `entitlement_key`, `usage`, `threshold`, `limit`, optional `period`, and recovery/upgrade `hint`; derive usage warnings only from already-authorized tenant-scoped rows so denied or cross-tenant responses never leak warning metadata.
 - Local Docker Compose is both a Postgres integration-test dependency stack and an opt-in `control-plane` operations profile: keep `postgres` profile-free with a pinned major image and healthcheck; put `yalla-api` and `yalla-worker` behind `profiles: [control-plane]`; build them from `Dockerfile` / `Dockerfile.worker`; require secret-shaped environment values through `${VAR:?message}` interpolation; wait on `postgres.condition=service_healthy`; harden API/worker services with `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `/tmp` tmpfs, explicit JSON logging, and `restart: unless-stopped`; publish only the API's `8080:8080` for `/healthz` and `/readyz`.
 - Production worker container artifacts use a dedicated `Dockerfile.worker` rather than overloading the API image: keep the same distroless/nonroot/no-secrets hardening, build `./cmd/yalla-worker`, copy `/out/yalla-worker` to `/usr/local/bin/yalla-worker`, keep the entrypoint on that binary, document that the worker has no HTTP listener, and pin the contract through `internal/release/container_hardening_static_test.go` plus `SECURITY.md`.
@@ -38562,4 +38563,48 @@ change that widened Reason to caller-supplied data.
   - Keep soft-limit warning metadata at the success-envelope layer to avoid endpoint data-schema churn.
   - Generate warnings only from rows the caller is already authorized to see; this preserves tenant isolation and prevents warning metadata from revealing cross-tenant resource existence.
   - `goimports` is still absent from PATH in this runner; document that explicitly when running the required quality loop.
+---
+
+## 2026-05-19 14:13 +03 - BE-0412
+- What was implemented
+  - Added a production Kubernetes baseline for the Yalla Control Plane API and worker under `deploy/kubernetes`.
+  - Added an offline kustomize render path and operator runbook covering runtime secret creation, server dry-run validation, health probes, and structured logs.
+  - Added static release tests that pin API/worker workloads, image references, runtime-only secrets, least-privilege pod security, health/readiness probes, SECURITY.md documentation, CI wiring, and local verify wiring.
+  - Wired the Kubernetes artifact gate into `.github/workflows/ci.yml`, `scripts/verify.sh`, and SECURITY.md.
+  - Added reusable AGENTS.md guidance for `deploy/kubernetes` and `internal/release`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `deploy/kubernetes/AGENTS.md`
+  - `deploy/kubernetes/README.md`
+  - `deploy/kubernetes/kustomization.yaml`
+  - `deploy/kubernetes/yalla-control-plane.yaml`
+  - `internal/release/AGENTS.md`
+  - `internal/release/kubernetes_artifact_static_test.go`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - Red test first: `go test ./internal/release/... -run TestKubernetesArtifact` failed because the Kubernetes artifact and runbook were missing.
+  - `gofmt -w .`
+  - `goimports -w .` attempted; tool is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/release/... -run TestKubernetesArtifact`
+  - `golangci-lint run ./...`
+  - `kubectl kustomize deploy/kubernetes >/tmp/yalla-kubernetes-render.yaml`
+- Results
+  - Required checks passed: formatting, module tidy, full tests, race detector, vet, focused release gate.
+  - Installed optional checks passed: `golangci-lint run ./...` and offline `kubectl kustomize` render (328 rendered lines).
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+  - `kubectl apply --dry-run=client` and `kubectl create --dry-run=client` both attempted API discovery against `localhost:8080` and failed because no Kubernetes API server is configured; the runbook now uses `kubectl kustomize deploy/kubernetes` for offline rendering and keeps `kubectl apply --dry-run=server` for connected-cluster validation.
+- Remaining risks or follow-ups
+  - Image tags are placeholders (`0.0.0-dev`) and should be patched by release/deployment automation before production rollout.
+  - Ingress, external secret controller integration, and environment-specific network egress policy remain operator overlays, not part of this baseline.
+- **Learnings for future iterations:**
+  - `kubectl apply --dry-run=client` on kubectl v1.34 still performs API discovery for these resources; use `kubectl kustomize` as the offline render proof when no cluster is available.
+  - The external live-Dokploy smoke static test pins the optional `scripts/verify.sh` step numbering; new required verify steps should avoid renumbering the existing optional block.
+  - Kubernetes operations artifacts should be changed as a bundle: manifest, kustomization, runbook, release static test, SECURITY.md verification row, CI step, and local verify script.
 ---

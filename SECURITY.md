@@ -105,6 +105,7 @@ defined in `.github/workflows/ci.yml`:
 | Dokploy token isolation | `go test ./internal/release/... -run TestDokployTokenIsolation` and `go test ./internal/controlplane/config/... -run TestRuntimeConfigDokployToken` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup encryption | `go test ./internal/release/... -run TestBackupEncryption` and `go test ./internal/controlplane/backup/... -run TestFileReporterEncryptionMarker` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Rate limit bypass resistance | `go test ./internal/release/... -run TestRateLimitBypassResistance` and `go test ./internal/controlplane/httpapi/... -run TestRateLimitBypassResistance` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -203,6 +204,31 @@ secret-shaped value. `yalla-api` publishes `8080:8080` so operators
 can probe `GET /healthz` and `GET /readyz`; `yalla-worker` still has
 no HTTP listener and is observed through structured stdout logs plus
 durable job state.
+
+## Kubernetes Operations Artifact
+
+The production Kubernetes baseline lives at
+`deploy/kubernetes/yalla-control-plane.yaml` with the operator runbook in
+`deploy/kubernetes/README.md`. The artifact references the hardened
+`ghcr.io/juribadev/yalla-api` and `ghcr.io/juribadev/yalla-worker`
+images, runs both pods as non-root with a read-only root filesystem,
+drops all Linux capabilities, disables service-account token mounting,
+and uses `RuntimeDefault` seccomp.
+
+The checked-in manifest intentionally does **not** include a Kubernetes
+`Secret`. Runtime credentials are bound by `secretKeyRef` from the
+operator-created `yalla-control-plane-secrets` object so database URLs,
+signing keys, Dokploy endpoints, and Dokploy tokens are never baked into
+images or repository files.
+
+`yalla-api` exposes `/healthz` and `/readyz` on port 8080 for Kubernetes
+liveness and readiness probes. `yalla-worker` has no HTTP listener; its
+health model is process liveness, durable job state, worker metrics, and
+structured JSON logs. Operators can render the artifact offline with
+`kubectl kustomize deploy/kubernetes` or validate it against a cluster with
+`kubectl apply --dry-run=server -f deploy/kubernetes/yalla-control-plane.yaml`.
+CI pins the contract with
+`go test ./internal/release/... -run TestKubernetesArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 
