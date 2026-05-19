@@ -97,3 +97,15 @@ func TestBackupStorageGBMonthMetricDefinition(t *testing.T) {
 		t.Fatalf("backup_storage_gb_month definition = %+v, want gb_month/backup_metadata/metered/billing-grade", def)
 	}
 }
+
+func TestBuildMinutesMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("build_minutes")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(build_minutes) missing")
+	}
+	if def.Key != "build_minutes" || def.Unit != "minute" || def.Source != BuildMinutesUsageSource || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("build_minutes definition = %+v, want minute/yalla_jobs/metered/billing-grade", def)
+	}
+}

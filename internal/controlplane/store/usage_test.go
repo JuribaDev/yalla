@@ -581,6 +581,68 @@ func TestUsageReaderIncludesContainerMemoryCountersForCurrentPeriod(t *testing.T
 	}
 }
 
+func TestUsageReaderIncludesBuildMinutesCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "BuildMinutesUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-build-minutes")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "build_minutes", store.EntitlementSourceSubscriptionOverride, 500, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceBuildMinutes,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       12.4,
+		Unit:           "minute",
+		Source:         "yalla_jobs",
+		IdempotencyKey: "build_minutes:test-job",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var buildMinutes store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceBuildMinutes {
+			buildMinutes = row
+			break
+		}
+	}
+	if buildMinutes.Resource == "" {
+		t.Fatalf("usage rows %+v missing build_minutes counter", got)
+	}
+	if buildMinutes.UsedValue != 12 {
+		t.Fatalf("build_minutes UsedValue = %d, want rounded aggregated counter 12", buildMinutes.UsedValue)
+	}
+	if buildMinutes.LimitValue == nil || *buildMinutes.LimitValue != 500 {
+		t.Fatalf("build_minutes limit = %+v, want subscription entitlement 500", buildMinutes)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

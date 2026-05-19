@@ -82,6 +82,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"build_minutes": {
+		Key:          "build_minutes",
+		Unit:         "minute",
+		Source:       BuildMinutesUsageSource,
+		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.

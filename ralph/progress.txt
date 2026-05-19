@@ -37281,3 +37281,40 @@ change that widened Reason to caller-supplied data.
   - Backup storage metering follows the same tracked-metric vertical as storage/container metrics: runtime definition, closed quota resource migration/constant, attributed-sample emitter, append-only `usage_events`, and existing `usage_counters` aggregation.
   - Use `source_adapter` metadata for collector identity while keeping the billing-grade `usage_events.source` pinned to the stable metric definition source (`backup_metadata`).
 ---
+## 2026-05-19 07:57 +03 - BE-0594
+- What was implemented
+  - Added the runtime `build_minutes` metric definition with unit `minute`, source `yalla_jobs`, metered enforcement, and billing-grade visibility.
+  - Added a metering contract test for the definition and a store/customer-usage integration test proving aggregated `build_minutes` usage counters surface through the organization usage projection with subscription entitlement limits.
+  - Marked BE-0594 as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/metering/metric_definition.go`
+  - `internal/controlplane/metering/metric_definition_test.go`
+  - `internal/controlplane/store/usage_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/metering -run TestBuildMinutesMetricDefinition -count=1` first failed before implementation with missing `LookupMetricDefinition(build_minutes)`.
+  - `go test ./internal/controlplane/metering -run TestBuildMinutesMetricDefinition -count=1`
+  - `go test ./internal/controlplane/store -run TestUsageReaderIncludesBuildMinutesCountersForCurrentPeriod -count=1`
+  - `go test ./internal/controlplane/metering -run 'Test(BuildMinutesMetricDefinition|DeploymentUsageEmitter)' -count=1`
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit hook: `scripts/verify.sh --strict --release`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint run ./...` reported `0 issues.`
+  - The strict pre-commit verification also passed, including `govulncheck ./...` (`No vulnerabilities found.`), `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and a snapshot `goreleaser release --snapshot --clean`.
+  - `goimports` was not installed on PATH.
+- Remaining risks or follow-ups
+  - None for BE-0594. Existing `DeploymentUsageEmitter` already performs the durable emission path from terminal deployment/job timelines; this iteration pinned the missing runtime definition and public usage projection contract.
+- **Learnings for future iterations:**
+  - Build/deployment tracked metrics are split between existing source-of-truth emission (`metering.DeploymentUsageEmitter`) and the runtime registry in `metric_definition.go`; a tracked metric story may be incomplete even when the usage-event emitter already exists.
+  - Customer visibility for billing-grade metrics can be pinned through `UsageEventRepository.Append` -> `UsageCounterRepository.AggregateUsageEvents` -> `UsageReader.ListOrganizationUsage` using a current subscription entitlement for the same resource key.
+---
