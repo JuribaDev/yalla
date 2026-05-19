@@ -37644,3 +37644,33 @@ change that widened Reason to caller-supplied data.
   - Subscription resolver cache invalidation is already data-driven: touching `subscriptions.updated_at` or `subscription_entitlements.updated_at` changes `EntitlementRevision`, so no explicit cache bust hook is needed.
   - Backoffice subscription assignment should update the current active/trialing/past_due row; after moving it to canceled, a later active assignment creates a fresh current row because the partial unique index no longer covers the canceled historical row.
 ---
+## 2026-05-19 09:21 +03 - BE-0604
+- What was implemented
+  - Re-verified the already committed backoffice subscription management API implementation and corrected the PRD source-of-truth flag from `passes: false` to `passes: true`.
+  - No production code changes were needed; `HEAD` already contains the support-only subscription assignment and subscription entitlement override APIs plus their store service, HTTP wiring, audit path, and tests.
+- Files changed
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .` -> pass
+  - `goimports -w .` -> not run; `goimports` is not installed
+  - `go mod tidy` -> pass
+  - `go test ./...` -> pass
+  - `go test -race ./...` -> pass
+  - `go vet ./...` -> pass
+  - `go test ./internal/controlplane/...` -> pass
+  - `go test -race ./internal/controlplane/...` -> pass
+  - `go test -run TestMigrations ./...` -> pass
+  - `go test -run TestPolicyMatrix ./...` -> pass
+  - `go test -run TestQuotaConcurrency ./...` -> pass
+  - `go test -run TestFakeDokploy ./...` -> pass
+  - `golangci-lint run ./...` -> pass, 0 issues
+  - `staticcheck ./...` -> not run; `staticcheck` is not installed
+  - `govulncheck ./...` -> not run; `govulncheck` is not installed
+- Results
+  - The fresh quality gate passed for the committed BE-0604 implementation; the PRD now records the story as passing.
+- Remaining risks or follow-ups
+  - No BE-0604 follow-up identified in this pass.
+- **Learnings for future iterations:**
+  - Progress log entries can drift from `ralph/prd.json`; always verify the actual PRD flag after a commit, even when the progress entry says it was updated.
+---

@@ -12385,8 +12385,8 @@
       ],
       "type": "backoffice-pricing-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-only backoffice subscription management APIs: PUT /v1/admin/organizations/{org_id}/subscription and PUT /v1/admin/organizations/{org_id}/subscription/entitlements/{entitlement_key}. The store service verifies support actor org, target organization, plan/subscription scope, mutates subscriptions or subscription_entitlements, and appends audit in one Store.Write transaction. Fresh verification on 2026-05-19 confirmed formatting, go test ./..., go test -race ./..., go vet ./..., focused controlplane suites, migration/policy/quota/fake-Dokploy suites, and golangci-lint."
     },
     {
       "id": "BE-0605",
