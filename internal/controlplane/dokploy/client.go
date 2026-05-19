@@ -176,25 +176,25 @@ func (c *Client) LogValue() slog.Value {
 // get issues a GET and decodes the response into dst. GET is idempotent, so it
 // is retried on transient failures.
 func (c *Client) get(ctx context.Context, path string, dst any) error {
-	return c.do(ctx, http.MethodGet, path, nil, dst)
+	return c.do(ctx, http.MethodGet, path, path, nil, dst)
 }
 
 // post issues a POST and decodes the response into dst. POST is not idempotent
 // and is never retried.
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {
-	return c.do(ctx, http.MethodPost, path, body, dst)
+	return c.do(ctx, http.MethodPost, path, path, body, dst)
 }
 
 // del issues a DELETE. DELETE is idempotent, so it is retried on transient
 // failures.
 func (c *Client) del(ctx context.Context, path string) error {
-	return c.do(ctx, http.MethodDelete, path, nil, nil)
+	return c.do(ctx, http.MethodDelete, path, path, nil, nil)
 }
 
 // do runs an HTTP request, retrying only idempotent methods (GET, DELETE) on
 // transient, catalogued-retryable failures. Non-idempotent methods get exactly
 // one attempt so a retry can never duplicate a provisioning side effect.
-func (c *Client) do(ctx context.Context, method, path string, body, dst any) error {
+func (c *Client) do(ctx context.Context, method, path, safePath string, body, dst any) error {
 	var encoded []byte
 	if body != nil {
 		b, err := encodeBody(body)
@@ -220,10 +220,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, dst any) err
 				return c.contextError(err)
 			}
 			c.logger.WarnContext(ctx, "retrying dokploy request",
-				"method", method, "path", path, "attempt", attempt, "error", lastErr)
+				"method", method, "path", safePath, "attempt", attempt, "error", lastErr)
 		}
 
-		err := c.attempt(ctx, method, path, encoded, dst, attempt+1)
+		err := c.attempt(ctx, method, path, safePath, encoded, dst, attempt+1)
 		if err == nil {
 			return nil
 		}
@@ -238,7 +238,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, dst any) err
 // attempt performs a single HTTP round trip. It applies the per-request
 // timeout, injects the bearer token and correlation headers, and maps the
 // outcome onto the apierr taxonomy.
-func (c *Client) attempt(ctx context.Context, method, path string, body []byte, dst any, attemptNumber int) (err error) {
+func (c *Client) attempt(ctx context.Context, method, path, safePath string, body []byte, dst any, attemptNumber int) (err error) {
 	start := time.Now()
 	statusCode := 0
 	defer func() {
@@ -247,7 +247,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 		}
 		c.metrics.RecordDokployDependencyCall(ctx, telemetry.DokployDependencyEvent{
 			Method:     method,
-			Path:       path,
+			Path:       safePath,
 			StatusCode: statusCode,
 			ErrorCode:  dokployMetricErrorCode(err),
 			Retryable:  err != nil && apierr.Retryable(err),
@@ -295,11 +295,11 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 		}
 		if err := decodeBody(payload, dst); err != nil {
 			return apierr.DokployBadResponse(c.redact(
-				fmt.Errorf("decode dokploy response for %s %s: %w", method, path, err)))
+				fmt.Errorf("decode dokploy response for %s %s: %w", method, safePath, err)))
 		}
 		return nil
 	}
-	return c.statusError(method, path, resp.StatusCode, payload)
+	return c.statusError(method, safePath, resp.StatusCode, payload)
 }
 
 func dokployMetricErrorCode(err error) string {

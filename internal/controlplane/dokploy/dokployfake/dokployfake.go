@@ -54,6 +54,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -85,10 +86,11 @@ type Server struct {
 	redactor *output.Redactor
 	mux      *http.ServeMux
 
-	mu        sync.Mutex
-	requests  []RecordedRequest
-	faults    []Fault
-	resources resourceStore
+	mu               sync.Mutex
+	requests         []RecordedRequest
+	faults           []Fault
+	monitoringFaults map[string][]Fault
+	resources        resourceStore
 }
 
 // Option configures a Server at construction time.
@@ -109,8 +111,9 @@ func WithToken(token string) Option {
 // defer.
 func New(opts ...Option) *Server {
 	s := &Server{
-		token:     DefaultToken,
-		resources: newResourceStore(),
+		token:            DefaultToken,
+		monitoringFaults: map[string][]Fault{},
+		resources:        newResourceStore(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -185,7 +188,7 @@ func (s *Server) record(r *http.Request) {
 	rec := RecordedRequest{
 		Method:   r.Method,
 		Path:     r.URL.Path,
-		RawQuery: r.URL.RawQuery,
+		RawQuery: s.redactRawQuery(r.URL.RawQuery),
 		Headers:  redactHeaders(r.Header),
 		Body:     s.redactRecordedBody(r.URL.Path, body),
 		At:       time.Now().UTC(),
@@ -197,6 +200,22 @@ func (s *Server) record(r *http.Request) {
 	s.mu.Lock()
 	s.requests = append(s.requests, rec)
 	s.mu.Unlock()
+}
+
+func (s *Server) redactRawQuery(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return s.redactor.Redact(raw)
+	}
+	for _, key := range []string{"token", "access_token", "api_key", "apikey", "password", "secret"} {
+		if _, ok := values[key]; ok {
+			values[key] = []string{output.Sentinel}
+		}
+	}
+	return s.redactor.Redact(values.Encode())
 }
 
 func (s *Server) redactRecordedBody(path string, body []byte) string {
@@ -245,7 +264,7 @@ type RecordedRequest struct {
 	Method string
 	// Path is the request path, without query string.
 	Path string
-	// RawQuery is the raw query string, if any.
+	// RawQuery is the query string, if any, with secret-shaped keys redacted.
 	RawQuery string
 	// AuthHeader is output.Sentinel when the request carried an Authorization
 	// header, and "" otherwise. The raw token is never stored here.
@@ -342,6 +361,16 @@ func (s *Server) QueueFault(faults ...Fault) {
 	s.faults = append(s.faults, faults...)
 }
 
+// QueueMonitoringFault arms faults for a named monitoring route
+// ("application", "container", "server", or "user_server"). They are consumed
+// FIFO by that route only.
+func (s *Server) QueueMonitoringFault(source string, faults ...Fault) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	source = strings.TrimSpace(source)
+	s.monitoringFaults[source] = append(s.monitoringFaults[source], faults...)
+}
+
 // ClearFaults discards every queued-but-unconsumed fault.
 func (s *Server) ClearFaults() {
 	s.mu.Lock()
@@ -358,6 +387,18 @@ func (s *Server) popFault() (Fault, bool) {
 	}
 	fault := s.faults[0]
 	s.faults = s.faults[1:]
+	return fault, true
+}
+
+func (s *Server) popMonitoringFault(source string) (Fault, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	queue := s.monitoringFaults[source]
+	if len(queue) == 0 {
+		return Fault{}, false
+	}
+	fault := queue[0]
+	s.monitoringFaults[source] = queue[1:]
 	return fault, true
 }
 

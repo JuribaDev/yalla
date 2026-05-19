@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -90,14 +91,18 @@ type BackupRun struct {
 // resourceStore is the fake's in-memory state. It is not safe for concurrent
 // use on its own; every access goes through a Server method holding Server.mu.
 type resourceStore struct {
-	organizations map[string]*Organization
-	projects      map[string]*Project
-	environments  map[string]*Environment
-	services      map[string]*Service
-	serviceEnvs   map[string]string
-	domains       map[string]*Domain
-	deployments   map[string]*Deployment
-	backupRuns    map[string]*BackupRun
+	organizations     map[string]*Organization
+	projects          map[string]*Project
+	environments      map[string]*Environment
+	services          map[string]*Service
+	serviceEnvs       map[string]string
+	domains           map[string]*Domain
+	deployments       map[string]*Deployment
+	backupRuns        map[string]*BackupRun
+	appMonitoring     map[string]map[string]any
+	containerMetrics  map[string]map[string]any
+	serverMetrics     map[string]map[string]any
+	userServerMetrics map[string]any
 	// logs maps a deployment ID to its log lines.
 	logs map[string][]string
 	// counters backs deterministic per-kind ID generation.
@@ -107,16 +112,20 @@ type resourceStore struct {
 // newResourceStore returns an empty resourceStore with every map initialised.
 func newResourceStore() resourceStore {
 	return resourceStore{
-		organizations: map[string]*Organization{},
-		projects:      map[string]*Project{},
-		environments:  map[string]*Environment{},
-		services:      map[string]*Service{},
-		serviceEnvs:   map[string]string{},
-		domains:       map[string]*Domain{},
-		deployments:   map[string]*Deployment{},
-		backupRuns:    map[string]*BackupRun{},
-		logs:          map[string][]string{},
-		counters:      map[string]int{},
+		organizations:     map[string]*Organization{},
+		projects:          map[string]*Project{},
+		environments:      map[string]*Environment{},
+		services:          map[string]*Service{},
+		serviceEnvs:       map[string]string{},
+		domains:           map[string]*Domain{},
+		deployments:       map[string]*Deployment{},
+		backupRuns:        map[string]*BackupRun{},
+		appMonitoring:     map[string]map[string]any{},
+		containerMetrics:  map[string]map[string]any{},
+		serverMetrics:     map[string]map[string]any{},
+		userServerMetrics: map[string]any{},
+		logs:              map[string][]string{},
+		counters:          map[string]int{},
 	}
 }
 
@@ -174,6 +183,11 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/deployments/{id}", s.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", s.getDeploymentLogs)
 
+	mux.HandleFunc("GET /application.readAppMonitoring", s.readAppMonitoring)
+	mux.HandleFunc("GET /user.getContainerMetrics", s.getContainerMetrics)
+	mux.HandleFunc("GET /server.getServerMetrics", s.getServerMetrics)
+	mux.HandleFunc("GET /user.getServerMetrics", s.getUserServerMetrics)
+
 	// Catch-all: anything not matched above is a Dokploy-style 404 rather
 	// than net/http's plain-text default.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +216,149 @@ func requireField(w http.ResponseWriter, value, field string) bool {
 	if strings.TrimSpace(value) == "" {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			fmt.Sprintf("%s is required", field))
+		return false
+	}
+	return true
+}
+
+// SetApplicationMonitoring configures the response returned by
+// application.readAppMonitoring for appName.
+func (s *Server) SetApplicationMonitoring(appName string, payload map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resources.appMonitoring[strings.TrimSpace(appName)] = clonePayload(payload)
+}
+
+// SetContainerMetrics configures the response returned by
+// user.getContainerMetrics for appName.
+func (s *Server) SetContainerMetrics(appName string, payload map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resources.containerMetrics[strings.TrimSpace(appName)] = clonePayload(payload)
+}
+
+// SetServerMetrics configures the response returned by server.getServerMetrics
+// for serverName.
+func (s *Server) SetServerMetrics(serverName string, payload map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resources.serverMetrics[strings.TrimSpace(serverName)] = clonePayload(payload)
+}
+
+// SetUserServerMetrics configures the response returned by user.getServerMetrics.
+func (s *Server) SetUserServerMetrics(payload map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resources.userServerMetrics = clonePayload(payload)
+}
+
+func clonePayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+// --- Monitoring ----------------------------------------------------------
+
+func (s *Server) readAppMonitoring(w http.ResponseWriter, r *http.Request) {
+	if fault, ok := s.popMonitoringFault("application"); ok {
+		s.applyFault(w, r, fault)
+		return
+	}
+	appName := strings.TrimSpace(r.URL.Query().Get("appName"))
+	if !requireField(w, appName, "appName") {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload, ok := s.resources.appMonitoring[appName]
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such application monitoring")
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) getContainerMetrics(w http.ResponseWriter, r *http.Request) {
+	if fault, ok := s.popMonitoringFault("container"); ok {
+		s.applyFault(w, r, fault)
+		return
+	}
+	if !requireMonitoringQuery(w, r, true) {
+		return
+	}
+	appName := strings.TrimSpace(r.URL.Query().Get("appName"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload, ok := s.resources.containerMetrics[appName]
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such container metrics")
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) getServerMetrics(w http.ResponseWriter, r *http.Request) {
+	if fault, ok := s.popMonitoringFault("server"); ok {
+		s.applyFault(w, r, fault)
+		return
+	}
+	if !requireMonitoringQuery(w, r, false) {
+		return
+	}
+	serverName := strings.TrimSpace(r.URL.Query().Get("url"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload, ok := s.resources.serverMetrics[serverName]
+	if !ok {
+		payload, ok = s.resources.serverMetrics[serverMetricHostKey(serverName)]
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such server metrics")
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func serverMetricHostKey(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return raw
+	}
+	host := u.Hostname()
+	if dot := strings.IndexByte(host, '.'); dot > 0 {
+		return host[:dot]
+	}
+	return host
+}
+
+func (s *Server) getUserServerMetrics(w http.ResponseWriter, r *http.Request) {
+	if fault, ok := s.popMonitoringFault("user_server"); ok {
+		s.applyFault(w, r, fault)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	writeJSON(w, http.StatusOK, s.resources.userServerMetrics)
+}
+
+func requireMonitoringQuery(w http.ResponseWriter, r *http.Request, app bool) bool {
+	q := r.URL.Query()
+	if !requireField(w, q.Get("url"), "url") ||
+		!requireField(w, q.Get("token"), "token") ||
+		!requireField(w, q.Get("dataPoints"), "dataPoints") {
+		return false
+	}
+	if app && !requireField(w, q.Get("appName"), "appName") {
 		return false
 	}
 	return true

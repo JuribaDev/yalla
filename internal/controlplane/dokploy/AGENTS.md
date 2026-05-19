@@ -55,6 +55,12 @@ client.
   class, stable error code, retryability, and outcome. Raw Dokploy ids and query
   strings must never become metric labels; Yalla ids belong only in
   latest-sample hint fields for joining to request/job logs.
+- Monitoring endpoints such as `user.getContainerMetrics` and
+  `server.getServerMetrics` carry node URLs/tokens in Dokploy query
+  parameters. Route them through the client helper with a separate safe endpoint
+  template (for example `/user.getContainerMetrics`) so retry logs, wrapped
+  errors, and dependency metrics never include the real query string. The fake
+  must redact secret-shaped query keys in `RecordedRequest.RawQuery`.
 
 ## Hierarchy mapping (`mapping.go`)
 

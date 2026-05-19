@@ -11796,8 +11796,8 @@
       ],
       "type": "metering-source",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented a typed Dokploy monitoring source adapter over application.readAppMonitoring, user.getContainerMetrics, server.getServerMetrics, and user.getServerMetrics. The adapter normalizes numeric Dokploy monitoring leaves into source=dokploy samples with billing_grade flags, records deterministic query version and raw-sample checksum metadata, degrades unavailable optional monitoring sources with stable error codes while preserving Dokploy dependency telemetry, and keeps node tokens out of client logs/errors/metrics plus fake recorded query strings. No public HTTP surface was added in this source-adapter story, so JSON envelope route criteria remain not applicable until an API consumes the adapter."
     },
     {
       "id": "BE-0574",

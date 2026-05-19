@@ -105,6 +105,34 @@ type BackupRun struct {
 	Status    string `json:"status"`
 }
 
+// MonitoringPayload is an opaque Dokploy monitoring response. Dokploy's
+// monitoring endpoints do not publish a stable schema, so the metering adapter
+// owns normalization and treats this as private operational input.
+type MonitoringPayload map[string]any
+
+// ReadAppMonitoringInput selects Dokploy application monitoring by application
+// name.
+type ReadAppMonitoringInput struct {
+	AppName string
+}
+
+// GetContainerMetricsInput selects Dokploy container metrics for an application
+// through the node monitoring endpoint.
+type GetContainerMetricsInput struct {
+	URL        string
+	Token      string
+	AppName    string
+	DataPoints int
+}
+
+// GetServerMetricsInput selects Dokploy server metrics through either the
+// server-scoped or user-scoped endpoint.
+type GetServerMetricsInput struct {
+	URL        string
+	Token      string
+	DataPoints int
+}
+
 // EnsureOrganizationInput describes the desired state of a Dokploy
 // organization. When ExistingID is set the organization is fetched and
 // verified instead of created, so the call is idempotent against Yalla's
