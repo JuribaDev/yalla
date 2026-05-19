@@ -1,4 +1,16 @@
 ## Codebase Patterns
+- Release checklist operations artifacts follow the same static-release-gate
+  pattern as deployment/SLO artifacts: keep
+  `docs/operations/release-checklist.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and
+  `internal/release/release_checklist_artifact_static_test.go` in lockstep;
+  reference both `/usr/local/bin/yalla-api` and
+  `/usr/local/bin/yalla-worker`, document the Yalla API -> Postgres source of
+  truth -> worker -> private Dokploy API boundary, pin `/healthz`, `/readyz`,
+  `/version`, `/metrics`, stable JSON envelopes, required Go gates,
+  `scripts/verify.sh --release`, migration safety, structured log redaction,
+  least-privilege operator-managed config, and the opt-in external Dokploy
+  smoke warning.
 - SLO document artifacts follow the same static-release-gate pattern as other
   operations artifacts: keep `docs/operations/slo.md`, SECURITY.md, CI,
   `scripts/verify.sh`, and `internal/release/slo_document_artifact_static_test.go`
@@ -39297,4 +39309,39 @@ change that widened Reason to caller-supplied data.
   - Operations artifact stories continue to use a focused static release test plus docs/security/CI/verify wiring, rather than relying on human review of markdown only.
   - Static tests intentionally pin exact, short substrings; avoid line-wrapping load-bearing phrases such as `Customer / Agent / CI` or add a stable sentence containing the exact phrase.
   - SLO evidence should stay low-cardinality and use IDs only as incident join hints, matching the existing dashboard and telemetry patterns.
+---
+## 2026-05-19 17:36 +03 - BE-0423
+- What was implemented
+  - Added the production release checklist artifact for the Yalla Control Plane backend.
+  - Added a static release test that pins the checklist contract and verifies CI, `scripts/verify.sh`, and SECURITY.md wiring.
+  - Wired the focused release-checklist gate into GitHub Actions and local verification.
+  - Updated SECURITY.md and internal release agent guidance for the new artifact.
+  - Marked `BE-0423` as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/operations/release-checklist.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/release_checklist_artifact_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; tool is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./internal/release/... -run TestReleaseChecklistArtifact`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+- Results
+  - Focused release-checklist static test passed.
+  - Full unit/integration test suite passed.
+  - Race detector suite passed.
+  - `go vet ./...` passed.
+- Remaining risks or follow-ups
+  - `goimports` was unavailable locally; `gofmt` completed and the new Go file only uses standard-library imports.
+- **Learnings for future iterations:**
+  - Operations checklist artifacts should be treated as release-gated contracts, not loose documentation.
+  - The focused static test should assert both the artifact content and its wiring into CI, local verify, and SECURITY.md so the release gate cannot drift silently.
 ---

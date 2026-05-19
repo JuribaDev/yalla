@@ -255,6 +255,21 @@ smoke test warning. Any future SLO document change should update the artifact,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Release checklist artifact (BE-0423)
+
+`release_checklist_artifact_static_test.go` pins the production release
+checklist at `docs/operations/release-checklist.md`: the artifact must
+reference both `/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`,
+document the Customer / Agent / CI -> Postgres source of truth ->
+provisioning worker -> private Dokploy API boundary, keep runtime secrets in
+operator-managed configuration, preserve stable `yalla.output.v1` /
+`yalla.error.v1` response-envelope expectations, list the required local and
+release verification gates, describe `/healthz`, `/readyz`, `/version`,
+`/metrics`, structured JSON logs, migration safety, dead-letter checks, and
+the opt-in live-Dokploy smoke warning. Any future release-checklist change
+should update the artifact, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

@@ -165,6 +165,9 @@ jobs:
       - name: SLO document artifact static tests
         run: go test ./internal/release/... -run TestSLODocumentArtifact
 
+      - name: Release checklist artifact static tests
+        run: go test ./internal/release/... -run TestReleaseChecklistArtifact
+
       - name: Race detector
         run: go test -race ./...
 
