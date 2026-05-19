@@ -200,6 +200,19 @@ health expectations, and structured JSON log redaction. Any future config
 example change should update `deploy/config/README.md`, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Deployment runbook artifact (BE-0419)
+
+`deployment_runbook_static_test.go` pins the production deployment runbook at
+`docs/operations/deployment.md`: the runbook must reference both
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, document
+Kubernetes and systemd deployment paths, keep runtime secrets in operator
+managed config/Secret surfaces, describe `/healthz`, `/readyz`, `/version`,
+stable JSON envelopes, structured log redaction, migration sequencing through
+`deploy/operations/migrate-database.sh`, and explicit dry-run / release-gate
+verification. Any future deployment-runbook change should update the runbook,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

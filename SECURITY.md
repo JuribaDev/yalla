@@ -112,6 +112,7 @@ defined in `.github/workflows/ci.yml`:
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -396,6 +397,28 @@ audit metadata, and dry-run output must redact rendered environment values.
 
 CI pins the config example files with
 `go test ./internal/release/... -run TestConfigExamplesArtifact`.
+
+## Deployment Runbook Artifact
+
+The production deployment runbook lives at `docs/operations/deployment.md`.
+It ties the versioned backend release to both deployed binaries
+(`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`), the
+operator-managed runtime environment file, the Kubernetes and systemd
+artifacts, and the versioned migration command. The runbook documents that
+customers never receive Dokploy credentials and that rendered database URLs,
+tokens, API keys, cookies, signing keys, secret keys, Dokploy credentials, and
+environment values stay out of repository files, tickets, runbooks, logs,
+errors, audit metadata, and dry-run output.
+
+The runbook is also the operator-facing health contract: `/healthz` is
+liveness-only, `/readyz` reports dependency gates, `/version` exposes the
+release identity, successful probes use `yalla.output.v1`, failed probes use
+`yalla.error.v1`, and every response carries a stable `request_id`.
+`yalla-worker` has no HTTP listener and is observed through process liveness,
+durable job state, metrics, dead-letter alerts, and structured JSON logs.
+
+CI pins the deployment runbook with
+`go test ./internal/release/... -run TestDeploymentRunbookArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

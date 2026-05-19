@@ -1,4 +1,12 @@
 ## Codebase Patterns
+- Deployment runbooks follow the same static-release-gate pattern as other
+  production operations artifacts: keep `docs/operations/deployment.md`,
+  SECURITY.md, CI, `scripts/verify.sh`, and
+  `internal/release/deployment_runbook_static_test.go` in lockstep; reference
+  both `/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, document
+  Kubernetes and systemd deploy paths, keep runtime secrets operator-managed,
+  pin `/healthz`, `/readyz`, `/version`, stable JSON envelopes, structured log
+  redaction, migration sequencing, and opt-in external Dokploy smoke tests.
 - Config example operations artifacts follow the same static-release-gate
   pattern as command and deployment artifacts: keep
   `deploy/config/control-plane.env.example`, `deploy/config/README.md`,
@@ -300,7 +308,6 @@
   - Static release tests should pin the script, binary flag, runbook, SECURITY.md gate row, CI step, and `scripts/verify.sh` together to prevent operations artifact drift.
   - Dry-run plans should show command shape and `YALLA_*` variable names only; runtime seed values stay in the env file and are never echoed.
 ---
-
 - Security-verification SSRF blocklist pattern, validate-port instance (BE-0349 pattern, internal/controlplane/validate/{ssrf.go, ssrf_static_test.go, ssrf_test.go, fuzz_test.go, AGENTS.md}; SIXTH worked instance of the BE-0344 two-test template and FIRST in the validate package — confirms the template scales to "this pure validator MUST funnel its parsed host through a named blocklist helper" invariants in addition to single-function-hardening (BE-0346), per-call-site predicate scans (BE-0344/0345/0347), and absence-of-API scans (BE-0348). Six SSRF-flavoured rules this instance surfaces that the earlier five do NOT capture: (a) The analyzer is a per-function call-presence scan rather than a per-call-site scan or absence-of-API scan: each of {URL, GitRepoURL} is parsed via findFuncDecl, its body walked with ast.Inspect, and the predicate "calls disallowedSSRFHost by exact identifier" must hold. Exact-identifier matching is the load-bearing rule — a synthetic "calls disallowedHost (look-alike)" fixture is in the self-check so a future refactor that renames the helper inside one validator (but not the other) fails the static guard; substring or prefix matching here would mask the regression. (b) The reason text is a closed set, NOT a templated string with the host interpolated. Nine canonical reasons (8 IP-range classifications + 1 hostname classification) live in package-private constants emitted by ipReason / disallowedSSRFHost. The runtime test pins the set via canonicalSSRFReasons + isCanonicalSSRFReason and asserts every rejection is set-membership equal — strictly stronger than substring redaction checks, because words like "localhost" / "metadata" / "loopback" / "private" appear in the classification text BY DESIGN and would false-positive a substring "host did not appear in reason" guard. The BE-0343 redaction-fixture-collision pattern (choose canary values that don't collide with stable reason phrases) is the predecessor; the closed-set assertion is the next-strongest form. (c) Reject IP literals via net.ParseIP first, then hostnames; the order matters because an IP literal can never be made safe by downstream DNS, so the unconditional-reject decision happens before any hostname rule applies. The IP classifier uses Go stdlib's IsUnspecified / IsLoopback / IsLinkLocalUnicast / IsLinkLocalMulticast / IsMulticast / IsPrivate as the first cut, then adds the four IPv4 ranges stdlib does NOT classify (CGNAT 100.64/10, benchmark 198.18/15, limited broadcast 255.255.255.255 — 169.254/16 is already covered by IsLinkLocalUnicast). Whitelisting IsPrivate alone would miss the cloud-metadata range (169.254.169.254 is link-local, not private). (d) Hostname forbidden set is asymmetric: an exact-match map (forbiddenSSRFHostnames) for {localhost, ip6-localhost, ip6-loopback, metadata, metadata.google.internal, metadata.aws.internal, 169.254.169.254} and a leading-dot suffix list (forbiddenSSRFHostSuffixes) for {.localhost, .internal, .local, .localdomain}. The leading dot on suffixes is required — a bare ".local" suffix without the dot would false-positive on "flocal.example.com". TestSSRFHostnameListsAreCanonical is a sealing-trap pinning required entries AND the leading-dot invariant; dropping any documented entry fails the build. (e) GitRepoURL has THREE entry shapes (https:// / ssh:// / scp-like git@host:path) and the SSRF check must fire on ALL THREE: the analyzer pins the presence of ONE disallowedSSRFHost call in the function body, but the runtime test exercises each shape independently (https loopback, ssh link-local v6, scp .internal, etc.) so a future split that drops the call from the scp branch alone — analyzer still happy because the https branch still has it — surfaces in the runtime table. The lesson: presence-of-call analyzers are necessary but not sufficient; per-shape runtime coverage is the second wall. (f) IPv6 literals in URL form MUST use the bracketed `[fd00::1]` shape because url.Parse with a colon-bearing v6 address outside brackets parses the colons as port separators; the runtime test fixtures call this out explicitly. The disallowedSSRFHost helper strips one set of surrounding brackets so it accepts BOTH the URL-extracted (already unbracketed) form AND a literal bracketed form a caller might supply directly. Layered defence is explicit in AGENTS.md: this is the PURE validator layer (no DNS) and a second wall in the HTTP/git client at fetch time is REQUIRED to catch DNS-rebinding (a public name resolving to an internal IP at fetch time). The validator is the first wall; the runtime resolved-IP re-check is a separate story.
 - Security-verification two-test pattern, httpapi-port cookie/CSRF instance (BE-0348 pattern, internal/controlplane/httpapi/{csrf_static_test.go, csrf_test.go, AGENTS.md}; FIFTH worked instance of the BE-0344 template and THIRD in httpapi after BE-0345 body size and BE-0347 CORS — confirms the template scales to "this surface must NOT use a named stdlib API family AND must NOT emit a named wire header" invariants in addition to single-function-hardening (BE-0346) and per-call-site predicate scans (BE-0344/BE-0345/BE-0347)). Five httpapi-flavoured rules this instance surfaces that the earlier four do NOT capture: (a) The CSRF stance is a TWO-prong analyzer (string literal scan + SelectorExpr scan) rather than the single-prong scans BE-0344..BE-0347 used, because cookie usage can enter production code through two structurally unrelated paths — the wire-level header literal (`w.Header().Set("Set-Cookie", ...)`) or the typed net/http API (`http.SetCookie(w, c)`) — and either alone is a cookie surface. The two prongs are kept in ONE analyzer function (`findCookieAPIUsages`) with a single AST walk that switches on `*ast.BasicLit` vs `*ast.SelectorExpr` per node, NOT two separate walks, so a regression that combines both shapes (the canonical `http.SetCookie(w, &http.Cookie{Name:"session"})` shape) produces three deterministic diagnostics in one pass. The self-check covers each prong AND the combined shape so a future change that disables one prong fails fast. (b) The selector set is asymmetric: `{SetCookie, AddCookie, CookieJar, Cookies}` are flagged on ANY X (because user-defined identifiers with these names would themselves be cookie regressions camouflaged behind friendly names), but `Cookie` alone is flagged ONLY when X is the bare `http` ident — because `.Cookie` matches too many user struct fields to flag unconditionally. The asymmetry is the load-bearing false-positive guard: a synthetic `type fixture struct{ Cookie string }; return f.Cookie` must pass cleanly while `&http.Cookie{Name:"session"}` must fail. The self-check has both fixtures wired explicitly so the asymmetry can't drift. (c) The forbidden cookie header set is exact-match (case-insensitive) over `{cookie, set-cookie, cookie2, set-cookie2}` rather than the prefix-match shape BE-0347 used for `access-control-`. Exact match is correct here because the bare word "cookie" appears in unrelated header names (no IANA cookie header outside this set exists today) — a prefix match would false-positive on imaginary `cookie-policy`/`cookie-jar` extensions. The four-element set is the complete RFC 6265 + obsolete RFC 2965 surface; a future extension would be a deliberate retrofit reviewed against the threat model. (d) The runtime test pattern reuses `corsHeaderHolder` and `recorderShim` from BE-0347's cors_test.go directly — both helpers were already package-private, so the CSRF runtime test gets the determinism-comparison shape "two requests with/without an attacker header return the same response header key set" for free. Future security-verification stories in this package that need the same shape (e.g. "the X-Forwarded-For header does not influence the response" or "the Host header does not influence the response") should reuse `corsHeaderHolder` rather than declaring a third interface — the CORS interface is the canonical "{ Header() http.Header }" surface for header-emission invariants. (e) Cookie-sentinel redaction backstop: every runtime test plants a globally-unique sentinel (`session=yalla-csrf-sentinel-9f3c2a7e-do-not-echo`) in the request Cookie header and asserts both the sentinel string AND its bare value never appear in the response body. The bare-value check is the load-bearing one — a regression that logged the Cookie header into an error message would likely strip the `session=` prefix when JSON-encoding, leaving only the bare value, so checking ONLY the prefixed form would silently miss the redaction failure. The sentinel-not-echoed assertion ports verbatim to any future security-verification story whose threat model includes "this request header value must not be reflected in the response" (Cookie, Authorization, X-Api-Key, Range, If-Match, etc.).
 
@@ -39162,4 +39169,46 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Config examples are operations artifacts and should be pinned as static release gates, not only as incidental files referenced by systemd or container deployment docs.
   - Keep secret-shaped config values as `<redacted:...>` placeholders and avoid substring checks that match the environment variable name itself, such as matching `token=` against `YALLA_DOKPLOY_TOKEN=...`.
+---
+## 2026-05-19 17:11:35 +03 - BE-0419
+- What was implemented
+  - Added the production deployment runbook at `docs/operations/deployment.md` covering API/worker binary coupling, Kubernetes and systemd deploy paths, runtime secret handling, migration sequencing, health/readiness/version probes, stable JSON envelope expectations, structured log redaction, post-deploy checks, opt-in external Dokploy smoke testing, and rollback posture.
+  - Added `internal/release/deployment_runbook_static_test.go` to pin the runbook contract and verify it remains wired into SECURITY.md, CI, and `scripts/verify.sh`.
+  - Added the deployment-runbook release gate to `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Marked `BE-0419` as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/operations/deployment.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/deployment_runbook_static_test.go`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - Focused red/green: `go test ./internal/release/... -run TestDeploymentRunbookArtifact` initially failed on brittle wrapped-substring assertions, then passed after tightening assertions to stable substrings.
+  - `gofmt -w .`
+  - `goimports -w .` attempted; `goimports` is not installed in the direct shell.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit hook: `scripts/verify.sh --strict --release`
+- Results
+  - Required formatting, module tidy, tests, race detector, vet, focused control-plane suites, and focused release gate passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - Strict pre-commit verification passed `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`; external live-Dokploy smoke remained opt-in and was skipped.
+  - `goimports` was unavailable in the direct shell environment.
+- Remaining risks or follow-ups
+  - None for this artifact. Incident response, SLO, release, and rollback runbook stories remain open in the PRD.
+- **Learnings for future iterations:**
+  - Deployment runbooks are release artifacts: pin them with a dedicated static test and wire the test into SECURITY.md, CI, and `scripts/verify.sh`.
+  - Static documentation tests should assert short, line-wrap-resistant substrings; long Markdown phrases are brittle once prose wraps naturally.
 ---
