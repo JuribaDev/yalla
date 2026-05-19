@@ -281,6 +281,21 @@ Dokploy smoke warning. Any future policy-engine guide change should update the
 guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
 the same edit.
 
+## Quota implementation guide artifact (BE-0546)
+
+`quota_implementation_guide_static_test.go` pins the backend quota guide at
+`docs/development/quota-implementation-guide.md`: the guide must document
+`internal/controlplane/quota`, `quota.Checker`, `quota.ExceededDetail`,
+`quota.DetailOf`, `store.QuotaResource`, `store.QuotaRepository`,
+`store.QuotaReserver`, `Store.Write`, `quota_reservations`, `usage_counters`,
+tenant-scoped `organization_id`, hard-limit rejection, soft-limit warnings,
+`apierr.QuotaExceeded`, `telemetry.QuotaUsageMetrics`, stable envelope output,
+exact verification commands, expected outputs, failure recovery, tenant
+isolation, redaction, fake-Dokploy-by-default tests, and the opt-in external
+Dokploy smoke warning. Any future quota-guide change should update the guide,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## Repository conventions artifact (BE-0544)
 
 `repository_conventions_static_test.go` pins the backend repository guide at

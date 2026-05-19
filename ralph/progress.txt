@@ -1,4 +1,16 @@
 ## Codebase Patterns
+- Quota implementation documentation follows the static-release-gate pattern:
+  keep `docs/development/quota-implementation-guide.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, `internal/release/AGENTS.md`, and
+  `internal/release/quota_implementation_guide_static_test.go` in lockstep;
+  document `internal/controlplane/quota`, `quota.Checker`,
+  `quota.ExceededDetail`, `quota.DetailOf`, `store.QuotaResource`,
+  `store.QuotaRepository`, `store.QuotaReserver`, `Store.Write`,
+  `quota_reservations`, `usage_counters`, tenant-scoped `organization_id`,
+  hard-limit rejection, soft-limit warnings, `apierr.QuotaExceeded`,
+  `telemetry.QuotaUsageMetrics`, exact verification commands, expected outputs,
+  stable envelopes, redaction, isolated Postgres tests, fake-Dokploy-by-default
+  behavior, opt-in live Dokploy smoke, and failure recovery.
 - Policy engine convention docs follow the same static-release-gate pattern:
   keep `docs/development/policy-engine-conventions.md`, SECURITY.md, CI,
   `scripts/verify.sh`, `internal/release/AGENTS.md`, and
@@ -39554,4 +39566,37 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Documentation-only backend stories should still use a failing static release test first when the repo has an artifact-gate pattern.
   - Policy docs should remain coupled to `internal/controlplane/policy/catalog.go`, the canonical policy matrix command, stable envelopes, redaction rules, and fake-Dokploy-by-default verification.
+---
+## 2026-05-19 18:19 +03 - BE-0546
+- What was implemented
+  - Added the production-grade quota implementation guide at `docs/development/quota-implementation-guide.md`.
+  - Added `internal/release/quota_implementation_guide_static_test.go` to pin the guide content and release-gate wiring.
+  - Wired the new static test into `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Marked BE-0546 as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/quota-implementation-guide.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/quota_implementation_guide_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/release/... -run TestQuotaImplementationGuideArtifact`
+- Results
+  - All run checks passed.
+  - The static artifact test was written first and failed on the missing guide/wiring before implementation, then passed after the guide and gates were added.
+- Remaining risks or follow-ups
+  - No runtime quota behavior changed in this story.
+  - Remaining documentation stories after BE-0546 still have `passes: false`.
+- **Learnings for future iterations:**
+  - Documentation stories in this sequence should follow the existing static-release-gate pattern: guide, release static test, SECURITY.md gate row and section, CI step, `scripts/verify.sh` step, and `internal/release/AGENTS.md` note.
+  - The current quota implementation centers on `quota.Checker` implementing `store.QuotaReserver`; repository services reserve inside `Store.Write`, while `store.QuotaRepository` owns `usage_counters` and `quota_reservations`.
 ---

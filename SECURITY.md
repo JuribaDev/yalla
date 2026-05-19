@@ -117,6 +117,7 @@ defined in `.github/workflows/ci.yml`:
 | Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | API handler conventions artifact | `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Policy engine conventions artifact | `go test ./internal/release/... -run TestPolicyEngineConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Quota implementation guide artifact | `go test ./internal/release/... -run TestQuotaImplementationGuideArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Repository conventions artifact | `go test ./internal/release/... -run TestRepositoryConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -491,6 +492,30 @@ idempotency, quota, audit, and failure recovery guidance.
 
 CI pins the API handler conventions with
 `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact`.
+
+## Quota Implementation Guide Artifact
+
+The backend quota implementation guide lives at
+`docs/development/quota-implementation-guide.md`. It documents how quota
+enforcement is added through `internal/controlplane/quota`,
+`store.QuotaReserver`, `store.QuotaRepository`, `Store.Write`, and
+tenant-scoped Postgres rows without exposing raw Dokploy operations. The guide
+pins hard-limit rejection, soft-limit warnings, metered/disabled behavior,
+`quota_reservations`, `usage_counters`, `apierr.QuotaExceeded`, stable
+`yalla.output.v1` / `yalla.error.v1` envelopes with request IDs,
+concurrency tests, tenant-isolation tests, fake-Dokploy-by-default behavior,
+and redaction of secrets, tokens, API keys, cookies, and rendered environment
+variable values.
+
+The guide preserves the production boundary: quota protects Yalla source of
+truth before desired-state writes and job enqueueing; workers call the private
+Dokploy API only after auth, policy, quota, idempotency, and audit succeed.
+Required local environment variables use redacted placeholders, expected
+outputs are pinned, and failure recovery keeps quota tests on isolated
+Postgres databases.
+
+CI pins the quota implementation guide with
+`go test ./internal/release/... -run TestQuotaImplementationGuideArtifact`.
 
 ## Repository Conventions Artifact
 

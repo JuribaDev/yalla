@@ -316,6 +316,12 @@ if ! go test ./internal/release/... -run TestPolicyEngineConventionsArtifact; th
   required_failed=1
 fi
 
+# Required: quota implementation guide artifact static tests
+step "go test ./internal/release/... -run TestQuotaImplementationGuideArtifact"
+if ! go test ./internal/release/... -run TestQuotaImplementationGuideArtifact; then
+  required_failed=1
+fi
+
 # Required: repository conventions artifact static tests
 step "go test ./internal/release/... -run TestRepositoryConventionsArtifact"
 if ! go test ./internal/release/... -run TestRepositoryConventionsArtifact; then

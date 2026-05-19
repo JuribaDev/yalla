@@ -168,6 +168,9 @@ jobs:
       - name: Policy engine conventions artifact static tests
         run: go test ./internal/release/... -run TestPolicyEngineConventionsArtifact
 
+      - name: Quota implementation guide artifact static tests
+        run: go test ./internal/release/... -run TestQuotaImplementationGuideArtifact
+
       - name: Repository conventions artifact static tests
         run: go test ./internal/release/... -run TestRepositoryConventionsArtifact
 
