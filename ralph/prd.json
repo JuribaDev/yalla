@@ -6685,8 +6685,8 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
-      "notes": "Drift coverage for application-image."
+      "passes": true,
+      "notes": "Added internal/controlplane/reconcile/application_image_test.go to verify application-image drift reconciliation: changed image build config is a value-free safe update_build_config repair, deleted upstream resources are dangerous review events, missing managed domains are safe ensures, unmanaged extra services are quarantined, and service-type drift is review-only with no build repair. Tightened diffService so type-changed services stop after ActionReviewServiceTypeChange instead of emitting safe repairs against an untrusted upstream type. goimports was not installed; gofmt, go mod tidy, go test ./..., go test -race ./..., and go vet ./... pass."
     },
     {
       "id": "BE-0305",

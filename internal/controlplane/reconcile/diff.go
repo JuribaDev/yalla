@@ -270,10 +270,9 @@ func diffService(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService
 			Reason:  ReasonServiceTypeChanged,
 			Service: ref,
 		})
-		// A type-changed service is a fundamental mismatch; we still scan
-		// its env/domain children so a single review event isn't the only
-		// signal, but we do not emit env-var or domain repairs against a
-		// service whose kind we do not recognise.
+		// A type-changed service is a fundamental mismatch. Do not emit safe
+		// repairs against a service whose kind we no longer trust.
+		return
 	}
 	diffBuild(plan, ref, ds, as)
 	diffEnvVars(plan, ref, ds, as)

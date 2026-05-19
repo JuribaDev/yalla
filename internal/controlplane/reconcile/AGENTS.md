@@ -26,6 +26,10 @@ produces a deterministic Plan of actions classified as `DriftSafe`,
   resurrect a customer-removed resource is `DriftDangerous` and goes through
   the `ReviewRecorder` for human triage — missing managed services, missing
   managed databases, host renames, and service-type changes all live here.
+  Once desired and actual service types differ, stop after the dangerous
+  `review_service_type_change` action; do not also emit build, env-var, or
+  domain safe repairs against an upstream resource whose shape is no longer
+  trusted.
 - **Unmanaged means quarantine, never delete.** A Dokploy resource without a
   Yalla counterpart is recorded via `UnmanagedRecorder` only. The engine
   never auto-deletes unmanaged resources and adapters never expose them on a

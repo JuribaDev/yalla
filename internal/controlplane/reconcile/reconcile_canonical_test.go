@@ -441,15 +441,6 @@ func reconcileScenarios() []reconcileScenario {
 				reason:     reconcile.ReasonServiceTypeChanged,
 				kind:       reconcile.DriftDangerous,
 				actionType: reconcile.ActionReviewServiceTypeChange,
-				// A type-mismatched service still has its env vars and domains
-				// scanned, which may emit secondary safe drift the per-row
-				// predicate must tolerate.
-				extraReasons: []reconcile.DriftReason{
-					reconcile.ReasonEnvVarChanged,
-					reconcile.ReasonEnvVarMissing,
-					reconcile.ReasonEnvVarExtra,
-					reconcile.ReasonDomainMissing,
-				},
 			},
 			reasonTag: reconcile.ReasonServiceTypeChanged,
 			typeTag:   reconcile.ActionReviewServiceTypeChange,
