@@ -108,6 +108,7 @@ defined in `.github/workflows/ci.yml`:
 | Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -285,6 +286,29 @@ the API through `/healthz` and `/readyz` and inspect structured JSON logs with
 
 CI pins the command, runbook, binary flag, and release gate with
 `go test ./internal/release/... -run TestDatabaseMigrationCommand`.
+
+## Seed Admin Command Artifact
+
+The production seed-admin command lives at
+`deploy/operations/seed-admin.sh` with the runbook in
+`deploy/operations/README.md`. It runs the API binary's embedded maintenance
+path through `/usr/local/bin/yalla-api --seed-admin`, so the bootstrap write
+uses the same database contract as the deployed backend release. The worker
+binary remains separate: the script verifies both `yalla-api` and
+`yalla-worker` are active before seeding, but it never gives the worker broad
+database or Dokploy credentials.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+signing keys, secret-encryption keys, Dokploy endpoints, Dokploy tokens, API
+keys, cookies, seed identity values, or rendered environment values;
+`--dry-run` prints only command shape plus redacted `YALLA_*` variable names.
+After `--apply`, operators verify the API through `/healthz` and `/readyz`
+and inspect structured JSON logs with
+`journalctl -u yalla-api -u yalla-worker -o json`.
+
+CI pins the command, runbook, binary flag, and release gate with
+`go test ./internal/release/... -run TestSeedAdminCommand`.
 
 ## TLS Termination and Proxy Header Trust
 

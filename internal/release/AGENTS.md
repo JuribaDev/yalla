@@ -150,6 +150,20 @@ plus structured JSON log checks. Any future migration-command change should
 update the script, `deploy/operations` runbook, SECURITY.md verification-gates
 row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Seed admin command artifact (BE-0415)
+
+`seed_admin_command_static_test.go` pins the checked-in seed-admin command
+under `deploy/operations/`: the script must call
+`/usr/local/bin/yalla-api --seed-admin`, keep seed inputs and database
+credentials in `/etc/yalla/control-plane.env`, provide a dry-run plan with
+redacted variable names only, verify `yalla-api` and `yalla-worker` service
+liveness plus `/healthz` + `/readyz`, and document structured JSON log checks.
+The API binary owns the actual source-of-truth write so validation,
+transactionality, and audit remain in Go code rather than shell SQL. Any future
+seed-admin change should update the script, `deploy/operations` runbook,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

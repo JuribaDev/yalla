@@ -4,10 +4,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/backoffice"
 	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
@@ -97,6 +100,19 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("migration command completed")
+		return
+	}
+	if opts.seedAdmin {
+		dataStore, err := store.New(pool, logger)
+		if err != nil {
+			logger.Error("failed to initialize the persistence layer", "error", err.Error())
+			os.Exit(1)
+		}
+		if err := runSeedAdminCommand(ctx, dataStore, logger, opts); err != nil {
+			logger.Error("seed admin command failed", "error", err.Error())
+			os.Exit(1)
+		}
+		logger.Info("seed admin command completed")
 		return
 	}
 
@@ -551,7 +567,13 @@ func main() {
 }
 
 type cliOptions struct {
-	migrateOnly bool
+	migrateOnly            bool
+	seedAdmin              bool
+	seedAdminEmail         string
+	seedAdminOrganization  string
+	seedAdminRole          string
+	seedAdminRequestID     string
+	seedAdminCorrelationID string
 }
 
 func parseOptions(args []string) (cliOptions, error) {
@@ -559,8 +581,17 @@ func parseOptions(args []string) (cliOptions, error) {
 	fs := flag.NewFlagSet("yalla-api", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.BoolVar(&opts.migrateOnly, "migrate-only", false, "apply embedded database migrations and exit without starting the HTTP API")
+	fs.BoolVar(&opts.seedAdmin, "seed-admin", false, "seed an initial operator user and membership, then exit without starting the HTTP API")
+	fs.StringVar(&opts.seedAdminEmail, "seed-admin-email", "", "email address for the initial operator user")
+	fs.StringVar(&opts.seedAdminOrganization, "seed-admin-organization", "", "organization name or slug for the initial operator tenant")
+	fs.StringVar(&opts.seedAdminRole, "seed-admin-role", "owner", "organization role for the seeded operator user: owner, admin, or member")
+	fs.StringVar(&opts.seedAdminRequestID, "seed-admin-request-id", "req_seed_admin", "stable request id to record on the seed audit event")
+	fs.StringVar(&opts.seedAdminCorrelationID, "seed-admin-correlation-id", "corr_seed_admin", "stable correlation id to record on the seed audit event")
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
+	}
+	if opts.migrateOnly && opts.seedAdmin {
+		return cliOptions{}, fmt.Errorf("only one maintenance mode may be selected")
 	}
 	return opts, nil
 }
@@ -590,6 +621,98 @@ func runMigrationCommand(ctx context.Context, pool *pgxpool.Pool, logger *slog.L
 		"pending_count", len(status.Pending),
 		"dirty", status.Dirty)
 	return nil
+}
+
+func runSeedAdminCommand(ctx context.Context, dataStore *store.Store, logger *slog.Logger, opts cliOptions) error {
+	email := strings.TrimSpace(strings.ToLower(opts.seedAdminEmail))
+	if email == "" || !strings.Contains(email, "@") {
+		return fmt.Errorf("seed admin email must be a non-empty email address")
+	}
+	orgName := strings.TrimSpace(opts.seedAdminOrganization)
+	if orgName == "" {
+		return fmt.Errorf("seed admin organization must not be blank")
+	}
+	role := strings.TrimSpace(strings.ToLower(opts.seedAdminRole))
+	switch role {
+	case "owner", "admin", "member":
+	default:
+		return fmt.Errorf("seed admin role must be one of owner, admin, or member")
+	}
+	slug, err := domain.NormalizeSlug(orgName)
+	if err != nil {
+		return fmt.Errorf("seed admin organization slug: %w", err)
+	}
+	orgID, err := domain.NewID(domain.KindOrganization)
+	if err != nil {
+		return err
+	}
+	userID, err := domain.NewID(domain.KindUser)
+	if err != nil {
+		return err
+	}
+
+	var seededOrgID, seededUserID string
+	auditRepo := store.NewAuditRepository()
+	err = dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO organizations (id, slug, display_name)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
+			 RETURNING id`,
+			orgID.String(), slug.String(), orgName).Scan(&seededOrgID); err != nil {
+			return err
+		}
+		displayName := seedAdminDisplayName(email)
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO users (id, email, display_name)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+			 RETURNING id`,
+			userID.String(), email, displayName).Scan(&seededUserID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO memberships (organization_id, user_id, role)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (organization_id, user_id)
+			 DO UPDATE SET role = EXCLUDED.role`,
+			seededOrgID, seededUserID, role); err != nil {
+			return err
+		}
+		_, err := auditRepo.Append(ctx, tx, store.AuditEvent{
+			OrganizationID: seededOrgID,
+			ActorKind:      "system",
+			Action:         "admin.seed",
+			ResourceKind:   string(domain.KindUser),
+			ResourceID:     seededUserID,
+			Decision:       store.AuditDecisionAllowed,
+			Reason:         "operator seed admin command",
+			RequestID:      strings.TrimSpace(opts.seedAdminRequestID),
+			CorrelationID:  strings.TrimSpace(opts.seedAdminCorrelationID),
+			Metadata: map[string]string{
+				"organization_slug": slug.String(),
+				"role":              role,
+			},
+		})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.Info("seed admin command wrote source-of-truth rows",
+		"organization_id", seededOrgID,
+		"user_id", seededUserID,
+		"role", role)
+	return nil
+}
+
+func seedAdminDisplayName(email string) string {
+	local, _, ok := strings.Cut(email, "@")
+	if !ok || strings.TrimSpace(local) == "" {
+		return "Seed Admin"
+	}
+	return local
 }
 
 // runStartupChecks verifies the dependencies the API needs before it can serve
