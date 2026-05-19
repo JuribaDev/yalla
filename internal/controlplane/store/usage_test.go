@@ -457,6 +457,68 @@ func TestUsageReaderIncludesHTTPBandwidthTotalCountersForCurrentPeriod(t *testin
 	}
 }
 
+func TestUsageReaderIncludesContainerCPUCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "ContainerCPUUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-container-cpu")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "container_cpu_millicore_seconds", store.EntitlementSourceSubscriptionOverride, 100000, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceContainerCPUMillicoreSeconds,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       1250,
+		Unit:           "millicore_second",
+		Source:         "dokploy_or_cadvisor",
+		IdempotencyKey: "container_cpu:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var cpu store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceContainerCPUMillicoreSeconds {
+			cpu = row
+			break
+		}
+	}
+	if cpu.Resource == "" {
+		t.Fatalf("usage rows %+v missing container_cpu_millicore_seconds counter", got)
+	}
+	if cpu.UsedValue != 1250 {
+		t.Fatalf("container_cpu_millicore_seconds UsedValue = %d, want aggregated counter 1250", cpu.UsedValue)
+	}
+	if cpu.LimitValue == nil || *cpu.LimitValue != 100000 {
+		t.Fatalf("container_cpu_millicore_seconds limit = %+v, want subscription entitlement 100000", cpu)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

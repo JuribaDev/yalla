@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Billing-grade container metric stories follow the same four-piece tracked-metric vertical as Traefik/build metering: add a runtime `metering.MetricDefinition`, extend the closed `quota_resource` domain plus `store.QuotaResource`, quarantine samples before billing unless attribution resolves a full org/project/environment/service scope, and emit idempotent `usage_events` whose current-period aggregation is visible through the organization usage projection.
 - HTTP request metrics live in `internal/controlplane/telemetry` and are wired by `httpapi.NewHandler` inside request logging: group metric series only by method, normalized route, status code, and status class; keep request/correlation/org/principal identifiers as latest-sample log-join hints instead of dashboard labels.
 - Billing-grade Traefik metric stories should add four pieces together: a runtime `metering.MetricDefinition`, a new `quota_resource` migration + `store.QuotaResource` constant when the key is invoiceable, an idempotent emitter that writes only fully attributed samples into `usage_events`, and a customer usage projection from current-period `usage_counters`.
 - Entitlement-backed hard quota rejections should carry both human guidance and stable machine details: `resource`, `entitlement_key`, `current`, `reserved`, `requested`, `limit`, and subscription `reset_period_start`/`reset_period_end` when the limit came from a current subscription period. Keep the detailed counts from the same locked quota decision that creates or rejects the reservation.
@@ -37169,4 +37170,16 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Billing-grade Traefik metric additions need the same lockstep updates across `metering.LookupMetricDefinition`, `store.QuotaResource`, the `quota_resource` migration domain, `metricResource`, quota closed-set tests, and usage-reader projection tests.
   - The Traefik collector can already derive composite metrics such as `http_bandwidth_total`; the billing path still needs an explicit quota resource before `UsageEventRepository.Append` accepts the event.
+---
+
+## 2026-05-19 07:34:06 +03 - BE-0590
+- What was implemented: added the billing-grade `container_cpu_millicore_seconds` tracked metric with runtime definition, closed quota-resource support, migration 0058, container sample attribution/quarantine, idempotent usage-event emission, aggregation coverage, and customer usage projection coverage.
+- Files changed: `internal/controlplane/metering/metric_definition.go`, `internal/controlplane/metering/container_attribution.go`, `internal/controlplane/metering/container_usage.go`, related metering tests, `internal/controlplane/store/quota.go`, `internal/controlplane/store/quota_internal_test.go`, `internal/controlplane/store/usage_test.go`, and migration `0058_container_cpu_millicore_seconds_metering_resource`.
+- Verification run: `gofmt -w .`; `goimports -w .` attempted but goimports is not installed; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`; optional `staticcheck` and `govulncheck` attempted but not installed.
+- Results: all installed required and optional checks passed. Integration tests that require `YALLA_TEST_DATABASE_URL` skipped through the shared harness when no test database was configured.
+- Remaining risks or follow-ups: later metric stories should add concrete Dokploy/cAdvisor source collectors; this story added the normalized attribution/emission path and billing-grade persistence contract for the CPU metric.
+- **Learnings for future iterations:**
+  - Container metrics should quarantine before emission unless a resolver produces the full tenant hierarchy; the emitter intentionally skips incomplete scopes and relies on `UsageEventRepository.Append` for final tenant-scope validation.
+  - Adding a billing-grade metric requires updating both the runtime metric catalog and the `quota_resource` closed set; `TestQuotaResourceValid` catches missed store constants.
+  - Current-period customer usage visibility for billing-grade metrics comes from `usage_events` -> `usage_counters` aggregation and `UsageReader`, not from `quota_usage`.
 ---

@@ -49,3 +49,15 @@ func TestHTTPBandwidthTotalMetricDefinition(t *testing.T) {
 		t.Fatalf("http_bandwidth_total definition = %+v, want byte/traefik/metered/billing-grade", def)
 	}
 }
+
+func TestContainerCPUMillicoreSecondsMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("container_cpu_millicore_seconds")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(container_cpu_millicore_seconds) missing")
+	}
+	if def.Key != "container_cpu_millicore_seconds" || def.Unit != "millicore_second" || def.Source != "dokploy_or_cadvisor" || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("container_cpu_millicore_seconds definition = %+v, want millicore_second/dokploy_or_cadvisor/metered/billing-grade", def)
+	}
+}

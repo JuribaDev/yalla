@@ -22,58 +22,60 @@ type QuotaResource string
 // The closed set of quota dimensions. Adding a dimension is a new migration
 // that runs ALTER DOMAIN plus a new constant here.
 const (
-	QuotaResourceProjects              QuotaResource = "projects"
-	QuotaResourceEnvironments          QuotaResource = "environments"
-	QuotaResourceServices              QuotaResource = "services"
-	QuotaResourceApplications          QuotaResource = "applications"
-	QuotaResourceComposeStacks         QuotaResource = "compose_stacks"
-	QuotaResourceDatabases             QuotaResource = "databases"
-	QuotaResourceDomains               QuotaResource = "domains"
-	QuotaResourcePreviewEnvironments   QuotaResource = "preview_environments"
-	QuotaResourceCPUMillicores         QuotaResource = "cpu_millicores"
-	QuotaResourceMemoryMB              QuotaResource = "memory_mb"
-	QuotaResourceStorageGB             QuotaResource = "storage_gb"
-	QuotaResourceBackups               QuotaResource = "backups"
-	QuotaResourceBackupSchedules       QuotaResource = "backup_schedules"
-	QuotaResourceAPIKeys               QuotaResource = "api_keys"
-	QuotaResourceMembers               QuotaResource = "members"
-	QuotaResourceConcurrentDeployments QuotaResource = "concurrent_deployments"
-	QuotaResourceMonthlyDeployments    QuotaResource = "monthly_deployments"
-	QuotaResourceDeployments           QuotaResource = "deployments"
-	QuotaResourceFailedDeployments     QuotaResource = "failed_deployments"
-	QuotaResourceBuildMinutes          QuotaResource = "build_minutes"
-	QuotaResourceHTTPRequests          QuotaResource = "http_requests"
-	QuotaResourceHTTPResponseBytes     QuotaResource = "http_response_bytes"
-	QuotaResourceHTTPRequestBytes      QuotaResource = "http_request_bytes"
-	QuotaResourceHTTPBandwidthTotal    QuotaResource = "http_bandwidth_total"
+	QuotaResourceProjects                     QuotaResource = "projects"
+	QuotaResourceEnvironments                 QuotaResource = "environments"
+	QuotaResourceServices                     QuotaResource = "services"
+	QuotaResourceApplications                 QuotaResource = "applications"
+	QuotaResourceComposeStacks                QuotaResource = "compose_stacks"
+	QuotaResourceDatabases                    QuotaResource = "databases"
+	QuotaResourceDomains                      QuotaResource = "domains"
+	QuotaResourcePreviewEnvironments          QuotaResource = "preview_environments"
+	QuotaResourceCPUMillicores                QuotaResource = "cpu_millicores"
+	QuotaResourceMemoryMB                     QuotaResource = "memory_mb"
+	QuotaResourceStorageGB                    QuotaResource = "storage_gb"
+	QuotaResourceBackups                      QuotaResource = "backups"
+	QuotaResourceBackupSchedules              QuotaResource = "backup_schedules"
+	QuotaResourceAPIKeys                      QuotaResource = "api_keys"
+	QuotaResourceMembers                      QuotaResource = "members"
+	QuotaResourceConcurrentDeployments        QuotaResource = "concurrent_deployments"
+	QuotaResourceMonthlyDeployments           QuotaResource = "monthly_deployments"
+	QuotaResourceDeployments                  QuotaResource = "deployments"
+	QuotaResourceFailedDeployments            QuotaResource = "failed_deployments"
+	QuotaResourceBuildMinutes                 QuotaResource = "build_minutes"
+	QuotaResourceHTTPRequests                 QuotaResource = "http_requests"
+	QuotaResourceHTTPResponseBytes            QuotaResource = "http_response_bytes"
+	QuotaResourceHTTPRequestBytes             QuotaResource = "http_request_bytes"
+	QuotaResourceHTTPBandwidthTotal           QuotaResource = "http_bandwidth_total"
+	QuotaResourceContainerCPUMillicoreSeconds QuotaResource = "container_cpu_millicore_seconds"
 )
 
 // quotaResources is the membership set behind QuotaResource.Valid.
 var quotaResources = map[QuotaResource]struct{}{
-	QuotaResourceProjects:              {},
-	QuotaResourceEnvironments:          {},
-	QuotaResourceServices:              {},
-	QuotaResourceApplications:          {},
-	QuotaResourceComposeStacks:         {},
-	QuotaResourceDatabases:             {},
-	QuotaResourceDomains:               {},
-	QuotaResourcePreviewEnvironments:   {},
-	QuotaResourceCPUMillicores:         {},
-	QuotaResourceMemoryMB:              {},
-	QuotaResourceStorageGB:             {},
-	QuotaResourceBackups:               {},
-	QuotaResourceBackupSchedules:       {},
-	QuotaResourceAPIKeys:               {},
-	QuotaResourceMembers:               {},
-	QuotaResourceConcurrentDeployments: {},
-	QuotaResourceMonthlyDeployments:    {},
-	QuotaResourceDeployments:           {},
-	QuotaResourceFailedDeployments:     {},
-	QuotaResourceBuildMinutes:          {},
-	QuotaResourceHTTPRequests:          {},
-	QuotaResourceHTTPResponseBytes:     {},
-	QuotaResourceHTTPRequestBytes:      {},
-	QuotaResourceHTTPBandwidthTotal:    {},
+	QuotaResourceProjects:                     {},
+	QuotaResourceEnvironments:                 {},
+	QuotaResourceServices:                     {},
+	QuotaResourceApplications:                 {},
+	QuotaResourceComposeStacks:                {},
+	QuotaResourceDatabases:                    {},
+	QuotaResourceDomains:                      {},
+	QuotaResourcePreviewEnvironments:          {},
+	QuotaResourceCPUMillicores:                {},
+	QuotaResourceMemoryMB:                     {},
+	QuotaResourceStorageGB:                    {},
+	QuotaResourceBackups:                      {},
+	QuotaResourceBackupSchedules:              {},
+	QuotaResourceAPIKeys:                      {},
+	QuotaResourceMembers:                      {},
+	QuotaResourceConcurrentDeployments:        {},
+	QuotaResourceMonthlyDeployments:           {},
+	QuotaResourceDeployments:                  {},
+	QuotaResourceFailedDeployments:            {},
+	QuotaResourceBuildMinutes:                 {},
+	QuotaResourceHTTPRequests:                 {},
+	QuotaResourceHTTPResponseBytes:            {},
+	QuotaResourceHTTPRequestBytes:             {},
+	QuotaResourceHTTPBandwidthTotal:           {},
+	QuotaResourceContainerCPUMillicoreSeconds: {},
 }
 
 // Valid reports whether r is one of the closed set of quota dimensions.

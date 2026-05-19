@@ -54,6 +54,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementMetered,
 		BillingGrade: true,
 	},
+	"container_cpu_millicore_seconds": {
+		Key:          "container_cpu_millicore_seconds",
+		Unit:         "millicore_second",
+		Source:       "dokploy_or_cadvisor",
+		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.
