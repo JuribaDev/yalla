@@ -36548,3 +36548,13 @@ change that widened Reason to caller-supplied data.
   - Database drift verification stories can usually reuse the postgres/mysql reconcile test shape because `diffService` handles database engine subtype drift generically.
   - For database reconcile verification, keep the engine-drift test value-bearing but assert that only value-free classification fields are inspected for leaks.
 ---
+## 2026-05-19 04:58:21 +03 - BE-0316
+- What was implemented: Added Mongo-specific reconciliation verification for database drift. The new tests pin Mongo engine drift as dangerous review-only drift, prove safe missing-domain repair, prove deleted upstream databases are reviewed, and prove unmanaged extra Mongo databases are quarantined without auto-delete.
+- Files changed: `internal/controlplane/reconcile/database_mongo_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/reconcile -run 'TestMongoReconcile' -count=1`; `gofmt -w .`; `goimports -w .` attempted; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`; pre-commit `scripts/verify.sh --strict --release`.
+- Results: All required checks passed. Focused Mongo reconciliation tests passed. `golangci-lint` passed with 0 issues. Pre-commit also passed `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and snapshot release checks. `goimports` was not installed for the manual import-format pass.
+- Remaining risks or follow-ups: None for BE-0316. The next unfinished backend story is BE-0318 for Redis drift reconciliation.
+- **Learnings for future iterations:**
+  - Mongo drift reconciliation uses the shared database subtype path: `ServiceDatabase` plus `EngineMongo`, with engine drift classified as `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` before any env/domain repair.
+  - Database-engine reconciliation verification remains a mechanical clone of the postgres/mysql/mariadb pattern; keep classification fields value-free and route secrets only through repairer-only fields.
+---
