@@ -14,3 +14,7 @@ capable, and safe to inspect in CI.
   structured logs stay in the backend binary.
 - Pause `yalla-worker` before schema-changing operations and verify API
   `/healthz` plus `/readyz` before declaring the maintenance step complete.
+- Backup operations stay outside the Yalla Go process: use the checked-in
+  shell artifact to run `pg_dump`, keep rendered DSNs and backup credentials in
+  the env file, update `YALLA_BACKUP_STATUS_FILE` atomically only after
+  success, and verify `/healthz`, `/readyz`, and `/healthz/backup`.

@@ -43,6 +43,49 @@ environment variable values.
 Do not paste `/etc/yalla/control-plane.env` into tickets or runbooks. The
 dry-run plan prints only redacted `YALLA_*` variable names and command shape.
 
+## Database Backup
+
+Run the control-plane logical backup through the operator-owned backup
+toolchain:
+
+```bash
+deploy/operations/backup-database.sh --dry-run
+sudo deploy/operations/backup-database.sh --apply
+```
+
+The command loads `/etc/yalla/control-plane.env` by default, verifies that the
+versioned backend binaries exist at `/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`, and then runs:
+
+```bash
+pg_dump --format=custom --no-acl --no-owner --compress=9
+```
+
+The dump is written under `YALLA_BACKUP_DIR` using mode `0600` semantics from
+`umask 077`; operators must mount that directory on the encrypted backup
+volume described in `docs/operations/backup-restore.md`. The command uses
+`flock` so two backups cannot run concurrently, writes the
+`YALLA_BACKUP_STATUS_FILE` timestamp atomically with `mktemp` and `mv`, and
+leaves the previous status file untouched if `pg_dump` fails.
+
+Before and after applying, the script verifies service liveness and probes the
+public health surfaces:
+
+```bash
+sudo systemctl is-active yalla-api
+sudo systemctl is-active yalla-worker
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS http://127.0.0.1:8080/healthz/backup
+```
+
+The API process returns stable `yalla.output.v1` / `yalla.error.v1` envelopes
+for HTTP health, readiness, and backup probes. Backup command diagnostics are
+structured JSON-adjacent operator messages only and must not contain database
+URLs, tokens, API keys, cookies, Dokploy credentials, signing keys, secret
+keys, backup bucket credentials, or rendered environment variable values. The
+dry-run plan prints only redacted `YALLA_*` variable names and command shape.
+
 ## Seed Admin
 
 Seed the initial operator user and organization membership through the API
@@ -81,3 +124,26 @@ rows and an audit event, and logs only stable row IDs, role, and command
 status. It must never print database URLs, tokens, API keys, cookies, Dokploy
 credentials, signing keys, secret keys, or rendered environment variable
 values.
+
+## Backup Command Artifact
+
+The production backup command lives at
+`deploy/operations/backup-database.sh` with this runbook. It references the
+same deployed backend binaries as the service units (`/usr/local/bin/yalla-api`
+and `/usr/local/bin/yalla-worker`) but keeps the backup data plane outside the
+Go process: the shell artifact invokes `pg_dump --format=custom --no-acl
+--no-owner --compress=9` against the operator-provided Postgres role, writes
+the backup file into the operator-managed encrypted backup directory, and
+updates `YALLA_BACKUP_STATUS_FILE` only after the dump has succeeded.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+signing keys, secret-encryption keys, Dokploy endpoints, Dokploy tokens, API
+keys, cookies, backup bucket credentials, or rendered environment values;
+`--dry-run` prints only command shape plus redacted `YALLA_*` variable names.
+After `--apply`, operators verify the API through `/healthz`, `/readyz`, and
+`/healthz/backup`, then inspect structured JSON logs with
+`journalctl -u yalla-api -u yalla-worker -o json`.
+
+CI pins the command, runbook, and release gate with
+`go test ./internal/release/... -run TestBackupCommand`.

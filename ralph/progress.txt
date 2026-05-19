@@ -1,4 +1,11 @@
 ## Codebase Patterns
+- Backup operations artifacts follow the static-release-gate pattern:
+  keep `deploy/operations/backup-database.sh`,
+  `deploy/operations/README.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and `internal/release/*_static_test.go` in lockstep;
+  keep the backup data plane outside Yalla Go processes, run `pg_dump` from
+  the operator shell artifact, update `YALLA_BACKUP_STATUS_FILE` atomically
+  only after success, and redact all `YALLA_*` dry-run values.
 - Production operations commands that mutate control-plane source-of-truth
   state should be pinned by release static tests and route writes through a
   narrow `yalla-api` maintenance flag rather than shell SQL; keep the script,
@@ -39062,3 +39069,14 @@ change that widened Reason to caller-supplied data.
   - Feature flag targeting is a backoffice runtime-config surface, not a generic admin config blob: keep storage typed, route mutations through a store service, and make evaluation deterministic so agents can replay decisions.
   - Admin-sensitive evaluations should audit the fact of evaluation plus stable flag identifiers, but never persist the raw evaluated JSON value in audit metadata.
 ---
+---
+## 2026-05-19 16:38:33 +03 - BE-0416
+- What was implemented: added the production backup operations artifact at `deploy/operations/backup-database.sh`; it loads runtime config from the operator env file, verifies the API/worker binaries and systemd services, probes `/healthz`, `/readyz`, and `/healthz/backup`, runs `pg_dump --format=custom --no-acl --no-owner --compress=9` under a lock, writes backup output into the operator-managed backup directory, and atomically updates `YALLA_BACKUP_STATUS_FILE` only after success. Added static release tests and wired the command into the operations README, SECURITY.md verification gates, CI, local verify script, and nearby AGENTS.md guidance.
+- Files changed: `deploy/operations/backup-database.sh`; `deploy/operations/README.md`; `deploy/operations/AGENTS.md`; `internal/release/backup_command_static_test.go`; `internal/release/AGENTS.md`; `.github/workflows/ci.yml`; `scripts/verify.sh`; `SECURITY.md`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run: `go test ./internal/release/... -run TestBackupCommand` (failed first as the RED check before implementation); `bash -n deploy/operations/backup-database.sh deploy/operations/migrate-database.sh deploy/operations/seed-admin.sh`; redaction dry-run check with secret-shaped env values; `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`; pre-commit `scripts/verify.sh --strict --release`.
+- Results: all required, focused, and strict pre-commit checks passed. The dry-run output redacted the secret-shaped `YALLA_DATABASE_URL`, `YALLA_BACKUP_STATUS_FILE`, and `YALLA_BACKUP_DIR` values. `goimports` was not installed in the direct shell; strict pre-commit also passed `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Remaining risks or follow-ups: the script writes to an operator-managed encrypted backup directory; object-store upload, WAL archiving, and restore rehearsal automation remain governed by the existing backup/restore runbook and separate stories.
+- **Learnings for future iterations:**
+  - Operations artifacts should be pinned by a focused `internal/release/*_static_test.go` before adding the shell artifact so missing script/docs/gates fail cleanly first.
+  - Backup command dry-run plans must avoid printing even operational paths supplied through `YALLA_*` variables; show command shape and redacted variable names instead.
+  - The backup command should not add backup behavior to `cmd/yalla-api` or `cmd/yalla-worker`; the Yalla process only reads the status timestamp through `/healthz/backup`.

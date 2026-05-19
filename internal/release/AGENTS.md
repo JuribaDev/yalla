@@ -164,6 +164,18 @@ seed-admin change should update the script, `deploy/operations` runbook,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Backup command artifact (BE-0416)
+
+`backup_command_static_test.go` pins the checked-in backup command under
+`deploy/operations/`: the script must keep the backup data plane outside the
+Yalla Go process, reference `/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker` for release coupling, run `pg_dump` with the
+canonical logical-backup flags, keep DSNs and backup credentials in the
+operator env file, render only redacted dry-run output, and update
+`YALLA_BACKUP_STATUS_FILE` atomically after success. Any future backup-command
+change should update the script, `deploy/operations` runbook, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

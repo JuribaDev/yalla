@@ -8813,7 +8813,7 @@
       ],
       "type": "operations-artifact",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Operations artifact: backup command."
     },
     {

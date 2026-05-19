@@ -109,6 +109,7 @@ defined in `.github/workflows/ci.yml`:
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -309,6 +310,36 @@ and inspect structured JSON logs with
 
 CI pins the command, runbook, binary flag, and release gate with
 `go test ./internal/release/... -run TestSeedAdminCommand`.
+
+## Backup Command Artifact
+
+The production backup command lives at
+`deploy/operations/backup-database.sh` with the runbook in
+`deploy/operations/README.md`. It references the deployed
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker` binaries for
+version coupling and service checks, but it keeps backup production outside
+the Yalla Go processes. The operator command invokes
+`pg_dump --format=custom --no-acl --no-owner --compress=9` against the
+least-privilege Postgres role supplied in `/etc/yalla/control-plane.env`.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+signing keys, secret-encryption keys, Dokploy endpoints, Dokploy tokens, API
+keys, cookies, backup bucket credentials, or rendered environment values;
+`--dry-run` prints only command shape plus redacted `YALLA_*` variable names.
+The backup directory is operator-managed encrypted storage. The status file
+named by `YALLA_BACKUP_STATUS_FILE` is updated atomically with `mktemp` and
+`mv` only after `pg_dump` succeeds, so `/healthz/backup` never observes a
+partial timestamp.
+
+Before and after a backup, operators verify `/healthz`, `/readyz`, and
+`/healthz/backup`; the API renders stable `yalla.output.v1` or
+`yalla.error.v1` envelopes for those probes. Structured JSON logs from
+`yalla-api` and `yalla-worker` remain diagnostics only and must not contain
+backup credentials or rendered environment values.
+
+CI pins the command, runbook, and release gate with
+`go test ./internal/release/... -run TestBackupCommand`.
 
 ## TLS Termination and Proxy Header Trust
 
