@@ -19,8 +19,8 @@ package reconcile_test
 // ActualOrganization)` to a `Plan` whose every `Action` carries a
 // stable closed-set tag `(ActionType, DriftKind, DriftReason)`.
 // The classifier reads desired env-var values only to route them
-// to `Action.DesiredValue` (the single field a Repairer adapter
-// consumes); it never echoes a value into `Action.Type`,
+// to `Action.DesiredValue` or `Action.DesiredBuild` (the only
+// fields a Repairer adapter consumes); it never echoes a value into `Action.Type`,
 // `Action.Kind`, `Action.Reason`, `Action.EnvVarKey`,
 // `Action.Service`, `Action.Domain`, or `Action.Unmanaged`. The
 // classifier never reads I/O, never observes wall-clock time, and
@@ -58,7 +58,7 @@ package reconcile_test
 //  4. Value-free classification: the per-row redaction canary
 //     seeds `reconcileSecretMarker` into desired env-var values
 //     in env-var scenarios and asserts the marker survives in
-//     `Action.DesiredValue` (the single value-routing field) but
+//     `Action.DesiredValue` / `Action.DesiredBuild` (the value-routing fields) but
 //     NEVER appears in `Action.Type`, `Action.Kind`,
 //     `Action.Reason`, `Action.EnvVarKey`, `Action.Service.*`,
 //     `Action.Domain.*`, or `Action.Unmanaged.*`. A regression
@@ -93,11 +93,11 @@ import (
 
 // reconcileSecretMarker is a sentinel literal the canonical
 // scenarios seed into desired env-var values whose drift routes
-// through `Action.DesiredValue`. The marker is not a secret
+// through `Action.DesiredValue` or `Action.DesiredBuild`. The marker is not a secret
 // transport pattern (no "Bearer", "Authorization", "token=",
 // etc.), so any operator-side redactor leaves it intact — the
-// per-row canary asserts the marker survives into `DesiredValue`
-// (the single value-routing field) and is absent from every
+// per-row canary asserts the marker survives into one value-routing field
+// and is absent from every
 // other field of the emitted `Action`. A regression that started
 // echoing the desired value into a classification field would
 // fail the marker-absence predicate on its first scenario.
@@ -116,6 +116,7 @@ var reconcileDriftReasons = []reconcile.DriftReason{
 	reconcile.ReasonEnvVarChanged,
 	reconcile.ReasonEnvVarMissing,
 	reconcile.ReasonEnvVarExtra,
+	reconcile.ReasonBuildConfigChanged,
 	reconcile.ReasonDomainMissing,
 	reconcile.ReasonDomainRenamed,
 	reconcile.ReasonServiceMissing,
@@ -133,6 +134,7 @@ var reconcileActionTypes = []reconcile.ActionType{
 	reconcile.ActionUpdateEnvVar,
 	reconcile.ActionEnsureDomain,
 	reconcile.ActionRemoveExtraEnvVar,
+	reconcile.ActionUpdateBuildConfig,
 	reconcile.ActionReviewMissingService,
 	reconcile.ActionReviewMissingDatabase,
 	reconcile.ActionReviewRenamedDomain,
@@ -168,7 +170,7 @@ type reconcileExpect struct {
 // exhaustiveness self-check at the head of the covers test can
 // confirm every documented reason fires on at least one row.
 // `seedValueMarker=true` instructs the mutator to seed
-// `reconcileSecretMarker` into desired env-var values so the
+// `reconcileSecretMarker` into desired env-var or build values so the
 // per-row canary can assert value-free classification.
 type reconcileScenario struct {
 	name            string
@@ -331,6 +333,31 @@ func reconcileScenarios() []reconcileScenario {
 			},
 			reasonTag: reconcile.ReasonEnvVarExtra,
 			typeTag:   reconcile.ActionRemoveExtraEnvVar,
+		},
+		{
+			name: "application git build config drift emits build_config_changed safe update",
+			mutator: func(d *reconcile.DesiredOrganization, a *reconcile.ActualOrganization) {
+				d.Projects[0].Environments[0].Services[0].Build = dokploy.BuildSettings{
+					Builder:        dokploy.BuilderDockerfile,
+					DockerfilePath: "deploy/Dockerfile",
+					GitBranch:      "main",
+					GitCommit:      "commit-" + reconcileSecretMarker,
+				}
+				a.Projects[0].Environments[0].Services[0].Build = dokploy.BuildSettings{
+					Builder:        dokploy.BuilderDockerfile,
+					DockerfilePath: "Dockerfile",
+					GitBranch:      "staging",
+					GitCommit:      "old-commit",
+				}
+			},
+			expect: reconcileExpect{
+				reason:     reconcile.ReasonBuildConfigChanged,
+				kind:       reconcile.DriftSafe,
+				actionType: reconcile.ActionUpdateBuildConfig,
+			},
+			reasonTag:       reconcile.ReasonBuildConfigChanged,
+			typeTag:         reconcile.ActionUpdateBuildConfig,
+			seedValueMarker: true,
 		},
 		{
 			name: "desired domain absent from actual emits domain_missing safe ensure",
@@ -673,7 +700,7 @@ func reconcileAssertOutcome(t *testing.T, row reconcileScenario, plan reconcile.
 //   - For env-var rows that seed the marker, the per-row
 //     value-free predicate asserts the marker is absent from
 //     every classification field of every action and is present
-//     in Action.DesiredValue of at least one update action.
+//     in a value-routing field of at least one update action.
 func reconcileCheckOutcome(row reconcileScenario, plan reconcile.Plan) *reconcileContentionFailure {
 	if row.expect.empty {
 		if len(plan.Actions) != 0 {
@@ -719,14 +746,25 @@ func reconcileCheckOutcome(row reconcileScenario, plan reconcile.Plan) *reconcil
 	}
 
 	if row.seedValueMarker {
-		// Value-free classification canary: for env-var rows that seed
-		// the marker into desired values, the marker MUST survive into
-		// Action.DesiredValue of at least one update action AND MUST
-		// NOT appear in any classification field of any action.
-		markerInDesiredValue := false
+		// Value-free classification canary: for rows that seed the marker
+		// into desired values, the marker MUST survive into a Repairer-only
+		// value route of at least one update action AND MUST NOT appear in
+		// any classification field of any action.
+		markerInValueRoute := false
 		for _, a := range plan.Actions {
 			if strings.Contains(a.DesiredValue, reconcileSecretMarker) {
-				markerInDesiredValue = true
+				markerInValueRoute = true
+			}
+			for _, field := range []string{
+				a.DesiredBuild.DockerfilePath,
+				a.DesiredBuild.Image,
+				a.DesiredBuild.GitBranch,
+				a.DesiredBuild.GitCommit,
+				a.DesiredBuild.ArtifactURL,
+			} {
+				if strings.Contains(field, reconcileSecretMarker) {
+					markerInValueRoute = true
+				}
 			}
 			// Classification fields that MUST NOT echo the value.
 			if strings.Contains(string(a.Type), reconcileSecretMarker) {
@@ -792,10 +830,10 @@ func reconcileCheckOutcome(row reconcileScenario, plan reconcile.Plan) *reconcil
 				}
 			}
 		}
-		if !markerInDesiredValue {
+		if !markerInValueRoute {
 			return &reconcileContentionFailure{
 				rowName: row.name,
-				message: fmt.Sprintf("Diff(%q) seeded marker %q into desired env-var values but no plan action carries it in DesiredValue; the Repairer would have nothing to write back",
+				message: fmt.Sprintf("Diff(%q) seeded marker %q into desired values but no plan action carries it in a Repairer value route; the Repairer would have nothing to write back",
 					row.name, reconcileSecretMarker),
 			}
 		}

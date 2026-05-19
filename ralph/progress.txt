@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Reconciliation-service-type stories should pin the subtype with a focused `internal/controlplane/reconcile/*_test.go` matrix while updating the canonical closed-set table when a new `ActionType` / `DriftReason` is introduced. Build/source config drift is value-bearing like env vars: route desired values only through Repairer-only fields (`Action.DesiredBuild`), keep `Type`/`Kind`/`Reason`/IDs value-free, and normalize build settings before diffing so renderer defaults (blank builder => dockerfile, blank dockerfile path => `Dockerfile`) do not create false positives.
 - `apierr.MigrationRequired` is the migration-gating public contract: it returns `E_MIGRATION_REQUIRED` (HTTP 503, non-retryable, generic message, fixed operator-action hint, exit code 3) and wraps schema/migrator causes only for server-side diagnostics. Use it when Postgres is reachable but the applied schema is behind the application contract; keep raw DSNs, SQL, migration filenames, and schema internals off the wire.
 - Postgres datastore outages now have their own public error contract: `apierr.StoreUnavailable` returns `E_DB_UNAVAILABLE` (HTTP 503, retryable, generic-message, dependency-tagged as `postgres`) and must preserve raw pgx/driver causes only for server-side logging. Durable queue outages continue to use `apierr.QueueUnavailable` / `E_UNAVAILABLE`, so new store-backed handler contract tests should assert `E_DB_UNAVAILABLE` for wrapped datastore failures.
 - Successful Dokploy HTTP responses with incompatible/malformed JSON from the typed client map to `apierr.DokployBadResponse()` / `E_DOKPLOY_BAD_RESPONSE` (HTTP 502), not `E_DOKPLOY_UNAVAILABLE`, because the upstream is reachable but violating Yalla's typed response contract. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted decode/upstream detail for server-side diagnostics.
@@ -258,6 +259,51 @@
 - List/upsert PATCH endpoints (e.g. PATCH .../limits): the request DTO carries a top-level array (not a partial-update of individual fields), each entry is an upsert, and the response is the post-write effective state re-read inside the SAME Store.Write tx — so the wire body and the committed state agree byte-for-byte. Validation rules: at least one entry (empty array = 400), every entry must be self-consistent (closed-set resource, range-checked limit, closed-set enforcement mode, no duplicate keys across entries), and a `*int64` for numeric fields whose zero is meaningful distinguishes "field omitted" (400) from "set to zero" (legitimate extreme). Field paths use `field[i].subfield` so an agent can pinpoint which entry was rejected.
 - Nullable scalar fields that always travel together project as a SINGLE nullable nested OBJECT on the wire, never as coupled-nullable scalars. GET /v1/organizations/{org_id}/usage is the canonical case: `{resource, used_value, limit: null}` for unconstrained vs `{resource, used_value, limit: {limit_value, enforcement_mode, source}}` when a policy is configured — three nullable scalar siblings would force every agent to handle each invalid (limit_value null but enforcement_mode set, etc) permutation. The store struct mirrors the wire: a single `*Limit` (or three pointers projected together with an all-or-nothing guard in the projector). Adding a new field to the nested object later (e.g. a billing period for metered limits) is then forward-compatible with existing readers, whereas adding a new top-level field next to coupled scalars is not.
 - Reads that union "configured" + "live" state for the same key set (a quota policy join with quota_usage, a desired-state join with reconciled actual state, ...) use ONE SQL statement with FULL OUTER JOIN + COALESCE(left.key, right.key) for the projection key, never two queries with a Go-side merge. The repository method takes (organizationID, plan) and stays tenant-scoped at every leg of the join — the CTE shape `WITH policies AS (... WHERE org=$1 OR plan=$2), usage AS (... WHERE org=$1) FULL OUTER JOIN ... ORDER BY resource` is the reference; two queries would force the handler to re-implement deterministic ordering AND would leak observability (the two queries can see different snapshots).
+
+## 2026-05-19 03:31 +03 - BE-0302
+- What was implemented
+  - Added application-git build-config drift detection to `internal/controlplane/reconcile`: desired and actual service snapshots now carry `dokploy.BuildSettings`, `Diff` normalizes build settings before comparing, and safe drift emits `update_build_config` / `build_config_changed`.
+  - Extended the `Repairer` port with `UpdateBuildConfig` so branch/commit/dockerfile/image/artifact values are routed only to the repair adapter, not review/audit classification fields.
+  - Added `internal/controlplane/reconcile/application_git_test.go` covering deleted upstream resource, changed upstream build config, missing managed domain, and unmanaged extra resource for application-git services.
+  - Updated the canonical reconciliation closed-set test to include `ReasonBuildConfigChanged` and `ActionUpdateBuildConfig`, with the value-free canary extended to `Action.DesiredBuild`.
+  - Marked BE-0302 `passes: true` in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/reconcile/application_git_test.go`
+  - `internal/controlplane/reconcile/diff.go`
+  - `internal/controlplane/reconcile/reconcile.go`
+  - `internal/controlplane/reconcile/reconcile_canonical_test.go`
+  - `internal/controlplane/reconcile/reconcile_test.go`
+  - `internal/controlplane/reconcile/types.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/reconcile -run TestApplicationGitReconcileRepairsChangedBuildConfig` (red first: failed to compile because Build fields, action/reason constants, and fake repair calls did not exist)
+  - `gofmt -w internal/controlplane/reconcile`
+  - `go test ./internal/controlplane/reconcile`
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestReconciliation ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed in this environment.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed in this environment.
+- Results
+  - Required formatting, module cleanup, unit tests, race tests, and vet pass.
+  - Focused control-plane and reconciliation suites pass.
+  - `golangci-lint` reports 0 issues.
+  - Application-git build settings are diffed safely without leaking branch/commit/path values into stable classification fields.
+- Remaining risks or follow-ups
+  - The concrete worker/store adapter for `Repairer.UpdateBuildConfig` remains a future integration surface; this story pins the pure reconcile contract and port shape.
+- **Learnings for future iterations:**
+  - Reconciliation-service-type stories can be implemented as subtype-specific reconcile tests plus canonical closed-set updates when the subtype introduces a new drift reason/action.
+  - Build settings should be normalized using renderer semantics before comparison so blank defaults do not become drift.
+  - Build config values are sensitive operational data; keep them in Repairer-only fields and out of `Reason`, IDs, review events, and unmanaged records.
+---
 - HTTP reads of an "already-redacted at persistence" surface (audit log, job error_summary, redacted reservation reasons, ...) project the persisted values onto the wire VERBATIM — the handler must not silently re-scrub or un-scrub sentinel values. The contract is "redaction is the writer's job, the reader trusts the chokepoint": audit.Auditor redacts metadata + IP + UA before AuditRepository.Append persists the row (the store treats them as clean), and the HTTP handler renders them as-is. Pin this structurally with a "feed the fake reader a row whose values are output.Sentinel, assert the wire renders Sentinel" test — a future regression that "cleans up" sentinels in the projection fails this test, not only review.
 - Endpoints that expose N coupled scalar fields that are EITHER all-present OR all-absent project as ONE nullable nested OBJECT on the wire, not N coupled-nullable scalars. Canonical cases: usage.limit ({limit_value, enforcement_mode, source} or null), audit_event.actor ({id, kind} or null for an unauthenticated denied event), audit_event.resource ({id, kind} or null for an organization-root action). An agent reads one boolean (`actor != null`) instead of validating N invalid combinations. The store struct mirrors the wire (a single `*Foo` pointer or N pointers projected together with an all-or-nothing guard). Adding a new field to the nested object later is forward-compatible.
 - audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).

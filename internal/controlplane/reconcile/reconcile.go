@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -40,6 +41,9 @@ type Repairer interface {
 	UpdateEnvVar(ctx context.Context, ref ServiceRef, key, value string, secret bool) error
 	// RemoveEnvVar removes key from the Dokploy service named by ref.
 	RemoveEnvVar(ctx context.Context, ref ServiceRef, key string) error
+	// UpdateBuildConfig converges the service's build settings to the
+	// desired source-of-truth spec.
+	UpdateBuildConfig(ctx context.Context, ref ServiceRef, build dokploy.BuildSettings) error
 	// EnsureDomain re-binds the desired domain on the Dokploy service named
 	// by ref.
 	EnsureDomain(ctx context.Context, ref ServiceRef, d DesiredDomain) error
@@ -262,6 +266,8 @@ func (r *Reconciler) applySafe(ctx context.Context, action Action) error {
 		return r.repairer.UpdateEnvVar(ctx, action.Service, action.EnvVarKey, action.DesiredValue, action.DesiredSecret)
 	case ActionRemoveExtraEnvVar:
 		return r.repairer.RemoveEnvVar(ctx, action.Service, action.EnvVarKey)
+	case ActionUpdateBuildConfig:
+		return r.repairer.UpdateBuildConfig(ctx, action.Service, action.DesiredBuild)
 	case ActionEnsureDomain:
 		if action.DesiredDomain == nil {
 			return apierr.Internal(stderrors.New("reconcile: ensure_domain action with no payload"))

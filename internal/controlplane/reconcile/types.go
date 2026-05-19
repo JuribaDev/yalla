@@ -48,6 +48,9 @@ const (
 	// ActionRemoveExtraEnvVar removes an unmanaged env var from a managed
 	// service: the key isn't in desired and is therefore drift.
 	ActionRemoveExtraEnvVar ActionType = "remove_extra_env_var"
+	// ActionUpdateBuildConfig repairs a managed service whose Dokploy build
+	// settings drifted from Yalla's desired state.
+	ActionUpdateBuildConfig ActionType = "update_build_config"
 	// ActionReviewMissingService records that a managed service has vanished
 	// from Dokploy.
 	ActionReviewMissingService ActionType = "review_missing_service"
@@ -81,6 +84,10 @@ const (
 	// ReasonEnvVarExtra is emitted when Dokploy carries an env var the
 	// desired state does not.
 	ReasonEnvVarExtra DriftReason = "env_var_extra"
+	// ReasonBuildConfigChanged is emitted when a managed service's build
+	// settings differ from source of truth. Never carries the branch,
+	// commit, image, artifact URL, or path itself.
+	ReasonBuildConfigChanged DriftReason = "build_config_changed"
 	// ReasonDomainMissing is emitted when a desired domain is absent on
 	// Dokploy.
 	ReasonDomainMissing DriftReason = "domain_missing"
@@ -163,6 +170,9 @@ type DesiredService struct {
 	ID    domain.ID
 	Label string
 	Type  dokploy.ServiceType
+	// Build is the source-of-truth build configuration for application and
+	// compose services. It is ignored for database services.
+	Build dokploy.BuildSettings
 	// Engine is the database engine; required when Type is ServiceDatabase
 	// and ignored otherwise.
 	Engine string
@@ -224,6 +234,7 @@ type ActualService struct {
 	DokployID string
 	Name      string
 	Type      dokploy.ServiceType
+	Build     dokploy.BuildSettings
 	Engine    string
 	EnvVars   []ActualEnvVar
 	Domains   []ActualDomain

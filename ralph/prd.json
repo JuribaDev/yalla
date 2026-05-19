@@ -6647,8 +6647,8 @@
       ],
       "type": "reconciliation-service-type",
       "priority": 2,
-      "passes": false,
-      "notes": "Drift coverage for application-git."
+      "passes": true,
+      "notes": "Application-git drift reconciliation now carries build settings through desired/actual snapshots, emits value-free safe update_build_config actions for changed git build config, and routes repairs through the Repairer port. internal/controlplane/reconcile/application_git_test.go covers deleted upstream resource, changed upstream config, missing domain, and unmanaged extra resource; canonical reconciliation coverage includes build_config_changed/update_build_config. gofmt, go test ./..., go test -race ./..., and go vet ./... pass."
     },
     {
       "id": "BE-0303",

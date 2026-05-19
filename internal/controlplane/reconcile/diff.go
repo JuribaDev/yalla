@@ -35,6 +35,10 @@ type Action struct {
 	// DesiredSecret records whether DesiredValue is secret. Used by the
 	// Repairer to route to a secret store, never logged.
 	DesiredSecret bool
+	// DesiredBuild is set for ActionUpdateBuildConfig. It can contain
+	// private repo refs or image/artifact locations and must only be consumed
+	// by a Repairer adapter.
+	DesiredBuild dokploy.BuildSettings
 	// DesiredService is set for ActionEnsureService and review actions that
 	// need to communicate the desired service shape downstream.
 	DesiredService *DesiredService
@@ -271,8 +275,27 @@ func diffService(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService
 		// signal, but we do not emit env-var or domain repairs against a
 		// service whose kind we do not recognise.
 	}
+	diffBuild(plan, ref, ds, as)
 	diffEnvVars(plan, ref, ds, as)
 	diffDomains(plan, ref, ds, as)
+}
+
+func diffBuild(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService) {
+	if ds.Type == dokploy.ServiceDatabase {
+		return
+	}
+	desired := normaliseBuildForDiff(ds.Build)
+	actual := normaliseBuildForDiff(as.Build)
+	if desired == actual {
+		return
+	}
+	plan.Actions = append(plan.Actions, Action{
+		Type:         ActionUpdateBuildConfig,
+		Kind:         DriftSafe,
+		Reason:       ReasonBuildConfigChanged,
+		Service:      ref,
+		DesiredBuild: desired,
+	})
 }
 
 func diffEnvVars(plan *Plan, ref ServiceRef, ds DesiredService, as ActualService) {
@@ -537,6 +560,43 @@ func unionKeys(desired map[string]DesiredEnvVar, actual map[string]ActualEnvVar)
 
 func normaliseHost(host string) string {
 	return strings.ToLower(strings.TrimSpace(host))
+}
+
+func normaliseBuildForDiff(in dokploy.BuildSettings) dokploy.BuildSettings {
+	out := dokploy.BuildSettings{
+		Builder:        strings.TrimSpace(in.Builder),
+		DockerfilePath: strings.TrimSpace(in.DockerfilePath),
+		Image:          strings.TrimSpace(in.Image),
+		GitBranch:      strings.TrimSpace(in.GitBranch),
+		GitCommit:      strings.TrimSpace(in.GitCommit),
+		ArtifactURL:    strings.TrimSpace(in.ArtifactURL),
+	}
+	if out.Builder == "" {
+		out.Builder = dokploy.BuilderDockerfile
+	}
+	switch out.Builder {
+	case dokploy.BuilderDockerfile:
+		if out.DockerfilePath == "" {
+			out.DockerfilePath = "Dockerfile"
+		}
+		out.Image = ""
+		out.ArtifactURL = ""
+	case dokploy.BuilderNixpacks:
+		out.DockerfilePath = ""
+		out.Image = ""
+		out.ArtifactURL = ""
+	case dokploy.BuilderImage:
+		out.DockerfilePath = ""
+		out.GitBranch = ""
+		out.GitCommit = ""
+		out.ArtifactURL = ""
+	case dokploy.BuilderDropArtifact:
+		out.DockerfilePath = ""
+		out.Image = ""
+		out.GitBranch = ""
+		out.GitCommit = ""
+	}
+	return out
 }
 
 // sortActions enforces a stable, deterministic action ordering so tests can

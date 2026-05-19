@@ -640,9 +640,11 @@ func (f *fakeActualReader) Read(_ context.Context, _ string) (reconcile.ActualOr
 type fakeRepairer struct {
 	envCalls    []envCall
 	removeCalls []removeCall
+	buildCalls  []buildCall
 	domainCalls []domainCall
 	envErr      error
 	removeErr   error
+	buildErr    error
 	domainErr   error
 	mu          sync.Mutex
 }
@@ -657,6 +659,11 @@ type envCall struct {
 type removeCall struct {
 	Ref reconcile.ServiceRef
 	Key string
+}
+
+type buildCall struct {
+	Ref   reconcile.ServiceRef
+	Build dokploy.BuildSettings
 }
 
 type domainCall struct {
@@ -676,6 +683,13 @@ func (f *fakeRepairer) RemoveEnvVar(_ context.Context, ref reconcile.ServiceRef,
 	defer f.mu.Unlock()
 	f.removeCalls = append(f.removeCalls, removeCall{Ref: ref, Key: key})
 	return f.removeErr
+}
+
+func (f *fakeRepairer) UpdateBuildConfig(_ context.Context, ref reconcile.ServiceRef, build dokploy.BuildSettings) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.buildCalls = append(f.buildCalls, buildCall{Ref: ref, Build: build})
+	return f.buildErr
 }
 
 func (f *fakeRepairer) EnsureDomain(_ context.Context, ref reconcile.ServiceRef, d reconcile.DesiredDomain) error {
