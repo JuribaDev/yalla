@@ -60,7 +60,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded, yerr.CodeUnsupportedServiceType,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
-		yerr.CodeTimeout, yerr.CodeSecretDecryption, yerr.CodeInternal,
+		yerr.CodeTimeout, yerr.CodeSecretDecryption, yerr.CodeDriftReviewRequired, yerr.CodeInternal,
 	}
 	for _, code := range required {
 		if _, ok := Lookup(code); !ok {
@@ -118,6 +118,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
 		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
 		{"secret decryption", SecretDecryption(stderrors.New("x")), yerr.CodeSecretDecryption, 500},
+		{"drift review required", DriftReviewRequired(stderrors.New("x")), yerr.CodeDriftReviewRequired, 409},
 		{"internal", Internal(stderrors.New("x")), yerr.CodeInternal, 500},
 	}
 	for _, tc := range cases {
@@ -280,6 +281,60 @@ func TestSecretDecryptionContract(t *testing.T) {
 		!strings.Contains(body, `"request_id":"req-secret-open"`) ||
 		!strings.Contains(body, string(yerr.CodeSecretDecryption)) ||
 		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeSecretDecryption)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+}
+
+func TestDriftReviewRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "YALLA_DOKPLOY_TOKEN=yka_drift_review_secret_token"
+	cause := stderrors.New("dangerous drift for service svc_123: env var changed " + secret)
+	err := DriftReviewRequired(cause)
+	if err.Code != yerr.CodeDriftReviewRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDriftReviewRequired)
+	}
+	if err.Message != "drift reconciliation requires manual review" {
+		t.Fatalf("message = %q, want fixed drift-review-required message", err.Message)
+	}
+	if err.Hint != "review the drift finding and retry after resolving it" {
+		t.Fatalf("hint = %q, want fixed operator-action hint", err.Hint)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_DRIFT_REVIEW_REQUIRED is not catalogued")
+	}
+	if entry.HTTPStatus != 409 {
+		t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DriftReviewRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-drift-review", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "yka_drift_review_secret_token", "svc_123", "env var changed"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-drift-review"`) ||
+		!strings.Contains(body, string(yerr.CodeDriftReviewRequired)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDriftReviewRequired)) {
 		t.Fatalf("envelope missing stable contract fields: %s", body)
 	}
 }

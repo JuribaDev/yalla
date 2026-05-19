@@ -11131,8 +11131,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_DRIFT_REVIEW_REQUIRED."
+      "passes": true,
+      "notes": "Stable error code: E_DRIFT_REVIEW_REQUIRED. Implemented as a typed backend error via apierr.DriftReviewRequired with HTTP 409, non-retryable generic-message taxonomy, fixed operator-review hint, yalla.error.v1 envelope/doc-link/redaction tests, CLI manifest description, and exit-code mapping."
     },
     {
       "id": "BE-0539",

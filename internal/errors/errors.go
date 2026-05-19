@@ -146,6 +146,10 @@ const (
 	// never expose plaintext, ciphertext bytes, key ids, provider ids, or
 	// low-level cryptographic causes.
 	CodeSecretDecryption Code = "E_SECRET_DECRYPTION"
+	// CodeDriftReviewRequired marks a reconciliation path blocked because a
+	// dangerous drift finding requires explicit human/operator review before
+	// Yalla may continue with repair or provisioning.
+	CodeDriftReviewRequired Code = "E_DRIFT_REVIEW_REQUIRED"
 	// CodeUnavailable marks a failure caused by a Yalla-owned non-Postgres
 	// dependency, such as the durable job queue, being temporarily unavailable.
 	// It is distinct from Dokploy-specific upstream dependency codes.
@@ -206,6 +210,7 @@ var codeDescriptions = map[Code]string{
 	CodeDBUnavailable:          "Yalla Postgres datastore is temporarily unavailable",
 	CodeMigrationRequired:      "database migrations must be applied before the service can continue",
 	CodeSecretDecryption:       "sealed secret material could not be decrypted",
+	CodeDriftReviewRequired:    "drift reconciliation requires manual review before it can continue",
 	CodeUnavailable:            "a Yalla-owned dependency, such as the job queue, is temporarily unavailable",
 	CodeTimeout:                "request exceeded the configured timeout",
 	CodeCanceled:               "context canceled (e.g. SIGINT)",
@@ -225,7 +230,7 @@ func AllCodes() []CodeDoc {
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded, CodeUnsupportedServiceType,
 		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug,
-		CodeNetwork, CodeDBUnavailable, CodeMigrationRequired, CodeSecretDecryption, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
+		CodeNetwork, CodeDBUnavailable, CodeMigrationRequired, CodeSecretDecryption, CodeDriftReviewRequired, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
 	out := make([]CodeDoc, 0, len(codes))
 	for _, c := range codes {
@@ -266,7 +271,7 @@ func (c Code) ExitCode() int {
 		return 4
 	case CodeNotFound:
 		return 5
-	case CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict:
+	case CodeConflict, CodeJobNotClaimed, CodeJobCancelled, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeDriftReviewRequired:
 		return 6
 	case CodeRateLimited, CodeQuotaExceeded:
 		return 7

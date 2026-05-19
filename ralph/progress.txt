@@ -36428,3 +36428,13 @@ change that widened Reason to caller-supplied data.
   - Compose drift uses the same reconcile planner path as application services once both desired and actual `Service.Type` are `dokploy.ServiceCompose`; verification should pin the subtype in test setup and then assert the generic safe/dangerous/unmanaged classifications.
   - Service-type mismatch remains review-only for compose too: once actual is no longer `compose`, `diffService` must stop before build/domain/env safe repairs.
 ---
+## 2026-05-19 04:25 +03 - BE-0538
+- What was implemented: Added the stable `E_DRIFT_REVIEW_REQUIRED` public error contract. The shared error catalog now exposes `CodeDriftReviewRequired`, manifest description, and exit code 6. Backend code now constructs it through `apierr.DriftReviewRequired`, catalogs it as non-retryable with generic public messaging, and renders it as HTTP 409 through the envelope status mapper.
+- Files changed: `internal/errors/errors.go`, `internal/errors/errors_test.go`, `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: red test first with `go test ./internal/errors ./internal/controlplane/apierr ./internal/controlplane/apienvelope` failed on missing `CodeDriftReviewRequired` / `DriftReviewRequired`; after implementation, the same focused test passed. Also ran `gofmt -w .`, `go mod tidy`, `go test ./...`, `go test -race ./...`, `go vet ./...`, and `golangci-lint run ./...`.
+- Results: Required checks passed. `golangci-lint` passed with 0 issues. `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups: No handler/worker call sites currently emit this code; future drift/reconciliation gates should use `apierr.DriftReviewRequired(cause)` instead of string literals.
+- **Learnings for future iterations:**
+  - Error-contract stories continue to be localized to shared `internal/errors`, backend `apierr`, `apienvelope.StatusForCode`, and focused contract tests unless a concrete call site already exists.
+  - Manual-review gates should use generic public messages and preserve drift specifics only as wrapped server-side causes because drift details may contain resource ids or secret-shaped values.
+---

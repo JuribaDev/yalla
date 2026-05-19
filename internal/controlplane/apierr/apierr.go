@@ -22,6 +22,7 @@
 //     distinguishes which dependency failed via DependencyOf.
 //   - Operator action:      MigrationRequired
 //   - Secret handling:      SecretDecryption
+//   - Reconciliation gates: DriftReviewRequired
 //   - Internal:             Internal
 //
 // Two cross-cutting guarantees back the taxonomy:
@@ -170,6 +171,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDBUnavailable:          {true, MessageGeneric, "the Yalla Postgres datastore is temporarily unavailable"},
 	yerr.CodeMigrationRequired:      {false, MessageGeneric, "database migrations must be applied before the service can continue"},
 	yerr.CodeSecretDecryption:       {false, MessageGeneric, "sealed secret material could not be decrypted"},
+	yerr.CodeDriftReviewRequired:    {false, MessageGeneric, "drift reconciliation requires manual review before it can continue"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned non-Postgres dependency is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
 	yerr.CodeTimeout:                {true, MessageGeneric, "a dependency call exceeded its timeout"},
@@ -696,6 +698,18 @@ func MigrationRequired(cause error) *yerr.Error {
 func SecretDecryption(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeSecretDecryption, "sealed secret material could not be decrypted").
 		WithHint("contact Yalla support; secret material needs operator attention").
+		Wrap(cause)
+}
+
+// DriftReviewRequired builds an E_DRIFT_REVIEW_REQUIRED error (HTTP 409) for
+// reconciliation or provisioning paths blocked by dangerous drift that needs
+// explicit review before Yalla may proceed. The public message and hint are
+// fixed and generic: they must never expose resource ids, drift values, secret
+// variables, upstream response bodies, or repair details. The cause is
+// preserved via Unwrap for server-side diagnostics only.
+func DriftReviewRequired(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDriftReviewRequired, "drift reconciliation requires manual review").
+		WithHint("review the drift finding and retry after resolving it").
 		Wrap(cause)
 }
 

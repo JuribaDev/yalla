@@ -190,6 +190,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeJobCancelled, http.StatusConflict},
 		{yerr.CodeInvalidStateTransition, http.StatusConflict},
 		{yerr.CodeIdempotencyConflict, http.StatusConflict},
+		{yerr.CodeDriftReviewRequired, http.StatusConflict},
 		{yerr.CodeRateLimited, http.StatusTooManyRequests},
 		{yerr.CodeQuotaExceeded, http.StatusTooManyRequests},
 		{yerr.CodeUnsupportedServiceType, http.StatusBadRequest},

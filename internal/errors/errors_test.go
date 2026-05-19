@@ -20,6 +20,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeOrphan, 3},
 		{CodeMigrationRequired, 3},
 		{CodeSecretDecryption, 1},
+		{CodeDriftReviewRequired, 6},
 		{CodeAuthenticationRequired, 4},
 		{CodeAuthInvalid, 4},
 		{CodeAuthExpired, 4},
@@ -155,6 +156,22 @@ func TestSecretDecryptionDescriptionNamesSecretOpenFailure(t *testing.T) {
 	const want = "sealed secret material could not be decrypted"
 	if got != want {
 		t.Fatalf("E_SECRET_DECRYPTION description = %q, want %q", got, want)
+	}
+}
+
+func TestDriftReviewRequiredDescriptionNamesManualReviewGate(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDriftReviewRequired) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "drift reconciliation requires manual review before it can continue"
+	if got != want {
+		t.Fatalf("E_DRIFT_REVIEW_REQUIRED description = %q, want %q", got, want)
 	}
 }
 

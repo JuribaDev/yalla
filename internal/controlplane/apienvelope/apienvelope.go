@@ -93,7 +93,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_NOT_FOUND                               -> 404 Not Found
 //	E_CONFLICT, E_JOB_NOT_CLAIMED, E_JOB_CANCELLED,
 //	E_INVALID_STATE_TRANSITION,
-//	E_IDEMPOTENCY_CONFLICT                    -> 409 Conflict
+//	E_IDEMPOTENCY_CONFLICT, E_DRIFT_REVIEW_REQUIRED -> 409 Conflict
 //	E_RATE_LIMITED, E_QUOTA_EXCEEDED          -> 429 Too Many Requests
 //	E_UNSUPPORTED_SERVICE_TYPE                -> 400 Bad Request
 //	E_UNSUPPORTED                             -> 501 Not Implemented
@@ -116,7 +116,7 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusForbidden
 	case yerr.CodeNotFound:
 		return http.StatusNotFound
-	case yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict:
+	case yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict, yerr.CodeDriftReviewRequired:
 		return http.StatusConflict
 	case yerr.CodeRateLimited, yerr.CodeQuotaExceeded:
 		return http.StatusTooManyRequests
