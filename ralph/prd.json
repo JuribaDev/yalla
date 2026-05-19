@@ -12442,8 +12442,8 @@
       ],
       "type": "backoffice-metering-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-gated backoffice attribution rule APIs with global admin_attribution_rules persistence, audited rule publish, runtime enabled-rule reload, dry-run evaluation for Traefik service labels, Dokploy appName patterns, and explicit dokploy_refs, configurable quarantine/ignore decisions for unsafe samples, OpenAPI route registration, API binary wiring, and focused HTTP/store tests covering success, validation, authorization, not-found, ambiguous labels, and quarantine behavior."
     },
     {
       "id": "BE-0608",

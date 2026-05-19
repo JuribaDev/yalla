@@ -273,6 +273,19 @@ Postgres persistence for control-plane source-of-truth state.
   actor organization check, repository write, and audit append happen as one
   audited unit of work.
 
+## Backoffice attribution rules (`0065_admin_attribution_rules`, `attribution_rule.go`)
+
+- Attribution rules are global runtime metering contracts, not tenant rows.
+  Runtime consumers should load enabled rules through
+  `AttributionRuleRepository.ListRuntimeEnabled`, which orders by priority and
+  rule key for deterministic evaluation.
+- Use `AdminAttributionRuleService` for rule mutations so the actor
+  organization check, repository upsert, and audit append happen in one
+  `Store.Write` transaction.
+- Dry-run evaluation is side-effect free. Unsafe samples may be attributed,
+  quarantined, or ignored, but they must never be reported as billable unless a
+  configured rule reaches the required confidence threshold.
+
 ## Usage counters (`0052_usage_counters`)
 
 - `usage_counters` are billing-period aggregates derived from append-only

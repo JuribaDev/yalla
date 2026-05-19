@@ -213,6 +213,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminSubscriptionManager AdminSubscriptionManager
 	var adminMeteringSourceManager AdminMeteringSourceManager
 	var adminMetricDefinitionManager AdminMetricDefinitionManager
+	var adminAttributionRuleManager AdminAttributionRuleManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -255,6 +256,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminMetricDefinitionManager); ok {
 			adminMetricDefinitionManager = v
+		}
+		if v, ok := opt.(AdminAttributionRuleManager); ok {
+			adminAttributionRuleManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -626,6 +630,50 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The metering source was persisted and audited.",
 			},
 			handler: upsertAdminMeteringSourceHandler(adminMeteringSourceManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/metering/attribution/rules/{rule_key}",
+				OperationID:        "getAdminAttributionRule",
+				Summary:            "Get an attribution rule",
+				Description:        "Returns one backoffice attribution rule used to map metric labels or Dokploy identifiers onto Yalla resources. Action admin.metering.manage is support-only until finer backoffice metering roles land.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "rule_key", Description: "Stable attribution rule key."}},
+				SuccessDescription: "The attribution rule.",
+			},
+			handler: getAdminAttributionRuleHandler(adminAttributionRuleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/metering/attribution/rules/{rule_key}",
+				OperationID:        "upsertAdminAttributionRule",
+				Summary:            "Configure an attribution rule",
+				Description:        "Creates or replaces one audited attribution rule for Traefik service labels, Dokploy appName patterns, or explicit dokploy_refs. Unknown or ambiguous samples never become billable automatically; the rule controls whether they are quarantined for review or ignored.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "rule_key", Description: "Stable attribution rule key."}},
+				SuccessDescription: "The attribution rule was persisted and audited.",
+			},
+			handler: upsertAdminAttributionRuleHandler(adminAttributionRuleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/metering/attribution/dry-run",
+				OperationID:        "dryRunAdminAttributionRules",
+				Summary:            "Dry-run attribution rules",
+				Description:        "Evaluates candidate or currently published attribution rules against submitted sample metrics without mutating state. The response reports deterministic attribute, quarantine, and ignore decisions; quarantined samples remain a successful yalla.output.v1 dry-run result.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				SuccessDescription: "The attribution dry-run report.",
+			},
+			handler: dryRunAdminAttributionRulesHandler(adminAttributionRuleManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

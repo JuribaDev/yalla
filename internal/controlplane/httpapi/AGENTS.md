@@ -189,6 +189,10 @@ derive actor/request/correlation data from the authenticated request, delegate
 to the store service, and render stable envelopes only through `apienvelope`.
 Metric-definition unit changes for billing-grade metrics must expose the
 explicit `allow_new_version` switch rather than silently overwriting history.
+Attribution-rule routes share the same action and thin-handler shape: publish
+mutations delegate to `AdminAttributionRuleService`, dry-run requests remain
+side-effect free, and unsafe samples are never rendered as billable unless a
+rule meets its configured confidence threshold.
 
 ## Adding an endpoint
 
