@@ -221,6 +221,21 @@ secret redaction, and failure recovery. Any future security-review-doc change
 should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Release checklist artifact (BE-0551)
+
+`release_checklist_artifact_static_test.go` pins the production release
+procedure at `docs/operations/release-checklist.md`: the checklist must
+document `/usr/local/bin/yalla-api`, `/usr/local/bin/yalla-worker`, the Yalla
+API -> Postgres source of truth -> provisioning worker -> private Dokploy API
+boundary, stable `yalla.output.v1` / `yalla.error.v1` envelopes, `request_id`
+and `correlation_id`, exact release-gate commands, expected output shapes
+instead of full transcripts, operator-managed `/etc/yalla/control-plane.env`,
+least-privilege redaction, migration safety, `/healthz`, `/readyz`, `/version`,
+`/metrics`, structured logs, dead-letter alerts, opt-in live Dokploy smoke,
+and failure recovery. Any future release-checklist change should update the
+checklist, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh`
+in the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command

@@ -124,9 +124,9 @@
   `/usr/local/bin/yalla-worker`, document the Yalla API -> Postgres source of
   truth -> worker -> private Dokploy API boundary, pin `/healthz`, `/readyz`,
   `/version`, `/metrics`, stable JSON envelopes, required Go gates,
-  `scripts/verify.sh --release`, migration safety, structured log redaction,
-  least-privilege operator-managed config, and the opt-in external Dokploy
-  smoke warning.
+  `scripts/verify.sh --release`, expected output shapes instead of full
+  transcripts, migration safety, structured log redaction, least-privilege
+  operator-managed config, and the opt-in external Dokploy smoke warning.
 - SLO document artifacts follow the same static-release-gate pattern as other
   operations artifacts: keep `docs/operations/slo.md`, SECURITY.md, CI,
   `scripts/verify.sh`, and `internal/release/slo_document_artifact_static_test.go`
@@ -258,6 +258,7 @@
 - Traefik metering source collection lives under `internal/controlplane/metering` and should stay source-only: query bounded Prometheus windows, normalize counters into deterministic unattributed samples, attach `query_version` plus raw-sample checksum metadata, and leave tenant attribution/quarantine plus `usage_events` writes to later attribution/aggregation layers.
 - Billing-period usage counters are replayed from append-only `usage_events` through `store.UsageCounterRepository.AggregateUsageEvents`: open periods upsert deterministic `(organization_id, key, unit, period_start, period_end, source)` counters, while previously closed counters keep their frozen quantity and record net-new late-arriving usage in `usage_counter_adjustments` so replays are idempotent and invoice adjustments stay auditable.
 - Billing-grade usage events are append-only and written through `store.UsageEventRepository.Append`: validate the tenant-owned organization/project/environment/service scope before insert, redact metadata at the repository boundary, assign the active subscription period with a UTC calendar-month fallback, and use `(organization_id, source, idempotency_key)` for replay-safe idempotency; corrections are new `adjusted` rows, never updates.
+
 - Customer-visible limits/usage reads now prefer current accepted subscription entitlements when one exists, joining them with `quota_usage` counters and billing-period reset windows; legacy `quota_policies` remain the fallback for organizations without a current subscription. Public projections expose source labels and thresholds but never plan ids, subscription ids, provider ids, override ids, or override reasons.
 - Runtime entitlement resolution is now a first-class service in `internal/controlplane/entitlements`: build `entitlements.Resolver` over `store.SubscriptionRepository`, expose keyed snapshots with `value`/`enforcement_mode`/`source`/`explanation`, validate cache hits through `SubscriptionRepository.EntitlementRevision(org, at)`, and call `ResolveWithQuerier(ctx, tx, orgID, at)` from quota or worker units already inside `Store.Write` so entitlement reads share the same transaction snapshot as the guarded desired-state write. `quota.Checker` should be constructed with `quota.WithEntitlementResolver(resolver)` and keeps legacy `quota_policies` as fallback for dimensions with no entitlement key yet.
 - Subscription entitlement resolution is a store-level deterministic layering rule: current subscriptions are `trialing|active|past_due` and inside `current_period_start <= at < current_period_end`; canceled/out-of-period subscriptions contribute no runtime entitlements; candidate precedence is plan defaults < `subscription_override` rows for that subscription < organization-level `emergency_admin` rows, with newest active `effective_from`, then `created_at`, then `id` as tie-breakers. Override reasons are redacted before persistence.
@@ -39809,4 +39810,40 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Worker job docs should preserve the queue/lease contract: `StoreClaimer`, `store.JobRepository.ClaimNext`, `SELECT ... FOR UPDATE SKIP LOCKED`, `ExpectedLeaseOwner`, `E_JOB_NOT_CLAIMED`, and `E_JOB_CANCELLED` are public operational behavior, not incidental implementation details.
   - Worker job documentation should explicitly couple durable job creation to prior auth, policy, quota, idempotency, desired-state write, audit, request ID persistence, fake-Dokploy-by-default tests, and tenant-scoped `dokploy_refs` writes.
+---
+## 2026-05-19 18:47 +03 - BE-0551
+- What was implemented
+  - Completed the production release procedure documentation story by tightening `docs/operations/release-checklist.md` with an explicit expected-output section for Go gates, `scripts/verify.sh`, health/readiness/version envelopes, and structured log evidence.
+  - Added a static release test that pins expected-output guidance so future edits cannot drop the documented evidence contract.
+  - Updated SECURITY.md and `internal/release/AGENTS.md` so the release checklist artifact contract stays in lockstep with the static-release-gate pattern.
+  - Marked BE-0551 as passing in `ralph/prd.json`.
+- Files changed
+  - `docs/operations/release-checklist.md`
+  - `internal/release/release_checklist_artifact_static_test.go`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - RED: `go test ./internal/release/... -run TestReleaseChecklistArtifactDocumentsExpectedOutputs` failed before the documentation update because `## Expected outputs` was missing.
+  - `gofmt -w .`
+  - `goimports -w .` was attempted but `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/release/... -run TestReleaseChecklistArtifact`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Initial direct `staticcheck ./...` and `govulncheck ./...` shell checks did not find those tools on PATH.
+  - Commit hook: `scripts/verify.sh --strict --release`
+- Results
+  - Required checks passed: formatting, module tidy, focused release artifact test, full test suite, race suite, and vet.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - The pre-commit strict release gate passed; it ran the release artifact suite, `govulncheck` with no vulnerabilities, `staticcheck`, `golangci-lint`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+  - No Postgres-backed focused suite was required because this documentation story did not touch persistence, migrations, jobs, quota, policy, or worker behavior.
+- Remaining risks or follow-ups
+  - `goimports` is unavailable in this runner; formatting was covered by `gofmt` and the strict commit hook.
+- **Learnings for future iterations:**
+  - Release procedure docs should describe evidence shapes and redacted summaries, not ask operators to paste full command transcripts.
+  - `internal/release/release_checklist_artifact_static_test.go` is the load-bearing gate for the release checklist; update the checklist, SECURITY.md, CI/verify wiring, and `internal/release/AGENTS.md` together when the procedure changes.
 ---

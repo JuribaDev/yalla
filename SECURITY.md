@@ -709,11 +709,11 @@ to show only redacted `YALLA_*` variable names, and pins the release gates:
 `gofmt -w .`, `goimports -w .`, `go mod tidy`, `go test ./...`,
 `go test -race ./...`, `go vet ./...`, `scripts/verify.sh`, and
 `scripts/verify.sh --release`. It also documents `/healthz`, `/readyz`,
-`/version`, `/metrics`, structured JSON logs, dead-letter alerts,
-least-privilege access, redaction of tokens, API keys, cookies, database URLs,
-Dokploy tokens, request bodies, response bodies, and rendered environment
-values, plus the opt-in external live-Dokploy smoke test that must never run
-against production.
+`/version`, `/metrics`, expected output shapes instead of full command
+transcripts, structured JSON logs, dead-letter alerts, least-privilege access,
+redaction of tokens, API keys, cookies, database URLs, Dokploy tokens, request
+bodies, response bodies, and rendered environment values, plus the opt-in
+external live-Dokploy smoke test that must never run against production.
 
 CI pins the release checklist artifact with
 `go test ./internal/release/... -run TestReleaseChecklistArtifact`.

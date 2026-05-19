@@ -95,6 +95,54 @@ scripts/verify.sh --release
 That command adds the snapshot release build gate without changing the runtime
 least-privilege or redaction expectations.
 
+## Expected outputs
+
+Release evidence should identify which gate passed, not preserve full command
+transcripts. Never copy the full rendered output into release notes, tickets, or
+chat. Record the command name, target environment, release version, timestamp,
+and whether the output matched these stable shapes.
+
+Go test gates should finish with package-level `ok` lines and no failing test
+records:
+
+```text
+ok  github.com/juribadev/yalla/internal/controlplane/httpapi
+ok  github.com/juribadev/yalla/internal/release
+PASS
+```
+
+`scripts/verify.sh` should print named gate headers, then complete without
+setting a required failure. Optional tools that are not installed may be
+reported by tool name only; do not paste local paths, tokens, or environment
+values from a workstation.
+
+Health and readiness probes return stable JSON envelopes. Successful probes use
+`yalla.output.v1` and include a request ID:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"checks":{"database":true,"migrations":true,"queue":true}}}
+```
+
+Unhealthy readiness uses the stable error envelope and must not include raw
+database URLs, Dokploy tokens, or rendered environment values:
+
+```json
+{"schema_version":"yalla.error.v1","ok":false,"request_id":"req_example","error":{"code":"E_SERVER","message":"service unavailable"}}
+```
+
+`/version` evidence should include release identity plus the compatibility
+contract fields:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"version":"v0.0.0","commit":"<redacted:git-sha>","date":"2026-05-19T00:00:00Z","api_schema_version":"yalla.api.v1","migration_version":"<redacted:migration-version>"}}
+```
+
+Structured log samples may be summarized as key presence only. Acceptable
+evidence says `service=yalla-api`, `service=yalla-worker`, `request_id`,
+`correlation_id`, `status_class`, and stable `error_code` were present where
+applicable. It must not include headers, request bodies, response bodies,
+secret-shaped configuration values, or rendered environment contents.
+
 ## Database and worker safety
 
 Before applying schema changes, take a fresh encrypted backup and confirm the

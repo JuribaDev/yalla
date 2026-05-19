@@ -11378,8 +11378,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: release procedure."
+      "passes": true,
+      "notes": "Documented the production release procedure in docs/operations/release-checklist.md, added expected-output guidance, and pinned it with the release checklist static artifact test plus SECURITY.md and internal/release guidance."
     },
     {
       "id": "BE-0552",
