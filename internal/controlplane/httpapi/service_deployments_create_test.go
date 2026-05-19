@@ -527,7 +527,7 @@ func TestCreateServiceDeploymentOpenAPIRegistration(t *testing.T) {
 
 // TestCreateServiceDeploymentStoreOutage proves a typed
 // StoreUnavailable from the creator surfaces as a 503 with a
-// E_STORE_UNAVAILABLE envelope — the persistence outage must never
+// E_DB_UNAVAILABLE envelope — the persistence outage must never
 // be disguised as a 5xx without a stable error code.
 func TestCreateServiceDeploymentStoreOutage(t *testing.T) {
 	t.Parallel()
@@ -546,5 +546,5 @@ func TestCreateServiceDeploymentStoreOutage(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeUnavailable))
+	decodeError(t, rec, string(yerr.CodeDBUnavailable))
 }

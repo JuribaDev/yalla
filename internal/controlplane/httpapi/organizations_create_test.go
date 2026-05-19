@@ -299,7 +299,7 @@ func TestCreateOrganizationDependencyFailureIsTyped5xx(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_UNAVAILABLE")
+	decodeError(t, rec, "E_DB_UNAVAILABLE")
 }
 
 // TestCreateOrganizationPropagatesRequestID proves the resolved request_id

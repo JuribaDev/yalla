@@ -11017,7 +11017,7 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Stable error code: E_DB_UNAVAILABLE."
     },
     {

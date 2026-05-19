@@ -553,7 +553,7 @@ func TestListAPIKeysDisabledPrincipal(t *testing.T) {
 }
 
 // TestListAPIKeysReaderUnavailable proves a datastore outage surfaces as a
-// 503 E_UNAVAILABLE — never disguised as a not-found or an empty success —
+// 503 E_DB_UNAVAILABLE — never disguised as a not-found or an empty success —
 // and the wrapped driver cause never reaches the user-facing message.
 func TestListAPIKeysReaderUnavailable(t *testing.T) {
 	t.Parallel()
@@ -566,7 +566,7 @@ func TestListAPIKeysReaderUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_UNAVAILABLE")
+	env := decodeError(t, rec, "E_DB_UNAVAILABLE")
 	if strings.Contains(env.Error.Message, "connection refused") {
 		t.Errorf("error message %q leaks the wrapped datastore cause", env.Error.Message)
 	}

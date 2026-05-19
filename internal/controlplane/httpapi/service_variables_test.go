@@ -339,7 +339,7 @@ func TestListServiceVariablesStoreUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeUnavailable))
+	decodeError(t, rec, string(yerr.CodeDBUnavailable))
 	// The raw pgx cause must not leak to the wire.
 	if strings.Contains(rec.Body.String(), "dial tcp") || strings.Contains(rec.Body.String(), "connection refused") {
 		t.Errorf("response leaks driver-level cause: %s", rec.Body.String())

@@ -30,7 +30,7 @@ import (
 //     the pgxpool surface every store method exercises (Ping, Acquire,
 //     Begin, Exec, Query), and every scenario MUST declare an invocable
 //     pool closure, a closed-set expected error code
-//     (yerr.CodeUnavailable), and a closed-set expected dependency
+//     (yerr.CodeDBUnavailable), and a closed-set expected dependency
 //     (apierr.DependencyStore). This member is deterministic — it walks
 //     an in-memory fixture table and trips on every developer machine
 //     without spinning up the fake server.
@@ -43,7 +43,7 @@ import (
 //     pool op, and firing chaosWorkers * chaosIterationsPerWorker
 //     concurrent scenario invocations MUST yield only failures that
 //     (a) are non-nil errors from the pgxpool op, (b) wrap into typed
-//     *yerr.Error values with Code=yerr.CodeUnavailable via
+//     *yerr.Error values with Code=yerr.CodeDBUnavailable via
 //     apierr.StoreUnavailable, (c) report apierr.DependencyStore via
 //     apierr.DependencyOf, (d) carry no DSN password literal at any level
 //     of the wrapped cause chain (the redaction contract every secret
@@ -82,7 +82,7 @@ type chaosPostgresScenario struct {
 	op string
 	// expectedCode is the yerr.Code the wrapped *yerr.Error MUST surface
 	// to the caller. Chaos disconnects MUST always map to
-	// yerr.CodeUnavailable — a regression that surfaces E_INTERNAL,
+	// yerr.CodeDBUnavailable — a regression that surfaces E_INTERNAL,
 	// E_TIMEOUT, or any other code on the disconnect path would
 	// mis-classify the failure and defeat the dependency-aware retry
 	// surface upstream.
@@ -183,7 +183,7 @@ var chaosPostgresScenarios = []chaosPostgresScenario{
 	{
 		name:               "Pool.Ping under disconnect chaos surfaces typed unavailable",
 		op:                 "Ping",
-		expectedCode:       yerr.CodeUnavailable,
+		expectedCode:       yerr.CodeDBUnavailable,
 		expectedDependency: apierr.DependencyStore,
 		call: func(ctx context.Context, pool *pgxpool.Pool) error {
 			return pool.Ping(ctx)
@@ -192,7 +192,7 @@ var chaosPostgresScenarios = []chaosPostgresScenario{
 	{
 		name:               "Pool.Acquire under disconnect chaos surfaces typed unavailable",
 		op:                 "Acquire",
-		expectedCode:       yerr.CodeUnavailable,
+		expectedCode:       yerr.CodeDBUnavailable,
 		expectedDependency: apierr.DependencyStore,
 		call: func(ctx context.Context, pool *pgxpool.Pool) error {
 			conn, err := pool.Acquire(ctx)
@@ -206,7 +206,7 @@ var chaosPostgresScenarios = []chaosPostgresScenario{
 	{
 		name:               "Pool.Begin under disconnect chaos surfaces typed unavailable",
 		op:                 "Begin",
-		expectedCode:       yerr.CodeUnavailable,
+		expectedCode:       yerr.CodeDBUnavailable,
 		expectedDependency: apierr.DependencyStore,
 		call: func(ctx context.Context, pool *pgxpool.Pool) error {
 			tx, err := pool.Begin(ctx)
@@ -220,7 +220,7 @@ var chaosPostgresScenarios = []chaosPostgresScenario{
 	{
 		name:               "Pool.Exec under disconnect chaos surfaces typed unavailable",
 		op:                 "Exec",
-		expectedCode:       yerr.CodeUnavailable,
+		expectedCode:       yerr.CodeDBUnavailable,
 		expectedDependency: apierr.DependencyStore,
 		call: func(ctx context.Context, pool *pgxpool.Pool) error {
 			_, err := pool.Exec(ctx, "SELECT 1")
@@ -230,7 +230,7 @@ var chaosPostgresScenarios = []chaosPostgresScenario{
 	{
 		name:               "Pool.Query under disconnect chaos surfaces typed unavailable",
 		op:                 "Query",
-		expectedCode:       yerr.CodeUnavailable,
+		expectedCode:       yerr.CodeDBUnavailable,
 		expectedDependency: apierr.DependencyStore,
 		call: func(ctx context.Context, pool *pgxpool.Pool) error {
 			rows, err := pool.Query(ctx, "SELECT 1")
@@ -260,7 +260,7 @@ var validChaosPostgresOps = map[string]struct{}{
 // non-empty, free of duplicates, scoped to the recognised pgxpool
 // surface set, and every entry MUST carry a recognised op, a non-nil
 // call closure, the canonical expected error code
-// (yerr.CodeUnavailable), and the canonical expected dependency
+// (yerr.CodeDBUnavailable), and the canonical expected dependency
 // (apierr.DependencyStore). The harness also asserts that every
 // recognised pgxpool surface (Ping, Acquire, Begin, Exec, Query) is
 // covered by at least one scenario, that the secret-marker set is
@@ -299,9 +299,9 @@ func TestChaosPostgresDisconnectsCoversCallSites(t *testing.T) {
 				sc.name)
 		}
 
-		if sc.expectedCode != yerr.CodeUnavailable {
-			t.Errorf("chaosPostgresScenarios[%q]: expectedCode = %q, want %q; chaos-disconnect failures MUST always map to yerr.CodeUnavailable — a regression that surfaces E_INTERNAL, E_TIMEOUT, or any other code on the disconnect path would mis-classify the failure and defeat the dependency-aware retry surface upstream",
-				sc.name, sc.expectedCode, yerr.CodeUnavailable)
+		if sc.expectedCode != yerr.CodeDBUnavailable {
+			t.Errorf("chaosPostgresScenarios[%q]: expectedCode = %q, want %q; chaos-disconnect failures MUST always map to yerr.CodeDBUnavailable — a regression that surfaces E_INTERNAL, E_TIMEOUT, or any other code on the disconnect path would mis-classify the failure and defeat the dependency-aware retry surface upstream",
+				sc.name, sc.expectedCode, yerr.CodeDBUnavailable)
 		}
 
 		if sc.expectedDependency != apierr.DependencyStore {
@@ -357,7 +357,7 @@ type chaosPostgresObservation struct {
 // queues one DisconnectFault per pool op, fires the scenario's
 // pgxpool call under a per-op context carrying a SafeID request_id,
 // wraps the returned error via apierr.StoreUnavailable, and asserts
-// the wrapped error is a typed *yerr.Error with Code=yerr.CodeUnavailable
+// the wrapped error is a typed *yerr.Error with Code=yerr.CodeDBUnavailable
 // attributed to apierr.DependencyStore, with no DSN password literal
 // in the wrapped cause chain, and with the fake recording at least
 // one accepted TCP connection so a regression that short-circuited
@@ -410,7 +410,7 @@ func TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope(t *testing.T) {
 
 	for _, obs := range observations {
 		if obs.err == nil {
-			t.Errorf("scenario %q (request_id=%q) returned nil error under sustained chaos disconnects; the pgxpool op MUST surface a transport error so the store-layer classifier can map it to yerr.CodeUnavailable",
+			t.Errorf("scenario %q (request_id=%q) returned nil error under sustained chaos disconnects; the pgxpool op MUST surface a transport error so the store-layer classifier can map it to yerr.CodeDBUnavailable",
 				obs.scenario, obs.requestID)
 			continue
 		}
@@ -439,7 +439,7 @@ func TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope(t *testing.T) {
 		}
 
 		if ye.Code != sc.expectedCode {
-			t.Errorf("scenario %q (request_id=%q) wrapped code=%q, want %q; chaos-disconnect failures MUST map to yerr.CodeUnavailable",
+			t.Errorf("scenario %q (request_id=%q) wrapped code=%q, want %q; chaos-disconnect failures MUST map to yerr.CodeDBUnavailable",
 				obs.scenario, obs.requestID, ye.Code, sc.expectedCode)
 		}
 

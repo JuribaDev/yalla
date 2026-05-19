@@ -165,8 +165,8 @@ func TestMapWriteError(t *testing.T) {
 	}
 
 	unavailable := mapWriteError(errors.New("dial tcp: connection refused"), "slug already taken")
-	if ye := yerr.From(unavailable); ye.Code != yerr.CodeUnavailable {
-		t.Errorf("driver failure mapped to %s, want %s", ye.Code, yerr.CodeUnavailable)
+	if ye := yerr.From(unavailable); ye.Code != yerr.CodeDBUnavailable {
+		t.Errorf("driver failure mapped to %s, want %s", ye.Code, yerr.CodeDBUnavailable)
 	}
 }
 

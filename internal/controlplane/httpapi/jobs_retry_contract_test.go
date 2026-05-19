@@ -240,7 +240,7 @@ func TestRetryJobErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, string(yerr.CodeUnavailable))
+	env := decodeError(t, rec, string(yerr.CodeDBUnavailable))
 	if env.RequestID != "req_jobs_retry_store_outage" {
 		t.Errorf("request_id = %q, want req_jobs_retry_store_outage", env.RequestID)
 	}

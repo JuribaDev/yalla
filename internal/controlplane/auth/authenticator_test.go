@@ -298,8 +298,8 @@ func TestAuthenticateAPIKeyDependencyFailureIsNotInvalidCredentials(t *testing.T
 		t.Fatal("a datastore failure was disguised as ErrInvalidCredentials")
 	}
 	var ye *yerr.Error
-	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeUnavailable {
-		t.Fatalf("error = %v, want a typed E_UNAVAILABLE dependency failure", err)
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeDBUnavailable {
+		t.Fatalf("error = %v, want a typed E_DB_UNAVAILABLE dependency failure", err)
 	}
 }
 
@@ -375,8 +375,8 @@ func TestAuthenticateSessionDependencyFailureIsNotInvalidCredentials(t *testing.
 		t.Fatal("a datastore failure during the role-version lookup was disguised as ErrInvalidCredentials")
 	}
 	var ye *yerr.Error
-	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeUnavailable {
-		t.Fatalf("error = %v, want a typed E_UNAVAILABLE dependency failure", err)
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeDBUnavailable {
+		t.Fatalf("error = %v, want a typed E_DB_UNAVAILABLE dependency failure", err)
 	}
 }
 

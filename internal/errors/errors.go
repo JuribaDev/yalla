@@ -104,7 +104,8 @@ const (
 	CodeDokployRateLimited Code = "E_DOKPLOY_RATE_LIMITED"
 	// CodeDokployUnavailable marks a transient outage or unusable response from
 	// the private Dokploy provisioning backend. It is distinct from
-	// CodeUnavailable, which is reserved for Yalla-owned dependencies.
+	// CodeDBUnavailable and CodeUnavailable, which are reserved for Yalla-owned
+	// dependencies.
 	CodeDokployUnavailable Code = "E_DOKPLOY_UNAVAILABLE"
 	// CodeDokployBadResponse marks a successful private Dokploy provisioning
 	// backend response whose body did not match the typed contract Yalla
@@ -114,9 +115,14 @@ const (
 	CodeDokployBadResponse Code = "E_DOKPLOY_BAD_RESPONSE"
 	CodeUpstreamBug        Code = "E_UPSTREAM_BUG"
 	CodeNetwork            Code = "E_NETWORK"
-	// CodeUnavailable marks a failure caused by a Yalla-owned dependency (the
-	// Postgres datastore or the job queue) being temporarily unavailable. It is
-	// distinct from Dokploy-specific upstream dependency codes.
+	// CodeDBUnavailable marks a failure caused by Yalla's Postgres datastore
+	// being temporarily unavailable. It is distinct from the generic
+	// CodeUnavailable queue/dependency code so agents can distinguish a data
+	// plane outage from durable-queue pressure without parsing messages.
+	CodeDBUnavailable Code = "E_DB_UNAVAILABLE"
+	// CodeUnavailable marks a failure caused by a Yalla-owned non-Postgres
+	// dependency, such as the durable job queue, being temporarily unavailable.
+	// It is distinct from Dokploy-specific upstream dependency codes.
 	CodeUnavailable Code = "E_UNAVAILABLE"
 	CodeTimeout     Code = "E_TIMEOUT"
 	CodeCanceled    Code = "E_CANCELED"
@@ -168,7 +174,8 @@ var codeDescriptions = map[Code]string{
 	CodeDokployBadResponse:     "upstream Dokploy provisioning backend returned an incompatible response",
 	CodeUpstreamBug:            "known upstream Dokploy bug encountered; use the documented workaround",
 	CodeNetwork:                "transport-level network failure reaching Dokploy",
-	CodeUnavailable:            "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable",
+	CodeDBUnavailable:          "Yalla Postgres datastore is temporarily unavailable",
+	CodeUnavailable:            "a Yalla-owned dependency, such as the job queue, is temporarily unavailable",
 	CodeTimeout:                "request exceeded the configured timeout",
 	CodeCanceled:               "context canceled (e.g. SIGINT)",
 	CodeNoInput:                "interactive prompt required but --no-input was set",
@@ -187,7 +194,7 @@ func AllCodes() []CodeDoc {
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug,
-		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
+		CodeNetwork, CodeDBUnavailable, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
 	out := make([]CodeDoc, 0, len(codes))
 	for _, c := range codes {
@@ -232,7 +239,7 @@ func (c Code) ExitCode() int {
 		return 6
 	case CodeRateLimited, CodeQuotaExceeded:
 		return 7
-	case CodeNetwork, CodeTimeout, CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug, CodeUnavailable:
+	case CodeNetwork, CodeTimeout, CodeServer, CodeDokployAuth, CodeDokployForbidden, CodeDokployNotFound, CodeDokployConflict, CodeDokployRateLimited, CodeDokployUnavailable, CodeDokployBadResponse, CodeUpstreamBug, CodeDBUnavailable, CodeUnavailable:
 		return 8
 	case CodeNoInput:
 		return 9

@@ -151,8 +151,8 @@ func TestPlan_UntypedDesiredErrorBecomesStoreUnavailable(t *testing.T) {
 		Repairer: &fakeRepairer{}, Reviewer: &fakeReviewer{}, Unmanaged: &fakeUnmanaged{},
 	})
 	_, err := rec.Plan(context.Background(), validOrgID)
-	if got := errCode(err); got != yerr.CodeUnavailable {
-		t.Errorf("error code = %q; want %q (err=%v)", got, yerr.CodeUnavailable, err)
+	if got := errCode(err); got != yerr.CodeDBUnavailable {
+		t.Errorf("error code = %q; want %q (err=%v)", got, yerr.CodeDBUnavailable, err)
 	}
 	// The token must not appear in the wrapped chain string.
 	if strings.Contains(err.Error(), dokployToken) {

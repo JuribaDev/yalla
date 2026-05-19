@@ -506,7 +506,7 @@ func TestReplaceEnvironmentVariablesForwardsStoreUnavailableAsTypedFiveHundred(t
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, string(yerr.CodeUnavailable))
+	_ = decodeError(t, rec, string(yerr.CodeDBUnavailable))
 	for _, leak := range []string{"dial tcp", "connection refused"} {
 		if strings.Contains(rec.Body.String(), leak) {
 			t.Errorf("response leaks driver-level cause %q: %s", leak, rec.Body.String())

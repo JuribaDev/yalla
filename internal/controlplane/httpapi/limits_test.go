@@ -346,8 +346,8 @@ func TestListLimitsReaderErrorMapsToTypedStatus(t *testing.T) {
 		t.Fatalf("status = %d, want 503; body = %s", rec.Code, rec.Body.String())
 	}
 	code, message, _ := decodeErrorEnvelope(t, rec.Body.Bytes())
-	if code != "E_UNAVAILABLE" {
-		t.Errorf("error code = %q, want E_UNAVAILABLE", code)
+	if code != "E_DB_UNAVAILABLE" {
+		t.Errorf("error code = %q, want E_DB_UNAVAILABLE", code)
 	}
 	if strings.Contains(message, "connection reset") {
 		t.Errorf("error message %q leaks the raw cause", message)

@@ -33,8 +33,9 @@ do not mix customer API handlers into CLI packages.
   must keep the cause out of `Message`/`Hint` — wrap it so logs can still see
   it. `InvalidInput` carries `FieldViolation`s (field path + reason, never the
   submitted value); recover them with `apierr.ViolationsOf`. Dependency
-  failures are recoverable with `apierr.DependencyOf` even when they share a
-  code (store and queue both use `E_UNAVAILABLE`).
+  failures are recoverable with `apierr.DependencyOf`. Postgres store failures
+  use `E_DB_UNAVAILABLE`; durable queue failures continue to use
+  `E_UNAVAILABLE`.
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
   A non-self authorization attempt with an empty `policy.Resource.Scope.OrganizationID`

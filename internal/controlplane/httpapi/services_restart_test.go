@@ -287,7 +287,7 @@ func TestRestartServiceStoreUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeUnavailable))
+	decodeError(t, rec, string(yerr.CodeDBUnavailable))
 	if strings.Contains(rec.Body.String(), "dial tcp") || strings.Contains(rec.Body.String(), "connection refused") {
 		t.Errorf("response leaks driver-level cause: %s", rec.Body.String())
 	}

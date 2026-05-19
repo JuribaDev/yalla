@@ -280,7 +280,7 @@ func TestGetOrganizationReaderUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_UNAVAILABLE")
+	env := decodeError(t, rec, "E_DB_UNAVAILABLE")
 	if strings.Contains(env.Error.Message, "connection refused") {
 		t.Errorf("error message %q leaks the wrapped datastore cause", env.Error.Message)
 	}

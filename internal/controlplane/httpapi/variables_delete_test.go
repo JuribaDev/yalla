@@ -227,7 +227,7 @@ func TestDeleteOrgVariableStoreOutageIsTypedFailure(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_UNAVAILABLE")
+	env := decodeError(t, rec, "E_DB_UNAVAILABLE")
 	if strings.Contains(env.Error.Message, "connection reset") {
 		t.Errorf("error message leaked the driver cause: %q", env.Error.Message)
 	}

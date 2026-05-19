@@ -59,7 +59,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
-		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
 	for _, code := range required {
@@ -109,7 +109,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"dokploy rate limited", DokployRateLimited(stderrors.New("x")), yerr.CodeDokployRateLimited, 502},
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
 		{"dokploy bad response", DokployBadResponse(stderrors.New("x")), yerr.CodeDokployBadResponse, 502},
-		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
+		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeDBUnavailable, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
 		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
@@ -799,9 +799,57 @@ func TestQuotaExceededContract(t *testing.T) {
 	}
 }
 
+func TestStoreUnavailableContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "postgres://yalla:super-secret-db-password@db.internal:5432/yalla"
+	cause := stderrors.New("pgx: dial failed for " + leaked)
+	err := StoreUnavailable(cause)
+	if err.Code != yerr.CodeDBUnavailable {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDBUnavailable)
+	}
+	if err.Message != "the Yalla datastore is temporarily unavailable" {
+		t.Fatalf("message = %q, want fixed generic datastore message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 503 {
+			t.Errorf("HTTPStatus = %d, want 503", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if !entry.Retryable {
+			t.Error("E_DB_UNAVAILABLE must be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyStore {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyStore)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("StoreUnavailable must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-db-unavailable", err)
+	body := rec.Body.String()
+	if rec.Code != 503 {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-db-unavailable"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDBUnavailable)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "super-secret-db-password") || strings.Contains(body, "db.internal") {
+		t.Errorf("db-unavailable envelope leaked datastore material: %s", body)
+	}
+}
+
 // TestDependencyErrorsAreDistinguished proves every dependency failure is
-// machine-distinguishable via DependencyOf — including the datastore and the
-// queue, which deliberately share the E_UNAVAILABLE code.
+// machine-distinguishable via DependencyOf, with Postgres and queue failures
+// using distinct public error codes.
 func TestDependencyErrorsAreDistinguished(t *testing.T) {
 	t.Parallel()
 
@@ -817,7 +865,7 @@ func TestDependencyErrorsAreDistinguished(t *testing.T) {
 		{"dokploy not found", DokployNotFound(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployNotFound},
 		{"dokploy conflict", DokployConflict(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployConflict},
 		{"dokploy rate limited", DokployRateLimited(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployRateLimited},
-		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeUnavailable},
+		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeDBUnavailable},
 		{"queue", QueueUnavailable(stderrors.New("x")), DependencyQueue, yerr.CodeUnavailable},
 		{"network", NetworkFailure(stderrors.New("x")), DependencyNetwork, yerr.CodeNetwork},
 		{"timeout", Timeout(DependencyStore, stderrors.New("x")), DependencyStore, yerr.CodeTimeout},
@@ -838,11 +886,8 @@ func TestDependencyErrorsAreDistinguished(t *testing.T) {
 		})
 	}
 
-	// The store and the queue share E_UNAVAILABLE but stay distinguishable.
-	store, _ := DependencyOf(StoreUnavailable(stderrors.New("x")))
-	queue, _ := DependencyOf(QueueUnavailable(stderrors.New("x")))
-	if store == queue {
-		t.Error("store and queue failures must be distinguishable despite sharing a code")
+	if StoreUnavailable(stderrors.New("x")).Code == QueueUnavailable(stderrors.New("x")).Code {
+		t.Error("store and queue failures must use distinct public codes")
 	}
 
 	// Timeout with an unknown dependency wraps the cause directly.

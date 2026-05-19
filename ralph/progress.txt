@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Postgres datastore outages now have their own public error contract: `apierr.StoreUnavailable` returns `E_DB_UNAVAILABLE` (HTTP 503, retryable, generic-message, dependency-tagged as `postgres`) and must preserve raw pgx/driver causes only for server-side logging. Durable queue outages continue to use `apierr.QueueUnavailable` / `E_UNAVAILABLE`, so new store-backed handler contract tests should assert `E_DB_UNAVAILABLE` for wrapped datastore failures.
 - Successful Dokploy HTTP responses with incompatible/malformed JSON from the typed client map to `apierr.DokployBadResponse()` / `E_DOKPLOY_BAD_RESPONSE` (HTTP 502), not `E_DOKPLOY_UNAVAILABLE`, because the upstream is reachable but violating Yalla's typed response contract. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted decode/upstream detail for server-side diagnostics.
 - Upstream Dokploy 429 rate limits from the typed client map to `apierr.DokployRateLimited()` / `E_DOKPLOY_RATE_LIMITED` (HTTP 502), not customer-facing `E_RATE_LIMITED`, because the throttle is on Yalla's private provisioning dependency rather than the caller's public API bucket. It is retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted upstream detail for server-side diagnostics.
 - Upstream Dokploy 409 conflicts from the typed client map to `apierr.DokployConflict()` / `E_DOKPLOY_CONFLICT` (HTTP 502), not customer-facing `E_CONFLICT`, because customers do not mutate private Dokploy resources directly. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted upstream detail for server-side diagnostics.
@@ -36007,4 +36008,31 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - A Dokploy response can be reachable but contract-invalid; keep that distinct from transient availability failures so operators see a schema/compatibility issue instead of a generic outage.
   - The fake Dokploy `MalformedJSONFault` is the right fixture for typed-client decode-path contract tests.
+---
+## 2026-05-19 03:09 +03 - BE-0532
+- What was implemented: defined the `E_DB_UNAVAILABLE` public backend error contract for Postgres datastore outages, wired it through `internal/errors`, `apierr.StoreUnavailable`, `apienvelope.StatusForCode`, and updated store-facing handler/auth/reconcile/store tests to assert the new code while leaving durable queue outages on `E_UNAVAILABLE`.
+- Files changed: `internal/errors/errors.go`, `internal/errors/errors_test.go`, `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`, store/auth/reconcile/httpapi contract tests that exercise `apierr.StoreUnavailable`, `internal/controlplane/AGENTS.md`, `internal/controlplane/store/AGENTS.md`, and `ralph/prd.json`.
+- Verification run:
+  - Red check: `go test ./internal/errors ./internal/controlplane/apierr ./internal/controlplane/apienvelope` failed before implementation because `CodeDBUnavailable` did not exist.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed.
+- Results: all installed required and focused checks passed; optional `golangci-lint` passed with 0 issues. `BE-0532` is marked `passes: true` in `ralph/prd.json`.
+- Remaining risks or follow-ups: none for this story. Future error-contract stories should follow the same multi-file taxonomy pattern.
+- **Learnings for future iterations:**
+  - `StoreUnavailable` and `QueueUnavailable` no longer share a public code: store failures are `E_DB_UNAVAILABLE`, queue failures remain `E_UNAVAILABLE`, and `apierr.DependencyOf` still identifies the dependency.
+  - Error-contract changes can require wide test updates because many endpoint contract tests pin the exact wrapped datastore failure code.
+  - Keep non-Postgres operational probes, such as backup health status, on `E_UNAVAILABLE` when they are not built from `apierr.StoreUnavailable`.
 ---

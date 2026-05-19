@@ -285,7 +285,7 @@ func TestGetServiceInvalidCredentials(t *testing.T) {
 
 // TestGetServiceReaderOutageIsTypedError proves a reader-side store
 // outage is rendered as a stable yalla.error.v1 5xx envelope — the
-// typed apierr.StoreUnavailable with code E_STORE_UNAVAILABLE — and
+// typed apierr.StoreUnavailable with code E_DB_UNAVAILABLE — and
 // the raw cause never reaches the wire.
 func TestGetServiceReaderOutageIsTypedError(t *testing.T) {
 	t.Parallel()
@@ -300,7 +300,7 @@ func TestGetServiceReaderOutageIsTypedError(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "connection refused") {
 		t.Errorf("response body leaks raw store cause: %s", rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeUnavailable))
+	decodeError(t, rec, string(yerr.CodeDBUnavailable))
 }
 
 // TestGetServiceNilReaderReportsInternal proves a NewHandler call site

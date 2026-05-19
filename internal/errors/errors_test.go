@@ -41,6 +41,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeDokployUnavailable, 8},
 		{CodeDokployBadResponse, 8},
 		{CodeUpstreamBug, 8},
+		{CodeDBUnavailable, 8},
 		{CodeUnavailable, 8},
 		{CodeNoInput, 9},
 		{CodeUnsupported, 10},
@@ -53,6 +54,22 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		if got := tc.code.ExitCode(); got != tc.want {
 			t.Errorf("Code(%q).ExitCode() = %d, want %d", tc.code, got, tc.want)
 		}
+	}
+}
+
+func TestDBUnavailableDescriptionNamesPostgresOutage(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDBUnavailable) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "Yalla Postgres datastore is temporarily unavailable"
+	if got != want {
+		t.Fatalf("E_DB_UNAVAILABLE description = %q, want %q", got, want)
 	}
 }
 

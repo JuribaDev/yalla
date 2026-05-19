@@ -529,7 +529,7 @@ func TestRequireIdempotencyClaimStoreFailure(t *testing.T) {
 	if resp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", resp.Code, resp.Body.String())
 	}
-	decodeError(t, resp, "E_UNAVAILABLE")
+	decodeError(t, resp, "E_DB_UNAVAILABLE")
 	if next.ran != 0 {
 		t.Error("handler ran despite the claim store failing")
 	}

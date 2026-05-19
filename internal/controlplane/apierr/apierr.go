@@ -161,7 +161,8 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeDokployBadResponse:     {false, MessageGeneric, "the upstream Dokploy provisioning backend returned an incompatible response"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
-	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
+	yerr.CodeDBUnavailable:          {true, MessageGeneric, "the Yalla Postgres datastore is temporarily unavailable"},
+	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned non-Postgres dependency is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
 	yerr.CodeTimeout:                {true, MessageGeneric, "a dependency call exceeded its timeout"},
 	yerr.CodeCanceled:               {false, MessageGeneric, "the request was canceled before completion"},
@@ -631,10 +632,11 @@ func DokployBadResponse(cause error) *yerr.Error {
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }
 
-// StoreUnavailable builds an E_UNAVAILABLE error (HTTP 503) for a failed call
-// to the Yalla Postgres datastore. The cause is preserved via Unwrap only.
+// StoreUnavailable builds an E_DB_UNAVAILABLE error (HTTP 503) for a failed
+// call to the Yalla Postgres datastore. The cause is preserved via Unwrap
+// only.
 func StoreUnavailable(cause error) *yerr.Error {
-	return yerr.New(yerr.CodeUnavailable, "the Yalla datastore is temporarily unavailable").
+	return yerr.New(yerr.CodeDBUnavailable, "the Yalla datastore is temporarily unavailable").
 		WithHint("this is a transient failure; retry after a short backoff").
 		Wrap(&dependencyError{dep: DependencyStore, cause: cause})
 }

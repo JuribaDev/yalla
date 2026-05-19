@@ -402,7 +402,7 @@ Postgres persistence for control-plane source-of-truth state.
     (`'; DROP TABLE …`, `' OR 1=1 --`, UNION/UPDATE/INSERT stacks, dollar-
     quoted strings, multi-line, URL-encoded) through every customer-input
     string field of representative repository methods. Read paths must
-    return typed `E_NOT_FOUND` (or empty), **never** `E_UNAVAILABLE` —
+    return typed `E_NOT_FOUND` (or empty), **never** `E_DB_UNAVAILABLE` —
     that code is the store's mapping for raw driver errors and a SQL
     syntax error escaping the parameter binder would surface there.
     After the loop, row counts on `organizations`/`projects`/
@@ -424,7 +424,7 @@ Postgres persistence for control-plane source-of-truth state.
   and method name; no other shape is exempt.
 - The runtime tests deliberately omit NUL bytes from the payload list: pgx
   rejects NUL in a `text` parameter before it reaches the server, which
-  would surface as `E_UNAVAILABLE` for reasons unrelated to SQL injection
+  would surface as `E_DB_UNAVAILABLE` for reasons unrelated to SQL injection
   resistance and pollute the load-bearing negative assertion. NUL handling
   is a separate input-rejection concern.
 

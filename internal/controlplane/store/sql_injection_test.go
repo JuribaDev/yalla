@@ -21,7 +21,7 @@ import (
 // pinned:
 //
 //  1. Read-path payloads return through the typed error surface (NotFound)
-//     or as an empty result. They MUST NOT surface as `E_UNAVAILABLE` —
+//     or as an empty result. They MUST NOT surface as `E_DB_UNAVAILABLE` —
 //     that error code is the store's mapping for raw driver errors, and a
 //     SQL syntax error escaping through the parameter binder would land
 //     there. NotFound or empty proves the payload was bound as a parameter
@@ -47,7 +47,7 @@ import (
 // sqlInjectionPayloads is the canonical set of attack strings the runtime
 // tests submit through each input. They are deliberately printable, valid
 // UTF-8, and PostgreSQL-byte-clean (no NUL — pgx rejects NUL bytes before
-// they reach the server, which would surface as E_UNAVAILABLE for reasons
+// they reach the server, which would surface as E_DB_UNAVAILABLE for reasons
 // unrelated to SQL injection). The list covers:
 //   - the classic quote-break: terminate the value, append a statement, comment out the rest
 //   - boolean-tautology: `' OR 1=1 --`
@@ -83,7 +83,7 @@ var sqlInjectionPayloads = []string{
 // injection payload through the customer-controlled string arguments of
 // representative read paths. Each call must return a typed NotFound (for
 // single-row reads) or an empty list (for list reads). The load-bearing
-// negative assertion is that no call returns E_UNAVAILABLE — that error
+// negative assertion is that no call returns E_DB_UNAVAILABLE — that error
 // surface would indicate the payload reached the SQL parser as raw SQL and
 // produced a server-side syntax error or DDL side effect.
 func TestSQLInjectionReadPathsAreSafelyParameterised(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSQLInjectionReadPathsAreSafelyParameterised(t *testing.T) {
 
 			// AuditRepository.ListByOrganization with payload as org id —
 			// must return an empty slice with no error. A non-nil error
-			// from this path would surface as E_UNAVAILABLE (the only
+			// from this path would surface as E_DB_UNAVAILABLE (the only
 			// classification ListByOrganization emits for driver errors),
 			// so the negative assertion is identical: no driver error.
 			var events []store.AuditEvent
@@ -150,8 +150,8 @@ func TestSQLInjectionReadPathsAreSafelyParameterised(t *testing.T) {
 			})
 			if err != nil {
 				ye := yerr.From(err)
-				if ye != nil && ye.Code == yerr.CodeUnavailable {
-					t.Errorf("audit.ListByOrganization(orgID=payload): payload reached the database raw — got E_UNAVAILABLE: %v", err)
+				if ye != nil && ye.Code == yerr.CodeDBUnavailable {
+					t.Errorf("audit.ListByOrganization(orgID=payload): payload reached the database raw — got E_DB_UNAVAILABLE: %v", err)
 				} else {
 					t.Errorf("audit.ListByOrganization(orgID=payload): unexpected error: %v", err)
 				}
@@ -269,7 +269,7 @@ func TestSQLInjectionPayloadsStoredVerbatim(t *testing.T) {
 
 // assertReadIsNotFoundOrEmpty pins the contract: a typed NotFound is the
 // expected primary error class for an injected lookup id (no row matched);
-// E_UNAVAILABLE is the load-bearing rejection — that code is the store's
+// E_DB_UNAVAILABLE is the load-bearing rejection — that code is the store's
 // driver-error escape hatch and a SQL syntax error that leaked through the
 // parameter binder would surface there. Any other typed error class is
 // surprising but not necessarily an injection — it is reported as a test
@@ -289,8 +289,8 @@ func assertReadIsNotFoundOrEmpty(t *testing.T, label string, err error) {
 	switch ye.Code {
 	case yerr.CodeNotFound:
 		return
-	case yerr.CodeUnavailable:
-		t.Errorf("%s: payload reached the database raw — got E_UNAVAILABLE: %v "+
+	case yerr.CodeDBUnavailable:
+		t.Errorf("%s: payload reached the database raw — got E_DB_UNAVAILABLE: %v "+
 			"(this indicates the SQL string was assembled with caller input or a parameter binding was missed)",
 			label, err)
 	default:

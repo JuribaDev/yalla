@@ -201,6 +201,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeUpstreamBug, http.StatusBadGateway},
 		{yerr.CodeNetwork, http.StatusBadGateway},
 		{yerr.CodeTimeout, http.StatusGatewayTimeout},
+		{yerr.CodeDBUnavailable, http.StatusServiceUnavailable},
 		{yerr.CodeUnavailable, http.StatusServiceUnavailable},
 		{yerr.CodeCanceled, 499},
 		{yerr.CodeInternal, http.StatusInternalServerError},
@@ -221,6 +222,49 @@ func TestStatusForCode(t *testing.T) {
 		if got := StatusForCode(yerr.Code(doc.Code)); got < 400 {
 			t.Errorf("StatusForCode(%s) = %d, want a >= 400 failure status", doc.Code, got)
 		}
+	}
+}
+
+func TestWriteErrorDBUnavailableContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "postgres://yalla:super-secret-db-password@db.internal:5432/yalla"
+	err := yerr.New(yerr.CodeDBUnavailable, "the Yalla datastore is temporarily unavailable").
+		WithHint("this is a transient failure; retry after a short backoff").
+		Wrap(stderrors.New("pgx connect failed with dsn " + secret))
+
+	rec := httptest.NewRecorder()
+	WriteError(rec, "req-db-unavailable", err)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, secret) || strings.Contains(body, "super-secret-db-password") || strings.Contains(body, "db.internal") {
+		t.Fatalf("error envelope leaked datastore cause: %s", body)
+	}
+	var env decodedError
+	if decodeErr := json.Unmarshal(rec.Body.Bytes(), &env); decodeErr != nil {
+		t.Fatalf("decode: %v", decodeErr)
+	}
+	if env.SchemaVersion != ErrorSchema || env.OK {
+		t.Fatalf("envelope = %+v, want %s error envelope", env, ErrorSchema)
+	}
+	if env.RequestID != "req-db-unavailable" {
+		t.Errorf("request_id = %q, want req-db-unavailable", env.RequestID)
+	}
+	if env.Error.Code != string(yerr.CodeDBUnavailable) {
+		t.Errorf("error.code = %q, want %q", env.Error.Code, yerr.CodeDBUnavailable)
+	}
+	if env.Error.Message != "the Yalla datastore is temporarily unavailable" {
+		t.Errorf("error.message = %q", env.Error.Message)
+	}
+	if env.Error.Hint != "this is a transient failure; retry after a short backoff" {
+		t.Errorf("error.hint = %q", env.Error.Hint)
+	}
+	wantDoc := DocsBaseURL + "/" + string(yerr.CodeDBUnavailable)
+	if env.Error.DocumentationURL != wantDoc {
+		t.Errorf("documentation_url = %q, want %q", env.Error.DocumentationURL, wantDoc)
 	}
 }
 

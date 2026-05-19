@@ -397,8 +397,8 @@ func TestCreatePreviewErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeCreatePreviewError(t, rec)
-	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_UNAVAILABLE" {
-		t.Errorf("error envelope = %+v, want E_UNAVAILABLE", env)
+	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_DB_UNAVAILABLE" {
+		t.Errorf("error envelope = %+v, want E_DB_UNAVAILABLE", env)
 	}
 	if strings.Contains(rec.Body.String(), cause) {
 		t.Errorf("error envelope leaked the wrapped dependency cause %q: %s", cause, rec.Body.String())

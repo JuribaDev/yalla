@@ -546,7 +546,7 @@ func TestCreateServiceBackupStoreUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeUnavailable))
+	decodeError(t, rec, string(yerr.CodeDBUnavailable))
 }
 
 // TestCreateServiceBackupNilCreator proves a wiring error (no
