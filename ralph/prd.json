@@ -8034,8 +8034,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: dead-letter alerts."
+      "passes": true,
+      "notes": "Implemented dead-letter alert metrics with low-cardinality job_type/reason/severity/status series, safe latest-sample request/correlation/org/project/environment/service/job hints, worker structured logs on committed dead_letter transitions, /metrics exposure under data.dead_letter_alerts, telemetry/HTTP/worker coverage, and operator documentation."
     },
     {
       "id": "BE-0376",

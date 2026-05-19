@@ -1,9 +1,12 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	"github.com/JuribaDev/yalla/internal/controlplane/worker"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -136,13 +140,15 @@ func TestStoreClaimerRunsJobToSuccess(t *testing.T) {
 
 	var ran atomic.Int64
 	var sawJobID string
+	deadLetterAlerts := telemetry.NewDeadLetterAlertMetrics()
 	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
 		Store: s, Runner: worker.RunnerFunc(func(_ context.Context, job store.ProvisioningJob) error {
 			ran.Add(1)
 			sawJobID = job.ID
 			return nil
 		}),
-		Owner: worker.NewOwnerID(),
+		Owner:            worker.NewOwnerID(),
+		DeadLetterAlerts: deadLetterAlerts,
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -171,6 +177,9 @@ func TestStoreClaimerRunsJobToSuccess(t *testing.T) {
 	}
 	if final.LeaseOwner != "" || !final.LeaseDeadline.IsZero() {
 		t.Error("a succeeded job must not still hold a lease")
+	}
+	if got := deadLetterAlerts.Snapshot().TotalAlerts; got != 0 {
+		t.Fatalf("successful job emitted %d dead-letter alert(s), want 0", got)
 	}
 
 	// The queue is now empty: a second claim returns no lease.
@@ -291,10 +300,17 @@ func TestStoreClaimerDeadLettersAfterBudget(t *testing.T) {
 	org := seedQueueOrg(t, db, f, "Acme")
 	in := queueJobFixture(org.ID, "idem-deadletter")
 	in.MaxAttempts = 1
+	in.ProjectID = "proj_deadletter_safe"
+	in.EnvironmentID = "env_deadletter_safe"
+	in.ServiceID = "svc_deadletter_safe"
 	stored := enqueueJob(ctx, t, s, repo, in)
 
+	metrics := telemetry.NewDeadLetterAlertMetrics()
+	var logs bytes.Buffer
 	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
 		Store: s, Owner: worker.NewOwnerID(),
+		Logger:           slog.New(slog.NewJSONHandler(&logs, nil)),
+		DeadLetterAlerts: metrics,
 		Runner: worker.RunnerFunc(func(context.Context, store.ProvisioningJob) error {
 			return errors.New("dokploy call failed; Authorization: Bearer sk-leaked-token")
 		}),
@@ -317,6 +333,47 @@ func TestStoreClaimerDeadLettersAfterBudget(t *testing.T) {
 	}
 	if strings.Contains(final.ErrorSummary, "sk-leaked-token") {
 		t.Errorf("dead-letter error summary leaked a secret: %q", final.ErrorSummary)
+	}
+	alerts := metrics.Snapshot()
+	if alerts.TotalAlerts != 1 {
+		t.Fatalf("dead-letter total_alerts = %d, want 1: %+v", alerts.TotalAlerts, alerts.Series)
+	}
+	if len(alerts.Series) != 1 {
+		t.Fatalf("dead-letter alert series len = %d, want 1: %+v", len(alerts.Series), alerts.Series)
+	}
+	alert := alerts.Series[0]
+	if alert.JobType != "ensure_project" || alert.Reason != "retry_budget_exhausted" || alert.Severity != "page" || alert.Status != "firing" {
+		t.Fatalf("dead-letter alert dimensions = %+v, want ensure_project/retry_budget_exhausted/page/firing", alert)
+	}
+	if alert.JobID != stored.ID || alert.OrganizationID != org.ID || alert.ProjectID != in.ProjectID || alert.EnvironmentID != in.EnvironmentID || alert.ServiceID != in.ServiceID || alert.RequestID != in.RequestID || alert.CorrelationID != in.CorrelationID {
+		t.Fatalf("dead-letter alert hints = %+v, want job/request/resource identifiers", alert)
+	}
+	if alert.Attempt != 1 || alert.MaxAttempts != 1 {
+		t.Fatalf("dead-letter alert attempts = %d/%d, want 1/1", alert.Attempt, alert.MaxAttempts)
+	}
+	if strings.Contains(fmt.Sprint(alerts), "sk-leaked-token") {
+		t.Fatalf("dead-letter alert snapshot leaked runner error secret: %+v", alerts)
+	}
+
+	var foundLog bool
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode worker log line %q: %v", line, err)
+		}
+		if entry["msg"] != "provisioning job dead-lettered after exhausting its retry budget" {
+			continue
+		}
+		foundLog = true
+		if entry["job_id"] != stored.ID || entry["organization_id"] != org.ID || entry["project_id"] != in.ProjectID || entry["environment_id"] != in.EnvironmentID || entry["service_id"] != in.ServiceID || entry["request_id"] != in.RequestID || entry["correlation_id"] != in.CorrelationID {
+			t.Fatalf("dead-letter log fields = %+v, want safe job/request/resource hints", entry)
+		}
+		if strings.Contains(line, "sk-leaked-token") {
+			t.Fatalf("dead-letter log leaked runner error secret: %s", line)
+		}
+	}
+	if !foundLog {
+		t.Fatalf("dead-letter log not found; logs:\n%s", logs.String())
 	}
 }
 

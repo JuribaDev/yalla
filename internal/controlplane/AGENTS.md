@@ -158,6 +158,13 @@ do not mix customer API handlers into CLI packages.
   status, signal)`. Request/correlation/org/principal/resource/job identifiers
   and the latest burn-rate numbers are incident hints only, and `/metrics`
   exposes the snapshot under `data.slo_burn_rates`.
+- Dead-letter alert metrics follow the same low-cardinality collector pattern:
+  `telemetry.DeadLetterAlertMetrics` groups only by `(job_type, reason,
+  severity, status)`. `StoreClaimer` emits the firing
+  `retry_budget_exhausted` alert only after the dead_letter transition commits,
+  and `/metrics` exposes it under `data.dead_letter_alerts`; operators should
+  page on firing alerts, then join the latest job/request/correlation ids to
+  structured worker logs and the provisioning job row.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

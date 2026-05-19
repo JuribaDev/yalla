@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Dead-letter alert metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness/SLO metrics: `telemetry.DeadLetterAlertMetrics` groups by `(job_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `worker.StoreClaimer` only after a `dead_letter` transition commits, and `/metrics` exposes the snapshot under `data.dead_letter_alerts`.
 - SLO burn-rate metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness metrics: `telemetry.SLOBurnRateMetrics` groups by `(objective, window, severity, status, signal)`, stores burn-rate/error-budget numbers plus request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.slo_burn_rates`.
 - Readiness degradation metrics follow the existing low-cardinality telemetry collector pattern: `/readyz` emits one `telemetry.ReadinessDegradationMetrics` observation per configured dependency gate, grouped by `(check, status, reason)` with request/correlation/org/principal/job IDs kept only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.readiness_degradation`.
 - Store slow-query observability is centralized at the `store.Store` boundary, not inside individual repositories: `Store.Read`/`Write`, `Tx`, and the read-only querier wrappers observe query duration, emit logs only after the slow threshold, and record `telemetry.SlowQueryMetrics` grouped by `(operation, query_kind, outcome)`. The signal deliberately omits SQL text, bind args, table names, DSNs, and driver error strings; request/correlation/org/principal/resource/job IDs are latest-sample incident hints exposed under `/metrics` as `data.slow_queries`.
@@ -301,6 +302,7 @@
   - The envelope renderer can expose telemetry-only metadata via a tiny structural interface on `http.ResponseWriter`; this avoids parsing JSON response bodies and avoids an import cycle from `apienvelope` to `telemetry`.
   - Keep high-cardinality org/principal/resource/job IDs as log-join hints only; use `method`, `route`, `status_class`, `outcome`, and `error_code` for dashboard filters.
 ---
+
 
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
 - Optimistic concurrency on mutable customer-data tables: migration 0011 adds a bigint version column (DEFAULT 1, CHECK > 0) + bump_version() BEFORE UPDATE trigger to organizations/projects/environments/services. The trigger overwrites NEW.version with OLD.version+1 on every UPDATE (including no-op data UPDATEs), so the application cannot freeze the sequence. Repository UPDATE methods accept ifMatchVersion *int64: nil = no precondition, non-nil = WHERE id=$1 AND version=$N; on no rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (apierr.ConflictStale carrying the row's current version). Service-layer Update/ScheduleDeletion also pre-check the version after the read so a no-op data patch still surfaces the conflict against the right row. The HTTP layer parses RFC 7232 strong ETag values (`"<n>"`, lenient unquoted form accepted; weak/wildcard/multi-value rejected as 400 E_INVALID_INPUT) from If-Match, mirrors the row's authoritative version into the ETag response header on every success path (GET/POST/PATCH/DELETE), and surfaces stale writes as 409 E_CONFLICT carrying current_version under the new structured error.details map (apierr.DetailKeyCurrentVersion). yerr.Error.Details (map[string]string, set by WithDetail) is the agent-friendly counterpart to Hint; apienvelope renders it through the same regex redaction backstop used for Message/Hint.
@@ -38134,4 +38136,46 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - SLO burn-rate alert observations should use objective/window/severity/status/signal as the only grouping dimensions and keep org/resource/job data as latest-sample hints for log joins.
   - Bound unknown SLO label values to `unknown` or `other`, and clamp negative or non-finite numeric values before they can enter the JSON metrics snapshot.
+---
+## 2026-05-19 12:04 +03 - BE-0375
+- What was implemented
+  - Added `telemetry.DeadLetterAlertMetrics` with low-cardinality `(job_type, reason, severity, status)` series and safe latest-sample request/correlation/org/project/environment/service/resource/job hints.
+  - Exposed the snapshot in `/metrics` as `data.dead_letter_alerts` and documented the operator workflow in the OpenAPI route description.
+  - Wired `worker.StoreClaimer` to emit one firing `retry_budget_exhausted` alert only after the durable `dead_letter` transition commits, and expanded the structured worker log with safe org/project/environment/service identifiers.
+  - Added reusable notes to `internal/controlplane/AGENTS.md`, `internal/controlplane/worker/AGENTS.md`, and the top Codebase Patterns section.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `internal/controlplane/worker/queue.go`
+  - `internal/controlplane/worker/queue_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `internal/controlplane/worker/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/telemetry -run 'TestDeadLetterAlertMetrics|TestJobQueueMetrics' -count=1`
+  - `go test ./internal/controlplane/httpapi -run TestMetricsEndpointReturnsEnvelopeSnapshot -count=1`
+  - `go test ./internal/controlplane/worker -run 'TestStoreClaimer(RunsJobToSuccess|DeadLettersAfterBudget)' -count=1`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All commands above passed.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed locally, so they were not run.
+- Remaining risks or follow-ups
+  - No live Dokploy smoke was run; this story uses worker queue and telemetry fakes only.
+- **Learnings for future iterations:**
+  - Dead-letter alerts should remain a focused operational signal separate from generic worker queue counters; queue metrics show all outcomes, while `dead_letter_alerts` is the paging surface.
+  - Emit dead-letter alerts after the database transition succeeds, not when the runner returns an error, so alerts reflect durable queue state.
+  - Worker dead-letter logs should include safe job/request/org/project/environment/service identifiers but never the raw runner error summary.
 ---

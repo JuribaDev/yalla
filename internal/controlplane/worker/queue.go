@@ -187,6 +187,10 @@ type StoreClaimerConfig struct {
 	// Metrics receives low-cardinality job queue observations. A nil value
 	// defaults to telemetry.DefaultJobQueueMetrics.
 	Metrics *telemetry.JobQueueMetrics
+	// DeadLetterAlerts receives focused alert observations when a job exhausts
+	// its retry budget and transitions to dead_letter. A nil value defaults to
+	// telemetry.DefaultDeadLetterAlertMetrics.
+	DeadLetterAlerts *telemetry.DeadLetterAlertMetrics
 	// Now is an injectable clock; tests set it for determinism. A nil value
 	// defaults to time.Now().UTC.
 	Now func() time.Time
@@ -197,16 +201,17 @@ type StoreClaimerConfig struct {
 // number of StoreClaimers — in one process or many — can poll the same queue
 // and a job is still run by exactly one worker at a time.
 type StoreClaimer struct {
-	store           *store.Store
-	jobs            *store.JobRepository
-	runner          JobRunner
-	owner           string
-	leaseDuration   time.Duration
-	completeTimeout time.Duration
-	backoff         Backoff
-	logger          *slog.Logger
-	metrics         *telemetry.JobQueueMetrics
-	now             func() time.Time
+	store            *store.Store
+	jobs             *store.JobRepository
+	runner           JobRunner
+	owner            string
+	leaseDuration    time.Duration
+	completeTimeout  time.Duration
+	backoff          Backoff
+	logger           *slog.Logger
+	metrics          *telemetry.JobQueueMetrics
+	deadLetterAlerts *telemetry.DeadLetterAlertMetrics
+	now              func() time.Time
 }
 
 // NewStoreClaimer validates cfg, applies defaults, and returns a ready
@@ -247,22 +252,27 @@ func NewStoreClaimer(cfg StoreClaimerConfig) (*StoreClaimer, error) {
 	if metrics == nil {
 		metrics = telemetry.DefaultJobQueueMetrics
 	}
+	deadLetterAlerts := cfg.DeadLetterAlerts
+	if deadLetterAlerts == nil {
+		deadLetterAlerts = telemetry.DefaultDeadLetterAlertMetrics
+	}
 	clock := cfg.Now
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 
 	return &StoreClaimer{
-		store:           cfg.Store,
-		jobs:            jobs,
-		runner:          cfg.Runner,
-		owner:           cfg.Owner,
-		leaseDuration:   leaseDuration,
-		completeTimeout: completeTimeout,
-		backoff:         cfg.Backoff,
-		logger:          logger,
-		metrics:         metrics,
-		now:             clock,
+		store:            cfg.Store,
+		jobs:             jobs,
+		runner:           cfg.Runner,
+		owner:            cfg.Owner,
+		leaseDuration:    leaseDuration,
+		completeTimeout:  completeTimeout,
+		backoff:          cfg.Backoff,
+		logger:           logger,
+		metrics:          metrics,
+		deadLetterAlerts: deadLetterAlerts,
+		now:              clock,
 	}, nil
 }
 
@@ -361,8 +371,11 @@ func (l *storeLease) recordFailure(ctx context.Context, runErr error) error {
 			return err
 		}
 		c.recordOutcomeMetric(l.job, store.JobStatusDeadLetter, 0)
+		c.recordDeadLetterAlert(l.job)
 		c.logger.ErrorContext(ctx, "provisioning job dead-lettered after exhausting its retry budget",
 			"job_id", l.job.ID, "attempts", l.job.Attempts, "max_attempts", l.job.MaxAttempts,
+			"organization_id", l.job.OrganizationID, "project_id", l.job.ProjectID,
+			"environment_id", l.job.EnvironmentID, "service_id", l.job.ServiceID,
 			"request_id", l.job.RequestID, "correlation_id", l.job.CorrelationID)
 		return nil
 	}
@@ -428,6 +441,29 @@ func (c *StoreClaimer) recordOutcomeMetric(job store.ProvisioningJob, status sto
 		return
 	}
 	c.metrics.RecordJobQueueEvent(jobQueueEvent(job, telemetry.JobQueueEventCompleted, status, nextRunDelay))
+}
+
+func (c *StoreClaimer) recordDeadLetterAlert(job store.ProvisioningJob) {
+	if c == nil || c.deadLetterAlerts == nil {
+		return
+	}
+	ctx := telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     job.RequestID,
+		CorrelationID: job.CorrelationID,
+	})
+	c.deadLetterAlerts.RecordDeadLetterAlert(ctx, telemetry.DeadLetterAlertObservation{
+		JobType:        job.JobType,
+		Reason:         "retry_budget_exhausted",
+		Severity:       "page",
+		Status:         "firing",
+		OrganizationID: job.OrganizationID,
+		ProjectID:      job.ProjectID,
+		EnvironmentID:  job.EnvironmentID,
+		ServiceID:      job.ServiceID,
+		JobID:          job.ID,
+		Attempt:        job.Attempts,
+		MaxAttempts:    job.MaxAttempts,
+	})
 }
 
 func jobQueueEvent(job store.ProvisioningJob, event telemetry.JobQueueEventName, status store.JobStatus, nextRunDelay time.Duration) telemetry.JobQueueEvent {

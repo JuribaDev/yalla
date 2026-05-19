@@ -24,6 +24,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	slowQueryMetrics := telemetry.NewSlowQueryMetrics()
 	readinessMetrics := telemetry.NewReadinessDegradationMetrics()
 	sloMetrics := telemetry.NewSLOBurnRateMetrics()
+	deadLetterMetrics := telemetry.NewDeadLetterAlertMetrics()
 	readiness := runtime.NewReadiness("database", "migrations", "queue")
 	readiness.MarkReady("migrations")
 	readiness.MarkReady("queue")
@@ -40,6 +41,20 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		ErrorBudgetPct: 1.5,
 		OrganizationID: "org_metrics_slo",
 		JobID:          "job_metrics_slo",
+	})
+	deadLetterMetrics.RecordDeadLetterAlert(telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_dead_letter_metrics",
+		CorrelationID: "corr_dead_letter_metrics",
+	}), telemetry.DeadLetterAlertObservation{
+		JobType:        "ensure_service",
+		Reason:         "retry_budget_exhausted",
+		Severity:       "page",
+		Status:         "firing",
+		OrganizationID: "org_metrics_dead_letter",
+		ServiceID:      "svc_metrics_dead_letter",
+		JobID:          "job_metrics_dead_letter",
+		Attempt:        5,
+		MaxAttempts:    5,
 	})
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
@@ -82,7 +97,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	handler := NewHandler(
 		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
-		traceMetrics, slowQueryMetrics, readinessMetrics, sloMetrics,
+		traceMetrics, slowQueryMetrics, readinessMetrics, sloMetrics, deadLetterMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -121,6 +136,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			SlowQueries         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
 			Readiness           telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
 			SLOBurnRates        telemetry.SLOBurnRateMetricsSnapshot       `json:"slo_burn_rates"`
+			DeadLetterAlerts    telemetry.DeadLetterAlertMetricsSnapshot   `json:"dead_letter_alerts"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -176,6 +192,12 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if len(env.Data.SLOBurnRates.Series) != 1 || env.Data.SLOBurnRates.Series[0].Objective != "api_availability" || env.Data.SLOBurnRates.Series[0].OrganizationID != "org_metrics_slo" {
 		t.Fatalf("slo burn-rate series = %+v, want api_availability with safe org hint", env.Data.SLOBurnRates.Series)
+	}
+	if env.Data.DeadLetterAlerts.TotalAlerts != 1 {
+		t.Fatalf("dead-letter total_alerts = %d, want 1", env.Data.DeadLetterAlerts.TotalAlerts)
+	}
+	if len(env.Data.DeadLetterAlerts.Series) != 1 || env.Data.DeadLetterAlerts.Series[0].JobType != "ensure_service" || env.Data.DeadLetterAlerts.Series[0].OrganizationID != "org_metrics_dead_letter" || env.Data.DeadLetterAlerts.Series[0].JobID != "job_metrics_dead_letter" {
+		t.Fatalf("dead-letter alert series = %+v, want ensure_service with safe org/job hints", env.Data.DeadLetterAlerts.Series)
 	}
 	foundReadyzFailure := false
 	for _, series := range env.Data.Readiness.Series {

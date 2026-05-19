@@ -298,6 +298,111 @@ func findSLOBurnRateMetric(metrics []SLOBurnRateMetric, objective, window, sever
 	return nil
 }
 
+func TestDeadLetterAlertMetricsRecordsLowCardinalityAlerts(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewDeadLetterAlertMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req_dead_letter", CorrelationID: "corr_dead_letter"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org_context_dead_letter")
+	SetPrincipalID(ctx, "usr_dead_letter")
+	SetResource(ctx, "service", "svc_dead_letter")
+	SetJobID(ctx, "job_context_dead_letter")
+
+	metrics.RecordDeadLetterAlert(ctx, DeadLetterAlertObservation{
+		JobType:        "ensure_service",
+		Reason:         "retry_budget_exhausted",
+		Severity:       "page",
+		Status:         "firing",
+		OrganizationID: "org_dead_letter",
+		ProjectID:      "proj_dead_letter",
+		EnvironmentID:  "env_dead_letter",
+		ServiceID:      "svc_dead_letter",
+		JobID:          "job_dead_letter",
+		Attempt:        3,
+		MaxAttempts:    3,
+	})
+	metrics.RecordDeadLetterAlert(context.Background(), DeadLetterAlertObservation{
+		JobType:  "ensure_service",
+		Reason:   "operator_requeued",
+		Severity: "ticket",
+		Status:   "resolved",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalAlerts != 2 {
+		t.Fatalf("total_alerts = %d, want 2", snapshot.TotalAlerts)
+	}
+	firing := findDeadLetterAlertMetric(snapshot.Series, "ensure_service", "retry_budget_exhausted", "page", "firing")
+	if firing == nil {
+		t.Fatalf("missing firing dead-letter alert metric: %+v", snapshot.Series)
+	}
+	if firing.Count != 1 || firing.Attempt != 3 || firing.MaxAttempts != 3 {
+		t.Errorf("firing metric = %+v, want count=1 attempt=3 max_attempts=3", *firing)
+	}
+	if firing.RequestID != "req_dead_letter" || firing.CorrelationID != "corr_dead_letter" ||
+		firing.OrganizationID != "org_dead_letter" || firing.ProjectID != "proj_dead_letter" ||
+		firing.EnvironmentID != "env_dead_letter" || firing.ServiceID != "svc_dead_letter" ||
+		firing.PrincipalID != "usr_dead_letter" || firing.ResourceKind != "service" ||
+		firing.ResourceID != "svc_dead_letter" || firing.JobID != "job_dead_letter" {
+		t.Errorf("firing hints = %+v, want request/resource/job correlation", *firing)
+	}
+
+	resolved := findDeadLetterAlertMetric(snapshot.Series, "ensure_service", "operator_requeued", "ticket", "resolved")
+	if resolved == nil {
+		t.Fatalf("missing resolved dead-letter alert metric: %+v", snapshot.Series)
+	}
+	if resolved.RequestID != "" || resolved.OrganizationID != "" {
+		t.Errorf("resolved metric without context = %+v, want no unsafe identifiers", *resolved)
+	}
+}
+
+func TestDeadLetterAlertMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewDeadLetterAlertMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req\nbad", CorrelationID: "corr_dead_letter_safe"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org unsafe")
+	SetPrincipalID(ctx, "usr_dead_letter_safe")
+	SetResource(ctx, "service\nbad", "svc_dead_letter_safe")
+
+	metrics.RecordDeadLetterAlert(ctx, DeadLetterAlertObservation{
+		JobType:        "ensure-service:prod",
+		Reason:         "ran out of retries with token=secret",
+		Severity:       "wake-the-world",
+		Status:         "maybe",
+		OrganizationID: "org unsafe",
+		ProjectID:      "proj_dead_letter_safe",
+		Attempt:        -1,
+		MaxAttempts:    -2,
+	})
+
+	snapshot := metrics.Snapshot()
+	got := findDeadLetterAlertMetric(snapshot.Series, "other", "other", "other", "unknown")
+	if got == nil {
+		t.Fatalf("missing bounded-cardinality dead-letter alert metric: %+v", snapshot.Series)
+	}
+	if got.Attempt != 0 || got.MaxAttempts != 0 {
+		t.Errorf("bounded metric = %+v, want negative counts clamped to zero", *got)
+	}
+	if got.RequestID != "" || got.CorrelationID != "corr_dead_letter_safe" {
+		t.Errorf("correlation hints = %q/%q, want unsafe request dropped and safe correlation kept", got.RequestID, got.CorrelationID)
+	}
+	if got.OrganizationID != "" || got.PrincipalID != "usr_dead_letter_safe" || got.ResourceKind != "" || got.ResourceID != "svc_dead_letter_safe" || got.ProjectID != "proj_dead_letter_safe" {
+		t.Errorf("identifier hints = %+v, want only SafeID-clean values", *got)
+	}
+}
+
+func findDeadLetterAlertMetric(metrics []DeadLetterAlertMetric, jobType, reason, severity, status string) *DeadLetterAlertMetric {
+	for i := range metrics {
+		if metrics[i].JobType == jobType && metrics[i].Reason == reason && metrics[i].Severity == severity && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
 func TestTraceSpanMetricsRecordsHTTPSpansForSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 

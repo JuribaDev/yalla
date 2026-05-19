@@ -35,6 +35,13 @@ Background provisioning/metering workers for the control plane.
 - Failure classification: `Terminal(err)` marks a permanent failure (→ failed,
   never retried); a plain error is transient (→ retrying with `Backoff`, or →
   dead_letter once `Attempts >= MaxAttempts`).
+- Dead-letter observability is a focused alert signal, not just a generic queue
+  counter: after the `dead_letter` transition commits, `StoreClaimer` emits one
+  `telemetry.DeadLetterAlertMetrics` observation with dimensions
+  `(job_type, retry_budget_exhausted, page, firing)` plus safe latest-sample
+  job/request/resource identifiers, and logs the same identifiers without the
+  runner error summary. Do not emit this alert before the database transition
+  succeeds.
 - The real provisioning runner (typed Dokploy client) is injected via
   `JobRunner`; normal tests use a `RunnerFunc` fake, never a live Dokploy.
   When a worker test needs Dokploy to actually answer (provisioning chains,

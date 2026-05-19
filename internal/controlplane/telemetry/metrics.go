@@ -52,6 +52,10 @@ var DefaultReadinessDegradationMetrics = NewReadinessDegradationMetrics()
 // own collector.
 var DefaultSLOBurnRateMetrics = NewSLOBurnRateMetrics()
 
+// DefaultDeadLetterAlertMetrics is the process-wide dead-letter alert
+// collector used by worker claimers unless tests or embedders inject their own.
+var DefaultDeadLetterAlertMetrics = NewDeadLetterAlertMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -635,6 +639,74 @@ type sloBurnRateMetricSeries struct {
 	SLOBurnRateMetric
 }
 
+// DeadLetterAlertObservation is one operational alert observation for a
+// provisioning job that reached dead_letter. JobType, Reason, Severity, and
+// Status are bounded aggregate dimensions; identifiers describe only the
+// latest sample so dashboards stay low-cardinality.
+type DeadLetterAlertObservation struct {
+	JobType        string
+	Reason         string
+	Severity       string
+	Status         string
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	PrincipalID    string
+	ResourceKind   string
+	ResourceID     string
+	JobID          string
+	Attempt        int
+	MaxAttempts    int
+}
+
+// DeadLetterAlertMetric is one aggregate dead-letter alert series.
+type DeadLetterAlertMetric struct {
+	JobType        string `json:"job_type"`
+	Reason         string `json:"reason"`
+	Severity       string `json:"severity"`
+	Status         string `json:"status"`
+	Count          int64  `json:"count"`
+	RequestID      string `json:"request_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	ServiceID      string `json:"service_id,omitempty"`
+	PrincipalID    string `json:"principal_id,omitempty"`
+	ResourceKind   string `json:"resource_kind,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+	Attempt        int    `json:"attempt,omitempty"`
+	MaxAttempts    int    `json:"max_attempts,omitempty"`
+}
+
+// DeadLetterAlertMetricsSnapshot is the JSON-serializable operational view
+// exposed to operators, tests, and the /metrics endpoint.
+type DeadLetterAlertMetricsSnapshot struct {
+	TotalAlerts int64                   `json:"total_alerts"`
+	Series      []DeadLetterAlertMetric `json:"series"`
+}
+
+// DeadLetterAlertMetrics stores low-cardinality dead-letter alert counters.
+// It is safe for concurrent use by API and worker goroutines.
+type DeadLetterAlertMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[deadLetterAlertMetricKey]*deadLetterAlertMetricSeries
+}
+
+type deadLetterAlertMetricKey struct {
+	jobType  string
+	reason   string
+	severity string
+	status   string
+}
+
+type deadLetterAlertMetricSeries struct {
+	DeadLetterAlertMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -681,6 +753,11 @@ func NewReadinessDegradationMetrics() *ReadinessDegradationMetrics {
 // NewSLOBurnRateMetrics returns an empty SLO burn-rate alert collector.
 func NewSLOBurnRateMetrics() *SLOBurnRateMetrics {
 	return &SLOBurnRateMetrics{series: make(map[sloBurnRateMetricKey]*sloBurnRateMetricSeries)}
+}
+
+// NewDeadLetterAlertMetrics returns an empty dead-letter alert collector.
+func NewDeadLetterAlertMetrics() *DeadLetterAlertMetrics {
+	return &DeadLetterAlertMetrics{series: make(map[deadLetterAlertMetricKey]*deadLetterAlertMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -970,6 +1047,38 @@ func (m *SLOBurnRateMetrics) Snapshot() SLOBurnRateMetricsSnapshot {
 			return a.Status < b.Status
 		}
 		return a.Signal < b.Signal
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all dead-letter alert metrics
+// currently held by the collector.
+func (m *DeadLetterAlertMetrics) Snapshot() DeadLetterAlertMetricsSnapshot {
+	if m == nil {
+		return DeadLetterAlertMetricsSnapshot{Series: []DeadLetterAlertMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := DeadLetterAlertMetricsSnapshot{
+		TotalAlerts: m.total,
+		Series:      make([]DeadLetterAlertMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.DeadLetterAlertMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.JobType != b.JobType {
+			return a.JobType < b.JobType
+		}
+		if a.Reason != b.Reason {
+			return a.Reason < b.Reason
+		}
+		if a.Severity != b.Severity {
+			return a.Severity < b.Severity
+		}
+		return a.Status < b.Status
 	})
 	return out
 }
@@ -1469,6 +1578,76 @@ func (m *SLOBurnRateMetrics) RecordSLOBurnRate(ctx context.Context, event SLOBur
 	series.ResourceKind = safeMetricID(resourceKind)
 	series.ResourceID = safeMetricID(resourceID)
 	series.JobID = safeMetricID(jobID)
+}
+
+// RecordDeadLetterAlert aggregates one dead-letter alert observation.
+func (m *DeadLetterAlertMetrics) RecordDeadLetterAlert(ctx context.Context, event DeadLetterAlertObservation) {
+	if m == nil {
+		return
+	}
+	jobType := metricSLOToken(event.JobType, "unknown")
+	reason := metricSLOToken(event.Reason, "unknown")
+	severity := metricSLOSeverity(event.Severity)
+	status := metricSLOStatus(event.Status)
+
+	corr := FromContext(ctx)
+	orgID, principalID, resourceKind, resourceID, jobID := "", "", "", "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ = f.logSnapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+	if strings.TrimSpace(event.ResourceKind) != "" {
+		resourceKind = strings.TrimSpace(event.ResourceKind)
+	}
+	if strings.TrimSpace(event.ResourceID) != "" {
+		resourceID = strings.TrimSpace(event.ResourceID)
+	}
+	if strings.TrimSpace(event.ServiceID) != "" && resourceID == "" {
+		resourceKind = "service"
+		resourceID = strings.TrimSpace(event.ServiceID)
+	}
+	if strings.TrimSpace(event.JobID) != "" {
+		jobID = strings.TrimSpace(event.JobID)
+	}
+
+	key := deadLetterAlertMetricKey{
+		jobType:  jobType,
+		reason:   reason,
+		severity: severity,
+		status:   status,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &deadLetterAlertMetricSeries{DeadLetterAlertMetric: DeadLetterAlertMetric{
+			JobType:  jobType,
+			Reason:   reason,
+			Severity: severity,
+			Status:   status,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.ProjectID = safeMetricID(event.ProjectID)
+	series.EnvironmentID = safeMetricID(event.EnvironmentID)
+	series.ServiceID = safeMetricID(event.ServiceID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.ResourceKind = safeMetricID(resourceKind)
+	series.ResourceID = safeMetricID(resourceID)
+	series.JobID = safeMetricID(jobID)
+	series.Attempt = int(clampMetricCount(int64(event.Attempt)))
+	series.MaxAttempts = int(clampMetricCount(int64(event.MaxAttempts)))
 }
 
 func metricMethod(method string) string {
