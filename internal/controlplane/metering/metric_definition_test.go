@@ -25,3 +25,15 @@ func TestHTTPResponseBytesMetricDefinition(t *testing.T) {
 		t.Fatalf("http_response_bytes definition = %+v, want byte/traefik/metered/billing-grade", def)
 	}
 }
+
+func TestHTTPRequestBytesMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("http_request_bytes")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(http_request_bytes) missing")
+	}
+	if def.Key != "http_request_bytes" || def.Unit != "byte" || def.Source != "traefik" || def.Enforcement != MetricEnforcementMetered || !def.BillingGrade {
+		t.Fatalf("http_request_bytes definition = %+v, want byte/traefik/metered/billing-grade", def)
+	}
+}

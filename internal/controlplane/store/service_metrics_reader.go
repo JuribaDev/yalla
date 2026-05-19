@@ -18,8 +18,9 @@ import (
 // Name is the metric label this point came from. The closed set the
 // httpapi-layer documents mirrors the usage-metric ladder
 // (BE-0583..BE-0598) — http_requests, http_response_bytes,
-// http_rps_peak_1m, latency_p95_ms, container_cpu_millicore_seconds,
-// container_memory_mb_hours, and so on — a future Traefik- or
+// http_request_bytes, http_rps_peak_1m, latency_p95_ms,
+// container_cpu_millicore_seconds, container_memory_mb_hours, and so on — a
+// future Traefik- or
 // Dokploy-fetcher adapter MUST keep producing values from a
 // well-known set (or extend it explicitly) so an agent reading the
 // payload can branch on the value without escape-decoding it. Value
