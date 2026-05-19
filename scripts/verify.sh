@@ -310,6 +310,12 @@ if ! go test ./internal/release/... -run TestAPIHandlerConventionsArtifact; then
   required_failed=1
 fi
 
+# Required: repository conventions artifact static tests
+step "go test ./internal/release/... -run TestRepositoryConventionsArtifact"
+if ! go test ./internal/release/... -run TestRepositoryConventionsArtifact; then
+  required_failed=1
+fi
+
 # Required: incident response runbook artifact static tests
 step "go test ./internal/release/... -run TestIncidentResponseRunbookArtifact"
 if ! go test ./internal/release/... -run TestIncidentResponseRunbookArtifact; then

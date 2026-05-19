@@ -267,6 +267,20 @@ recovery. Any future API-handler guide change should update the guide,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Repository conventions artifact (BE-0544)
+
+`repository_conventions_static_test.go` pins the backend repository guide at
+`docs/development/repository-conventions.md`: the guide must document
+repository implementation under `internal/controlplane/store`, migration
+coupling, `Store.Read` / `Store.Write` transaction boundaries,
+`testutil.RequireMigratedDB`, tenant-scoped `organization_id` or verified parent
+join queries, composite foreign keys, optimistic concurrency, rollback tests,
+typed `apierr` errors, fake-Dokploy-by-default testing, exact verification
+commands, expected outputs, stable envelope expectations, redaction, and failure
+recovery. Any future repository guide change should update the guide,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## Incident response runbook artifact (BE-0420)
 
 `incident_response_runbook_static_test.go` pins the production incident

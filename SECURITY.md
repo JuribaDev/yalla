@@ -116,6 +116,7 @@ defined in `.github/workflows/ci.yml`:
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | API handler conventions artifact | `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Repository conventions artifact | `go test ./internal/release/... -run TestRepositoryConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -489,6 +490,28 @@ idempotency, quota, audit, and failure recovery guidance.
 
 CI pins the API handler conventions with
 `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact`.
+
+## Repository Conventions Artifact
+
+The backend repository convention guide lives at
+`docs/development/repository-conventions.md`. It documents how source-of-truth
+repository methods under `internal/controlplane/store` are added, verified, and
+kept tenant-scoped by `organization_id` or verified parent joins. The guide
+ties repository work to migrations, `Store.Read` / `Store.Write` transaction
+boundaries, `apierr` typed errors, deterministic list ordering, optimistic
+concurrency, rollback tests, tenant-isolation tests, and the stable
+`yalla.output.v1` / `yalla.error.v1` response envelope contract above the
+persistence layer.
+
+The guide preserves the production boundary: repositories persist Yalla state,
+workers call the private Dokploy API through typed clients, and customer-facing
+code never exposes raw Dokploy operations or live credentials. Required local
+environment variables use redacted placeholders, expected outputs are pinned,
+and failure recovery keeps tests on isolated Postgres databases with fake
+Dokploy by default.
+
+CI pins the repository conventions with
+`go test ./internal/release/... -run TestRepositoryConventionsArtifact`.
 
 ## Incident Response Runbook Artifact
 

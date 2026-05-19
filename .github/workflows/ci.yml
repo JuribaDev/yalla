@@ -165,6 +165,9 @@ jobs:
       - name: API handler conventions artifact static tests
         run: go test ./internal/release/... -run TestAPIHandlerConventionsArtifact
 
+      - name: Repository conventions artifact static tests
+        run: go test ./internal/release/... -run TestRepositoryConventionsArtifact
+
       - name: Incident response runbook artifact static tests
         run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
 
