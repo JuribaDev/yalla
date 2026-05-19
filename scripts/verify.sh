@@ -280,6 +280,12 @@ if ! go test ./internal/release/... -run TestFakeDokployUsageArtifact; then
   required_failed=1
 fi
 
+# Required: OpenAPI update procedure artifact static tests
+step "go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact"
+if ! go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

@@ -111,6 +111,7 @@ defined in `.github/workflows/ci.yml`:
 | Database migration authoring artifact | `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Worker job authoring artifact | `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Fake Dokploy usage artifact | `go test ./internal/release/... -run TestFakeDokployUsageArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| OpenAPI update procedure artifact | `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -548,6 +549,27 @@ idempotency, quota, audit, and failure recovery guidance.
 
 CI pins the API handler conventions with
 `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact`.
+
+## OpenAPI Update Procedure Artifact
+
+The backend OpenAPI update procedure lives at
+`docs/development/openapi-update-procedure.md`. It documents how new and
+changed public operations are tied to registered routes in
+`internal/controlplane/httpapi/routes.go`, `openapi.Endpoint` metadata under
+`internal/controlplane/openapi`, `x-required-action`, bounded
+`validate.DecodeJSON` request handling, typed `apierr` failures, and stable
+`yalla.output.v1` / `yalla.error.v1` envelopes with request IDs.
+
+The guide preserves the production boundary: Yalla API owns customer intent,
+Postgres is the source of truth, workers call the private Dokploy API, and
+OpenAPI must never document customer-facing raw Dokploy access. It pins exact
+OpenAPI, handler, full-suite, race, and vet commands; required environment
+variables with redacted placeholders; expected output; tenant-isolation,
+idempotency, quota, and audit expectations; isolated Postgres integration
+tests; opt-in live Dokploy smoke safety; and failure recovery.
+
+CI pins the OpenAPI update procedure with
+`go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact`.
 
 ## Quota Implementation Guide Artifact
 

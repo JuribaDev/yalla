@@ -150,6 +150,9 @@ jobs:
       - name: Fake Dokploy usage artifact static tests
         run: go test ./internal/release/... -run TestFakeDokployUsageArtifact
 
+      - name: OpenAPI update procedure artifact static tests
+        run: go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

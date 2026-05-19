@@ -193,6 +193,20 @@ tenant-scoped `dokploy_refs`, opt-in live Dokploy smoke, and secret redaction.
 Any future fake-Dokploy-usage-doc change should update the guide, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## OpenAPI update procedure artifact (BE-0549)
+
+`openapi_update_procedure_static_test.go` pins the developer-facing OpenAPI
+update guide at `docs/development/openapi-update-procedure.md`: the guide must
+document `internal/controlplane/openapi`, `internal/controlplane/httpapi/routes.go`,
+`openapi.Endpoint`, `x-required-action`, `validate.DecodeJSON`, `apierr`,
+`apienvelope.WriteData`, `apienvelope.WriteError`, `policy.Action`, exact
+OpenAPI/HTTP/full-suite verification commands, expected outputs, stable
+`yalla.output.v1` / `yalla.error.v1` envelopes, isolated Postgres tests,
+tenant isolation, idempotency, audit, quota, `dokploy_refs`, opt-in live
+Dokploy smoke, and secret redaction. Any future OpenAPI-update-doc change
+should update the guide, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command

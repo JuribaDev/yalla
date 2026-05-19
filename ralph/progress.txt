@@ -1,4 +1,15 @@
 ## Codebase Patterns
+- OpenAPI update procedure documentation follows the static-release-gate
+  pattern: keep `docs/development/openapi-update-procedure.md`, SECURITY.md,
+  CI, `scripts/verify.sh`, `internal/release/AGENTS.md`, and
+  `internal/release/openapi_update_procedure_static_test.go` in lockstep;
+  document `internal/controlplane/openapi`,
+  `internal/controlplane/httpapi/routes.go`, `openapi.Endpoint`,
+  `x-required-action`, `validate.DecodeJSON`, typed `apierr` failures,
+  `apienvelope` rendering, exact OpenAPI/handler/full-suite verification
+  commands, expected outputs, stable JSON envelopes, tenant isolation,
+  idempotency, audit, quota, isolated Postgres tests, opt-in live Dokploy
+  smoke, and redaction.
 - Fake Dokploy usage documentation follows the static-release-gate pattern:
   keep `docs/development/fake-dokploy-usage.md`, SECURITY.md, CI,
   `scripts/verify.sh`, `internal/release/AGENTS.md`, and
@@ -443,6 +454,49 @@
   - Operations commands that mutate backend state should call a dedicated `yalla-api` maintenance flag rather than embedding shell SQL, so the Go binary owns validation, transactionality, audit, and logging.
   - Static release tests should pin the script, binary flag, runbook, SECURITY.md gate row, CI step, and `scripts/verify.sh` together to prevent operations artifact drift.
   - Dry-run plans should show command shape and `YALLA_*` variable names only; runtime seed values stay in the env file and are never echoed.
+---
+## 2026-05-19 18:37 +03 - BE-0549
+- What was implemented
+  - Added the production-grade OpenAPI update procedure guide at `docs/development/openapi-update-procedure.md`.
+  - Added `internal/release/openapi_update_procedure_static_test.go` to pin the guide content and release-gate wiring.
+  - Wired the new static test into `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Added the reusable OpenAPI documentation pattern to the top `## Codebase Patterns` section.
+  - Marked BE-0549 as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/openapi-update-procedure.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/openapi_update_procedure_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact` failed first on the missing guide/wiring, as expected for TDD.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test ./internal/controlplane/openapi/...`
+  - `go test -run TestOpenAPI ./...`
+  - `go test -run TestEveryRegisteredRouteIsDocumented ./internal/controlplane/httpapi/...`
+  - `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact`
+  - `scripts/verify.sh --quiet`
+- Results
+  - All required checks passed.
+  - `scripts/verify.sh --quiet` passed and reported GoReleaser validation success plus `golangci-lint` with 0 issues.
+  - `scripts/verify.sh --quiet` reported optional `govulncheck` and `staticcheck` as not installed, and skipped the opt-in live Dokploy smoke because `YALLA_EXTERNAL_DOKPLOY=1` was not set.
+  - The focused static artifact test now passes and is wired into local and CI gates.
+- Remaining risks or follow-ups
+  - No runtime API behavior changed in this story.
+  - Remaining documentation stories after BE-0549 still have `passes: false`.
+- **Learnings for future iterations:**
+  - OpenAPI docs should be treated as route-backed contracts: route registration, `openapi.Endpoint`, `x-required-action`, handler validation, typed errors, stable envelopes, and contract tests should be updated together.
+  - Static documentation artifacts should pin exact command names and expected output text, because release tests intentionally fail on wording drift in load-bearing operational guidance.
 ---
 ## 2026-05-19 18:31 +03 - BE-0548
 - What was implemented
