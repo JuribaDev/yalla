@@ -162,6 +162,16 @@ middleware that needs to inspect the body, copy the
 `idempotency.readAndRestoreBody`; the static analyzer recognises that
 shape and a new middleware that does not will fail the build.
 
+## Backoffice plan entitlements
+
+Backoffice plan-entitlement routes share `AdminPlanManager` with plan
+lifecycle routes and use `policy.ActionAdminPlansManage`. Upserts configure
+the typed entitlement fields plus metadata (`unit`, `warning_threshold`,
+`upgrade_hint`, `overage_behavior`) and render the metadata back as stable
+top-level response fields. Rename and delete endpoints must require a nonblank
+`impact_validation_id` before delegating, because entitlement keys are runtime
+quota/billing compatibility contracts.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an

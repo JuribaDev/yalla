@@ -461,6 +461,84 @@ func (r *PricingPlanRepository) UpsertEntitlement(ctx context.Context, tx *Tx, i
 	return ent, nil
 }
 
+// RenameEntitlement changes an entitlement key on a plan version after the
+// caller has performed migration-impact validation.
+func (r *PricingPlanRepository) RenameEntitlement(ctx context.Context, tx *Tx, planID, fromKey, toKey string) (PlanEntitlement, error) {
+	if tx == nil {
+		return PlanEntitlement{}, apierr.Internal(errors.New("store: PricingPlanRepository.RenameEntitlement called with a nil transaction"))
+	}
+	planID = strings.TrimSpace(planID)
+	fromKey = strings.TrimSpace(fromKey)
+	toKey = strings.TrimSpace(toKey)
+	var violations []apierr.FieldViolation
+	if planID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "plan_id", Reason: "must not be blank"})
+	}
+	if !validEntitlementKey(fromKey) {
+		violations = append(violations, apierr.FieldViolation{Field: "entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if !validEntitlementKey(toKey) {
+		violations = append(violations, apierr.FieldViolation{Field: "new_entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if fromKey == toKey {
+		violations = append(violations, apierr.FieldViolation{Field: "new_entitlement_key", Reason: "must differ from entitlement_key"})
+	}
+	if len(violations) > 0 {
+		return PlanEntitlement{}, apierr.InvalidInput(violations...)
+	}
+
+	var ent PlanEntitlement
+	err := tx.QueryRow(ctx,
+		`UPDATE plan_entitlements
+		    SET entitlement_key = $3
+		  WHERE plan_id = $1 AND entitlement_key = $2
+		  RETURNING `+planEntitlementColumns,
+		planID, fromKey, toKey,
+	).Scan(
+		&ent.ID, &ent.PlanID, &ent.EntitlementKey, &ent.LimitValue, &ent.EnforcementMode,
+		&ent.Metadata, &ent.CreatedAt, &ent.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlanEntitlement{}, apierr.NotFound("plan_entitlement", fromKey)
+	}
+	if err != nil {
+		return PlanEntitlement{}, mapWriteError(err, "rename plan entitlement")
+	}
+	return ent, nil
+}
+
+// DeleteEntitlement removes one entitlement from a plan version after the
+// caller has performed migration-impact validation.
+func (r *PricingPlanRepository) DeleteEntitlement(ctx context.Context, tx *Tx, planID, key string) error {
+	if tx == nil {
+		return apierr.Internal(errors.New("store: PricingPlanRepository.DeleteEntitlement called with a nil transaction"))
+	}
+	planID = strings.TrimSpace(planID)
+	key = strings.TrimSpace(key)
+	var violations []apierr.FieldViolation
+	if planID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "plan_id", Reason: "must not be blank"})
+	}
+	if !validEntitlementKey(key) {
+		violations = append(violations, apierr.FieldViolation{Field: "entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if len(violations) > 0 {
+		return apierr.InvalidInput(violations...)
+	}
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM plan_entitlements
+		  WHERE plan_id = $1 AND entitlement_key = $2`,
+		planID, key,
+	)
+	if err != nil {
+		return mapWriteError(err, "delete plan entitlement")
+	}
+	if tag.RowsAffected() == 0 {
+		return apierr.NotFound("plan_entitlement", key)
+	}
+	return nil
+}
+
 // ListEntitlements returns a plan version's entitlements in key order.
 func (r *PricingPlanRepository) ListEntitlements(ctx context.Context, q Querier, planID string) ([]PlanEntitlement, error) {
 	rows, err := q.Query(ctx,

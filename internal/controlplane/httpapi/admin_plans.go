@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -33,6 +34,9 @@ type AdminPlanManager interface {
 	PublishPlan(ctx context.Context, id string, auditCtx store.AdminPlanAuditContext) (store.Plan, error)
 	ArchivePlan(ctx context.Context, id string, auditCtx store.AdminPlanAuditContext) (store.Plan, error)
 	RollbackPlan(ctx context.Context, id string, auditCtx store.AdminPlanAuditContext) (store.Plan, error)
+	UpsertPlanEntitlement(ctx context.Context, planID string, in AdminPlanEntitlementUpsertInput, auditCtx store.AdminPlanAuditContext) (store.PlanEntitlement, error)
+	RenamePlanEntitlement(ctx context.Context, planID, fromKey, toKey, impactValidationID string, auditCtx store.AdminPlanAuditContext) (store.PlanEntitlement, error)
+	DeletePlanEntitlement(ctx context.Context, planID, key, impactValidationID string, auditCtx store.AdminPlanAuditContext) error
 }
 
 type adminPlanCreateRequestBody struct {
@@ -58,6 +62,55 @@ type adminPlanPayload struct {
 	ArchivedAt    string `json:"archived_at,omitempty"`
 	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+// AdminPlanEntitlementUpsertInput is the validated entitlement payload passed
+// to the backoffice plan manager port.
+type AdminPlanEntitlementUpsertInput = store.UpsertPlanEntitlementInput
+
+type adminPlanEntitlementUpsertRequestBody struct {
+	LimitValue       *int64 `json:"limit_value"`
+	EnforcementMode  string `json:"enforcement_mode"`
+	Unit             string `json:"unit"`
+	WarningThreshold *int   `json:"warning_threshold"`
+	UpgradeHint      string `json:"upgrade_hint"`
+	OverageBehavior  string `json:"overage_behavior"`
+}
+
+type adminPlanEntitlementRenameRequestBody struct {
+	NewEntitlementKey  string `json:"new_entitlement_key"`
+	ImpactValidationID string `json:"impact_validation_id"`
+}
+
+type adminPlanEntitlementDeleteRequestBody struct {
+	ImpactValidationID string `json:"impact_validation_id"`
+}
+
+type adminPlanEntitlementMetadata struct {
+	Unit             string `json:"unit,omitempty"`
+	WarningThreshold *int   `json:"warning_threshold,omitempty"`
+	UpgradeHint      string `json:"upgrade_hint,omitempty"`
+	OverageBehavior  string `json:"overage_behavior,omitempty"`
+}
+
+type adminPlanEntitlementPayload struct {
+	ID                 string `json:"id,omitempty"`
+	PlanID             string `json:"plan_id"`
+	EntitlementKey     string `json:"entitlement_key"`
+	LimitValue         *int64 `json:"limit_value"`
+	EnforcementMode    string `json:"enforcement_mode"`
+	Unit               string `json:"unit,omitempty"`
+	WarningThreshold   *int   `json:"warning_threshold,omitempty"`
+	UpgradeHint        string `json:"upgrade_hint,omitempty"`
+	OverageBehavior    string `json:"overage_behavior,omitempty"`
+	ImpactValidationID string `json:"impact_validation_id,omitempty"`
+}
+
+type adminPlanEntitlementDeletePayload struct {
+	Deleted            bool   `json:"deleted"`
+	PlanID             string `json:"plan_id"`
+	EntitlementKey     string `json:"entitlement_key"`
+	ImpactValidationID string `json:"impact_validation_id"`
 }
 
 func createAdminPlanHandler(manager AdminPlanManager) http.HandlerFunc {
@@ -145,6 +198,104 @@ func rollbackAdminPlanHandler(manager AdminPlanManager) http.HandlerFunc {
 	})
 }
 
+func upsertAdminPlanEntitlementHandler(manager AdminPlanManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAdminPlanManager))
+			return
+		}
+		planID := strings.TrimSpace(r.PathValue("plan_id"))
+		key := strings.TrimSpace(r.PathValue("entitlement_key"))
+		var body adminPlanEntitlementUpsertRequestBody
+		if err := validate.DecodeJSON(r.Body, &body, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		in, err := adminPlanEntitlementUpsertInput(planID, key, body)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		auditCtx, err := adminPlanAuditContext(r)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		ent, err := manager.UpsertPlanEntitlement(r.Context(), planID, in, auditCtx)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), adminPlanEntitlementResponse(ent, ""))
+	}
+}
+
+func renameAdminPlanEntitlementHandler(manager AdminPlanManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAdminPlanManager))
+			return
+		}
+		planID := strings.TrimSpace(r.PathValue("plan_id"))
+		key := strings.TrimSpace(r.PathValue("entitlement_key"))
+		var body adminPlanEntitlementRenameRequestBody
+		if err := validate.DecodeJSON(r.Body, &body, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if err := validateAdminPlanEntitlementRename(planID, key, body); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		auditCtx, err := adminPlanAuditContext(r)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		ent, err := manager.RenamePlanEntitlement(r.Context(), planID, key, body.NewEntitlementKey, body.ImpactValidationID, auditCtx)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), adminPlanEntitlementResponse(ent, body.ImpactValidationID))
+	}
+}
+
+func deleteAdminPlanEntitlementHandler(manager AdminPlanManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAdminPlanManager))
+			return
+		}
+		planID := strings.TrimSpace(r.PathValue("plan_id"))
+		key := strings.TrimSpace(r.PathValue("entitlement_key"))
+		var body adminPlanEntitlementDeleteRequestBody
+		if err := validate.DecodeJSON(r.Body, &body, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if err := validateAdminPlanEntitlementDelete(planID, key, body); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		auditCtx, err := adminPlanAuditContext(r)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if err := manager.DeletePlanEntitlement(r.Context(), planID, key, body.ImpactValidationID, auditCtx); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), adminPlanEntitlementDeletePayload{
+			Deleted:            true,
+			PlanID:             planID,
+			EntitlementKey:     key,
+			ImpactValidationID: strings.TrimSpace(body.ImpactValidationID),
+		})
+	}
+}
+
 func adminPlanIDActionHandler(manager AdminPlanManager, successStatus int, run func(context.Context, AdminPlanManager, string, store.AdminPlanAuditContext) (store.Plan, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if manager == nil {
@@ -211,6 +362,25 @@ func adminPlanResponse(plan store.Plan) adminPlanPayload {
 	return out
 }
 
+func adminPlanEntitlementResponse(ent store.PlanEntitlement, impactValidationID string) adminPlanEntitlementPayload {
+	out := adminPlanEntitlementPayload{
+		ID:                 ent.ID,
+		PlanID:             ent.PlanID,
+		EntitlementKey:     ent.EntitlementKey,
+		LimitValue:         ent.LimitValue,
+		EnforcementMode:    string(ent.EnforcementMode),
+		ImpactValidationID: strings.TrimSpace(impactValidationID),
+	}
+	var meta adminPlanEntitlementMetadata
+	if len(ent.Metadata) > 0 && json.Unmarshal(ent.Metadata, &meta) == nil {
+		out.Unit = meta.Unit
+		out.WarningThreshold = meta.WarningThreshold
+		out.UpgradeHint = meta.UpgradeHint
+		out.OverageBehavior = meta.OverageBehavior
+	}
+	return out
+}
+
 func validateAdminPlanCreate(in AdminPlanCreateInput) error {
 	var violations []apierr.FieldViolation
 	if !validAdminPlanSlug(in.Slug) {
@@ -237,6 +407,107 @@ func validateAdminPlanEdit(id string, in AdminPlanEditInput) error {
 	violations = append(violations, adminPlanNameViolations(in.Name)...)
 	if in.DisplayOrder < 0 {
 		violations = append(violations, apierr.FieldViolation{Field: "display_order", Reason: "must not be negative"})
+	}
+	if len(violations) > 0 {
+		return apierr.InvalidInput(violations...)
+	}
+	return nil
+}
+
+func adminPlanEntitlementUpsertInput(planID, key string, body adminPlanEntitlementUpsertRequestBody) (AdminPlanEntitlementUpsertInput, error) {
+	var violations []apierr.FieldViolation
+	if strings.TrimSpace(planID) == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "plan_id", Reason: "must not be blank"})
+	}
+	if !validAdminEntitlementKey(key) {
+		violations = append(violations, apierr.FieldViolation{Field: "entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if body.LimitValue != nil && *body.LimitValue < 0 {
+		violations = append(violations, apierr.FieldViolation{Field: "limit_value", Reason: "must not be negative"})
+	}
+	mode := store.EnforcementMode(strings.TrimSpace(body.EnforcementMode))
+	if !validAdminPlanEnforcementMode(mode) {
+		violations = append(violations, apierr.FieldViolation{Field: "enforcement_mode", Reason: "must be hard, soft, metered, or disabled"})
+	}
+	meta, metaViolations := adminPlanEntitlementMetadataFromBody(body)
+	violations = append(violations, metaViolations...)
+	if len(violations) > 0 {
+		return AdminPlanEntitlementUpsertInput{}, apierr.InvalidInput(violations...)
+	}
+	metadata, err := json.Marshal(meta)
+	if err != nil {
+		return AdminPlanEntitlementUpsertInput{}, apierr.Internal(err)
+	}
+	return AdminPlanEntitlementUpsertInput{
+		PlanID:          strings.TrimSpace(planID),
+		EntitlementKey:  strings.TrimSpace(key),
+		LimitValue:      body.LimitValue,
+		EnforcementMode: mode,
+		Metadata:        metadata,
+	}, nil
+}
+
+func adminPlanEntitlementMetadataFromBody(body adminPlanEntitlementUpsertRequestBody) (adminPlanEntitlementMetadata, []apierr.FieldViolation) {
+	var violations []apierr.FieldViolation
+	meta := adminPlanEntitlementMetadata{
+		Unit:             strings.TrimSpace(body.Unit),
+		WarningThreshold: body.WarningThreshold,
+		UpgradeHint:      strings.TrimSpace(body.UpgradeHint),
+		OverageBehavior:  strings.TrimSpace(body.OverageBehavior),
+	}
+	if meta.Unit != "" && (!validAdminEntitlementUnit(meta.Unit) || len(meta.Unit) > 32) {
+		violations = append(violations, apierr.FieldViolation{Field: "unit", Reason: "must be a canonical unit at most 32 bytes"})
+	}
+	if meta.WarningThreshold != nil && (*meta.WarningThreshold < 0 || *meta.WarningThreshold > 100) {
+		violations = append(violations, apierr.FieldViolation{Field: "warning_threshold", Reason: "must be between 0 and 100"})
+	}
+	if meta.UpgradeHint != "" {
+		switch {
+		case !utf8.ValidString(meta.UpgradeHint):
+			violations = append(violations, apierr.FieldViolation{Field: "upgrade_hint", Reason: "must be valid UTF-8"})
+		case len(meta.UpgradeHint) > 240:
+			violations = append(violations, apierr.FieldViolation{Field: "upgrade_hint", Reason: "must be at most 240 bytes"})
+		}
+	}
+	if meta.OverageBehavior != "" && !validAdminOverageBehavior(meta.OverageBehavior) {
+		violations = append(violations, apierr.FieldViolation{Field: "overage_behavior", Reason: "must be allow, warn, block, or require_admin_review"})
+	}
+	return meta, violations
+}
+
+func validateAdminPlanEntitlementRename(planID, key string, body adminPlanEntitlementRenameRequestBody) error {
+	var violations []apierr.FieldViolation
+	if strings.TrimSpace(planID) == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "plan_id", Reason: "must not be blank"})
+	}
+	if !validAdminEntitlementKey(key) {
+		violations = append(violations, apierr.FieldViolation{Field: "entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if !validAdminEntitlementKey(body.NewEntitlementKey) {
+		violations = append(violations, apierr.FieldViolation{Field: "new_entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if strings.TrimSpace(key) == strings.TrimSpace(body.NewEntitlementKey) {
+		violations = append(violations, apierr.FieldViolation{Field: "new_entitlement_key", Reason: "must differ from entitlement_key"})
+	}
+	if strings.TrimSpace(body.ImpactValidationID) == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "impact_validation_id", Reason: "is required for entitlement rename"})
+	}
+	if len(violations) > 0 {
+		return apierr.InvalidInput(violations...)
+	}
+	return nil
+}
+
+func validateAdminPlanEntitlementDelete(planID, key string, body adminPlanEntitlementDeleteRequestBody) error {
+	var violations []apierr.FieldViolation
+	if strings.TrimSpace(planID) == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "plan_id", Reason: "must not be blank"})
+	}
+	if !validAdminEntitlementKey(key) {
+		violations = append(violations, apierr.FieldViolation{Field: "entitlement_key", Reason: "must be a canonical entitlement key"})
+	}
+	if strings.TrimSpace(body.ImpactValidationID) == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "impact_validation_id", Reason: "is required for entitlement delete"})
 	}
 	if len(violations) > 0 {
 		return apierr.InvalidInput(violations...)
@@ -278,6 +549,61 @@ func validAdminPlanSlug(raw string) bool {
 func validAdminBillingPeriod(period store.BillingPeriod) bool {
 	switch period {
 	case store.BillingPeriodMonthly, store.BillingPeriodAnnual, store.BillingPeriodCustom:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAdminPlanEnforcementMode(mode store.EnforcementMode) bool {
+	switch mode {
+	case store.EnforcementModeHard, store.EnforcementModeSoft, store.EnforcementModeMetered, store.EnforcementModeDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAdminEntitlementKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 128 {
+		return false
+	}
+	for i, r := range key {
+		ok := r >= 'a' && r <= 'z' ||
+			r >= '0' && r <= '9' ||
+			r == '_' || r == '.' || r == '-'
+		if !ok {
+			return false
+		}
+		if i == 0 && !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func validAdminEntitlementUnit(unit string) bool {
+	if unit == "" {
+		return true
+	}
+	for i, r := range unit {
+		ok := r >= 'a' && r <= 'z' ||
+			r >= '0' && r <= '9' ||
+			r == '_' || r == '-' || r == '/'
+		if !ok {
+			return false
+		}
+		if i == 0 && !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func validAdminOverageBehavior(value string) bool {
+	switch value {
+	case "allow", "warn", "block", "require_admin_review":
 		return true
 	default:
 		return false

@@ -10,6 +10,7 @@ import (
 )
 
 const adminPlanResourceKind = "plan"
+const adminPlanEntitlementResourceKind = "plan_entitlement"
 
 // AdminPlanAuditContext carries the operator/request identity recorded next to
 // every backoffice plan mutation.
@@ -113,6 +114,95 @@ func (svc *AdminPlanService) RollbackPlan(ctx context.Context, id string, auditC
 	return svc.planLifecycle(ctx, id, auditCtx, "admin.plan.rollback", "rollback", svc.plans.Rollback)
 }
 
+// UpsertPlanEntitlement creates or replaces one entitlement on a plan version
+// and records the operator action.
+func (svc *AdminPlanService) UpsertPlanEntitlement(ctx context.Context, planID string, in UpsertPlanEntitlementInput, auditCtx AdminPlanAuditContext) (PlanEntitlement, error) {
+	auditCtx, err := validateAdminPlanAuditContext(auditCtx)
+	if err != nil {
+		return PlanEntitlement{}, err
+	}
+	in.PlanID = strings.TrimSpace(planID)
+	var out PlanEntitlement
+	err = svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.orgs.Get(ctx, tx, auditCtx.ActorOrgID); err != nil {
+			return err
+		}
+		plan, err := svc.plans.Get(ctx, tx, in.PlanID)
+		if err != nil {
+			return err
+		}
+		ent, err := svc.plans.UpsertEntitlement(ctx, tx, in)
+		if err != nil {
+			return err
+		}
+		if _, err := svc.audit.Append(ctx, tx, adminPlanEntitlementAuditEvent(auditCtx, "admin.plan.entitlement.upsert", plan, ent, "upsert", "")); err != nil {
+			return err
+		}
+		out = ent
+		return nil
+	})
+	return out, err
+}
+
+// RenamePlanEntitlement changes an entitlement key after impact validation.
+func (svc *AdminPlanService) RenamePlanEntitlement(ctx context.Context, planID, fromKey, toKey, impactValidationID string, auditCtx AdminPlanAuditContext) (PlanEntitlement, error) {
+	auditCtx, err := validateAdminPlanAuditContext(auditCtx)
+	if err != nil {
+		return PlanEntitlement{}, err
+	}
+	impactValidationID = strings.TrimSpace(impactValidationID)
+	if impactValidationID == "" {
+		return PlanEntitlement{}, apierr.Conflict("entitlement rename requires migration impact validation")
+	}
+	var out PlanEntitlement
+	err = svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.orgs.Get(ctx, tx, auditCtx.ActorOrgID); err != nil {
+			return err
+		}
+		plan, err := svc.plans.Get(ctx, tx, strings.TrimSpace(planID))
+		if err != nil {
+			return err
+		}
+		ent, err := svc.plans.RenameEntitlement(ctx, tx, plan.ID, fromKey, toKey)
+		if err != nil {
+			return err
+		}
+		if _, err := svc.audit.Append(ctx, tx, adminPlanEntitlementAuditEvent(auditCtx, "admin.plan.entitlement.rename", plan, ent, "rename", impactValidationID)); err != nil {
+			return err
+		}
+		out = ent
+		return nil
+	})
+	return out, err
+}
+
+// DeletePlanEntitlement removes an entitlement after impact validation.
+func (svc *AdminPlanService) DeletePlanEntitlement(ctx context.Context, planID, key, impactValidationID string, auditCtx AdminPlanAuditContext) error {
+	auditCtx, err := validateAdminPlanAuditContext(auditCtx)
+	if err != nil {
+		return err
+	}
+	impactValidationID = strings.TrimSpace(impactValidationID)
+	if impactValidationID == "" {
+		return apierr.Conflict("entitlement delete requires migration impact validation")
+	}
+	return svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.orgs.Get(ctx, tx, auditCtx.ActorOrgID); err != nil {
+			return err
+		}
+		plan, err := svc.plans.Get(ctx, tx, strings.TrimSpace(planID))
+		if err != nil {
+			return err
+		}
+		if err := svc.plans.DeleteEntitlement(ctx, tx, plan.ID, key); err != nil {
+			return err
+		}
+		ent := PlanEntitlement{PlanID: plan.ID, EntitlementKey: strings.TrimSpace(key)}
+		_, err = svc.audit.Append(ctx, tx, adminPlanEntitlementAuditEvent(auditCtx, "admin.plan.entitlement.delete", plan, ent, "delete", impactValidationID))
+		return err
+	})
+}
+
 func (svc *AdminPlanService) planLifecycle(ctx context.Context, id string, auditCtx AdminPlanAuditContext, action, operation string, run func(context.Context, *Tx, string) (Plan, error)) (Plan, error) {
 	auditCtx, err := validateAdminPlanAuditContext(auditCtx)
 	if err != nil {
@@ -183,5 +273,34 @@ func adminPlanAuditEvent(auditCtx AdminPlanAuditContext, action string, plan Pla
 			"status":         plan.Status.String(),
 			"version":        strconv.Itoa(plan.Version),
 		},
+	}
+}
+
+func adminPlanEntitlementAuditEvent(auditCtx AdminPlanAuditContext, action string, plan Plan, ent PlanEntitlement, operation, impactValidationID string) AuditEvent {
+	metadata := map[string]string{
+		"operation":        operation,
+		"plan_id":          plan.ID,
+		"slug":             plan.Slug,
+		"billing_period":   plan.BillingPeriod.String(),
+		"plan_status":      plan.Status.String(),
+		"plan_version":     strconv.Itoa(plan.Version),
+		"entitlement_key":  ent.EntitlementKey,
+		"enforcement_mode": string(ent.EnforcementMode),
+	}
+	if impactValidationID != "" {
+		metadata["impact_validation_id"] = impactValidationID
+	}
+	return AuditEvent{
+		OrganizationID: auditCtx.ActorOrgID,
+		ActorID:        auditCtx.ActorID,
+		ActorKind:      auditCtx.ActorKind,
+		Action:         action,
+		ResourceKind:   adminPlanEntitlementResourceKind,
+		ResourceID:     plan.ID + ":" + ent.EntitlementKey,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "allowed",
+		RequestID:      auditCtx.RequestID,
+		CorrelationID:  auditCtx.CorrelationID,
+		Metadata:       metadata,
 	}
 }

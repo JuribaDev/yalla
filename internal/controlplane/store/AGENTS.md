@@ -218,6 +218,20 @@ Postgres persistence for control-plane source-of-truth state.
 
 ## Backoffice runtime config (`0062_admin_config_versioning`, `admin_config.go`)
 
+## Backoffice plan entitlements
+
+- `AdminPlanService` owns audited plan-entitlement mutations as part of the
+  pricing-plan lifecycle surface: verify the admin actor organization, verify
+  the addressed global plan row, mutate `plan_entitlements`, and append the
+  immutable `audit_events` row in one `Store.Write` transaction.
+- Entitlement upserts store operator-facing runtime metadata in
+  `plan_entitlements.metadata` JSON (`unit`, `warning_threshold`,
+  `upgrade_hint`, `overage_behavior`). Keep secret-looking values out of this
+  metadata; it is returned by admin APIs.
+- Entitlement rename/delete require a nonblank impact-validation id before the
+  repository write. Treat entitlement keys as public runtime contracts used by
+  quota, billing, subscription overrides, and limits projections.
+
 - `admin_config_sets` and `admin_config_versions` are global operator-owned
   runtime configuration, not tenant data. Do not add `organization_id` to these
   tables unless the product explicitly introduces tenant-local backoffice config.

@@ -48,6 +48,21 @@ func (f *fakeAdminPlanManager) RollbackPlan(_ context.Context, id string, _ stor
 	return f.out()
 }
 
+func (f *fakeAdminPlanManager) UpsertPlanEntitlement(_ context.Context, planID string, in AdminPlanEntitlementUpsertInput, _ store.AdminPlanAuditContext) (store.PlanEntitlement, error) {
+	f.calls = append(f.calls, "upsert-entitlement:"+planID+":"+in.EntitlementKey)
+	return store.PlanEntitlement{}, f.err
+}
+
+func (f *fakeAdminPlanManager) RenamePlanEntitlement(_ context.Context, planID, fromKey, toKey, impactValidationID string, _ store.AdminPlanAuditContext) (store.PlanEntitlement, error) {
+	f.calls = append(f.calls, "rename-entitlement:"+planID+":"+fromKey+":"+toKey+":"+impactValidationID)
+	return store.PlanEntitlement{}, f.err
+}
+
+func (f *fakeAdminPlanManager) DeletePlanEntitlement(_ context.Context, planID, key, impactValidationID string, _ store.AdminPlanAuditContext) error {
+	f.calls = append(f.calls, "delete-entitlement:"+planID+":"+key+":"+impactValidationID)
+	return f.err
+}
+
 func (f *fakeAdminPlanManager) out() (store.Plan, error) {
 	if f.err != nil {
 		return store.Plan{}, f.err

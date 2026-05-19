@@ -12366,8 +12366,8 @@
       ],
       "type": "backoffice-pricing-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-only backoffice entitlement APIs: PUT /v1/admin/plans/{plan_id}/entitlements/{entitlement_key}, POST /v1/admin/plans/{plan_id}/entitlements/{entitlement_key}/rename, and DELETE /v1/admin/plans/{plan_id}/entitlements/{entitlement_key}. Entitlement upserts configure limit_value, hard/soft/metered/disabled enforcement mode, unit, warning_threshold, upgrade_hint, and overage_behavior metadata. Rename/delete require impact_validation_id. Added audited store.AdminPlanService entitlement operations plus PricingPlanRepository rename/delete methods. Tests cover HTTP success, invalid input, authz denial, not found, entitlement lifecycle audit, unsafe impact-validation denial, and resolver-visible plan entitlement updates."
     },
     {
       "id": "BE-0604",
