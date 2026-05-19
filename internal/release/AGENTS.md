@@ -267,6 +267,20 @@ recovery. Any future API-handler guide change should update the guide,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Policy engine conventions artifact (BE-0545)
+
+`policy_engine_conventions_static_test.go` pins the backend policy engine guide
+at `docs/development/policy-engine-conventions.md`: the guide must document
+the `internal/controlplane/policy/catalog.go` action catalog, `policy.Action`,
+`policy.Principal`, `policy.Resource`, `policy.Engine.Authorize`,
+`apierr.Forbidden`, `apierr.ScopeRequired`,
+`telemetry.PolicyDecisionMetrics`, stable envelope output, exact verification
+commands, expected outputs, failure recovery, tenant isolation, scoped grants,
+audit, redaction, fake-Dokploy-by-default tests, and the opt-in external
+Dokploy smoke warning. Any future policy-engine guide change should update the
+guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
+the same edit.
+
 ## Repository conventions artifact (BE-0544)
 
 `repository_conventions_static_test.go` pins the backend repository guide at

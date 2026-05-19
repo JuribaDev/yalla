@@ -116,6 +116,7 @@ defined in `.github/workflows/ci.yml`:
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | API handler conventions artifact | `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Policy engine conventions artifact | `go test ./internal/release/... -run TestPolicyEngineConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Repository conventions artifact | `go test ./internal/release/... -run TestRepositoryConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -1731,6 +1732,30 @@ contract operators and AI agents rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_policy_matrix_static_test.go`.
+
+## Policy Engine Conventions Artifact
+
+The developer-facing policy-engine conventions guide is tracked at
+`docs/development/policy-engine-conventions.md` and is pinned by
+`go test ./internal/release/... -run TestPolicyEngineConventionsArtifact`.
+The guide documents how to add or change `policy.Action` constants, update the
+`internal/controlplane/policy/catalog.go` action catalog, build scoped
+`policy.Resource` values, authorize with `policy.Engine.Authorize`, surface
+typed `apierr.Forbidden` / `apierr.ScopeRequired` errors, record
+`telemetry.PolicyDecisionMetrics`, preserve stable `yalla.output.v1` /
+`yalla.error.v1` envelopes with `request_id`, and keep secrets, tokens, API
+keys, cookies, rendered environment variable values, customer identifiers, and
+live Dokploy credentials out of logs, errors, audit metadata, tests, docs, and
+dry-run output.
+
+The artifact test keeps the guide wired into `scripts/verify.sh`, the CI test
+job, and this security policy so the policy conventions do not drift away from
+the executable gate. The guide also records the exact focused verification
+commands for policy changes: `go test ./internal/controlplane/policy/...`,
+`go test -run TestPolicyMatrix ./...`, `go test -run TestTenantIsolation ./...`,
+`go test -run TestAdminEndpoint ./...`, and the opt-in external smoke command
+`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...`, which must
+never run against production.
 
 ## Quota Concurrency Tests
 

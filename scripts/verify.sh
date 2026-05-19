@@ -310,6 +310,12 @@ if ! go test ./internal/release/... -run TestAPIHandlerConventionsArtifact; then
   required_failed=1
 fi
 
+# Required: policy engine conventions artifact static tests
+step "go test ./internal/release/... -run TestPolicyEngineConventionsArtifact"
+if ! go test ./internal/release/... -run TestPolicyEngineConventionsArtifact; then
+  required_failed=1
+fi
+
 # Required: repository conventions artifact static tests
 step "go test ./internal/release/... -run TestRepositoryConventionsArtifact"
 if ! go test ./internal/release/... -run TestRepositoryConventionsArtifact; then
