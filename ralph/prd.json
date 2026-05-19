@@ -7901,8 +7901,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: audit event metrics."
+      "passes": true,
+      "notes": "Implemented audit event metrics with low-cardinality action/resource_kind/decision/outcome/reason/error_code dimensions, safe latest-sample identifiers, /metrics exposure under data.audit_events, repository append instrumentation for success and failure paths, unit/contract coverage, and docs/operations/audit-event-metrics.md."
     },
     {
       "id": "BE-0369",

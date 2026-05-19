@@ -28,6 +28,11 @@ var DefaultDokployDependencyMetrics = NewDokployDependencyMetrics()
 // own collector.
 var DefaultQuotaUsageMetrics = NewQuotaUsageMetrics()
 
+// DefaultAuditEventMetrics is the process-wide audit-log append metrics
+// collector used by the audit repository unless tests or embedders inject
+// their own collector.
+var DefaultAuditEventMetrics = NewAuditEventMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -304,6 +309,82 @@ type quotaUsageMetricSeries struct {
 	QuotaUsageMetric
 }
 
+// AuditEventOutcome is the bounded outcome dimension for immutable audit-log
+// append attempts.
+type AuditEventOutcome string
+
+const (
+	// AuditEventOutcomeRecorded records an audit event that was durably
+	// appended.
+	AuditEventOutcomeRecorded AuditEventOutcome = "recorded"
+	// AuditEventOutcomeFailed records an append attempt that failed before the
+	// audit row was durably written.
+	AuditEventOutcomeFailed AuditEventOutcome = "failed"
+)
+
+// AuditEventObservation is one immutable audit-log append observation. Action,
+// ResourceKind, Decision, Outcome, Reason, and ErrorCode are aggregate
+// dimensions; identifiers are latest-sample hints for incident joins.
+type AuditEventObservation struct {
+	Action         string
+	ResourceKind   string
+	ResourceID     string
+	Decision       string
+	Outcome        AuditEventOutcome
+	Reason         string
+	ErrorCode      string
+	RequestID      string
+	CorrelationID  string
+	OrganizationID string
+	ActorID        string
+	JobID          string
+}
+
+// AuditEventMetric is one aggregate audit-log append series.
+type AuditEventMetric struct {
+	Action         string            `json:"action"`
+	ResourceKind   string            `json:"resource_kind"`
+	Decision       string            `json:"decision"`
+	Outcome        AuditEventOutcome `json:"outcome"`
+	Reason         string            `json:"reason"`
+	ErrorCode      string            `json:"error_code,omitempty"`
+	Count          int64             `json:"count"`
+	RequestID      string            `json:"request_id,omitempty"`
+	CorrelationID  string            `json:"correlation_id,omitempty"`
+	OrganizationID string            `json:"organization_id,omitempty"`
+	ResourceID     string            `json:"resource_id,omitempty"`
+	ActorID        string            `json:"actor_id,omitempty"`
+	JobID          string            `json:"job_id,omitempty"`
+}
+
+// AuditEventMetricsSnapshot is the JSON-serializable operational view exposed
+// to operators, tests, and metrics endpoints.
+type AuditEventMetricsSnapshot struct {
+	TotalEvents int64              `json:"total_events"`
+	Series      []AuditEventMetric `json:"series"`
+}
+
+// AuditEventMetrics stores low-cardinality audit-log append counters. It is
+// safe for concurrent use by API and worker goroutines.
+type AuditEventMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[auditEventMetricKey]*auditEventMetricSeries
+}
+
+type auditEventMetricKey struct {
+	action       string
+	resourceKind string
+	decision     string
+	outcome      AuditEventOutcome
+	reason       string
+	errorCode    string
+}
+
+type auditEventMetricSeries struct {
+	AuditEventMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -323,6 +404,11 @@ func NewDokployDependencyMetrics() *DokployDependencyMetrics {
 // NewQuotaUsageMetrics returns an empty quota decision metrics collector.
 func NewQuotaUsageMetrics() *QuotaUsageMetrics {
 	return &QuotaUsageMetrics{series: make(map[quotaUsageMetricKey]*quotaUsageMetricSeries)}
+}
+
+// NewAuditEventMetrics returns an empty audit-log append metrics collector.
+func NewAuditEventMetrics() *AuditEventMetrics {
+	return &AuditEventMetrics{series: make(map[auditEventMetricKey]*auditEventMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -451,6 +537,100 @@ func (m *QuotaUsageMetrics) Snapshot() QuotaUsageMetricsSnapshot {
 		return a.Reason < b.Reason
 	})
 	return out
+}
+
+// Snapshot returns a deterministic copy of all audit-log append metrics
+// currently held by the collector.
+func (m *AuditEventMetrics) Snapshot() AuditEventMetricsSnapshot {
+	if m == nil {
+		return AuditEventMetricsSnapshot{Series: []AuditEventMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := AuditEventMetricsSnapshot{
+		TotalEvents: m.total,
+		Series:      make([]AuditEventMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.AuditEventMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Action != b.Action {
+			return a.Action < b.Action
+		}
+		if a.ResourceKind != b.ResourceKind {
+			return a.ResourceKind < b.ResourceKind
+		}
+		if a.Decision != b.Decision {
+			return a.Decision < b.Decision
+		}
+		if a.Outcome != b.Outcome {
+			return a.Outcome < b.Outcome
+		}
+		if a.Reason != b.Reason {
+			return a.Reason < b.Reason
+		}
+		return a.ErrorCode < b.ErrorCode
+	})
+	return out
+}
+
+// RecordAuditEventAppend aggregates one immutable audit-log append observation.
+func (m *AuditEventMetrics) RecordAuditEventAppend(ctx context.Context, event AuditEventObservation) {
+	if m == nil {
+		return
+	}
+	action := metricAuditToken(event.Action, "unknown")
+	resourceKind := metricAuditToken(event.ResourceKind, "unknown")
+	decision := metricAuditDecision(event.Decision)
+	outcome := metricAuditOutcome(event.Outcome)
+	reason := metricAuditToken(event.Reason, "unknown")
+	errorCode := metricAuditErrorCode(event.ErrorCode)
+	if outcome == AuditEventOutcomeRecorded {
+		errorCode = ""
+	}
+
+	corr := FromContext(ctx)
+	if event.RequestID != "" {
+		corr.RequestID = event.RequestID
+	}
+	if event.CorrelationID != "" {
+		corr.CorrelationID = event.CorrelationID
+	}
+
+	key := auditEventMetricKey{
+		action:       action,
+		resourceKind: resourceKind,
+		decision:     decision,
+		outcome:      outcome,
+		reason:       reason,
+		errorCode:    errorCode,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &auditEventMetricSeries{AuditEventMetric: AuditEventMetric{
+			Action:       action,
+			ResourceKind: resourceKind,
+			Decision:     decision,
+			Outcome:      outcome,
+			Reason:       reason,
+			ErrorCode:    errorCode,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = corr.RequestID
+	series.CorrelationID = corr.CorrelationID
+	series.OrganizationID = safeMetricID(event.OrganizationID)
+	series.ResourceID = safeMetricID(event.ResourceID)
+	series.ActorID = safeMetricID(event.ActorID)
+	series.JobID = safeMetricID(event.JobID)
 }
 
 // RecordJobQueueEvent aggregates one durable-job queue observation.
@@ -820,6 +1000,68 @@ func metricQuotaReason(reason string) string {
 	default:
 		return "other"
 	}
+}
+
+func metricAuditToken(value, empty string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return empty
+	}
+	if len(value) > 80 {
+		return "other"
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-' {
+			continue
+		}
+		return "other"
+	}
+	return value
+}
+
+func metricAuditDecision(decision string) string {
+	switch strings.TrimSpace(decision) {
+	case "allowed", "denied":
+		return strings.TrimSpace(decision)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricAuditOutcome(outcome AuditEventOutcome) AuditEventOutcome {
+	switch outcome {
+	case AuditEventOutcomeRecorded, AuditEventOutcomeFailed:
+		return outcome
+	default:
+		return AuditEventOutcomeFailed
+	}
+}
+
+func metricAuditErrorCode(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	if len(code) > 80 {
+		return "other"
+	}
+	for _, r := range code {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return "other"
+	}
+	return code
+}
+
+func safeMetricID(id string) string {
+	id = strings.TrimSpace(id)
+	if SafeID(id) {
+		return id
+	}
+	return ""
 }
 
 func clampMetricCount(n int64) int64 {

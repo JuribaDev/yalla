@@ -57,6 +57,7 @@ type metricsSnapshot struct {
 	telemetry.HTTPMetricsSnapshot
 	DokployDependencySnapshot telemetry.DokployDependencyMetricsSnapshot `json:"dokploy_dependencies"`
 	QuotaUsageSnapshot        telemetry.QuotaUsageMetricsSnapshot        `json:"quota_usage"`
+	AuditEventSnapshot        telemetry.AuditEventMetricsSnapshot        `json:"audit_events"`
 }
 
 // healthzPayload is the data block of the GET /healthz success envelope.
@@ -217,6 +218,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
+	auditMetrics := telemetry.DefaultAuditEventMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -269,6 +271,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(*telemetry.QuotaUsageMetrics); ok && v != nil {
 			quotaMetrics = v
 		}
+		if v, ok := opt.(*telemetry.AuditEventMetrics); ok && v != nil {
+			auditMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -294,7 +299,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Path:               "/metrics",
 				OperationID:        "getMetrics",
 				Summary:            "Read operational metrics",
-				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, private Dokploy dependency metrics, and quota usage decision metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason. Request ids, correlation ids, organization ids, principal ids, job ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs during incidents without turning high-cardinality identifiers into dashboard labels. Secrets in request targets and Dokploy endpoint values are redacted or normalized before storage.",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, private Dokploy dependency metrics, quota usage decision metrics, and audit-log append metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use audit_events to detect failed audit persistence, unexpected denial spikes, and missing request/job correlation before trusting mutation timelines. Secrets in request targets and Dokploy endpoint values are redacted or normalized before storage, and audit metric identifiers are emitted only when they pass the safe correlation-id character set.",
 				Tags:               []string{tagOperations},
 				SuccessDescription: "The current in-process operational metric snapshot.",
 			},
@@ -303,6 +308,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 					HTTPMetricsSnapshot:       httpMetrics.Snapshot(),
 					DokployDependencySnapshot: dokployMetrics.Snapshot(),
 					QuotaUsageSnapshot:        quotaMetrics.Snapshot(),
+					AuditEventSnapshot:        auditMetrics.Snapshot(),
 				})
 			},
 		},

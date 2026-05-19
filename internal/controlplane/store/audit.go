@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -99,21 +101,29 @@ const auditEventColumns = `id, organization_id, actor_id, actor_kind, action, ` 
 // rather than reaching the database.
 func (r *AuditRepository) Append(ctx context.Context, tx *Tx, e AuditEvent) (AuditEvent, error) {
 	if tx == nil {
-		return AuditEvent{}, apierr.Internal(errors.New("store: AuditRepository.Append called with a nil transaction"))
+		err := apierr.Internal(errors.New("store: AuditRepository.Append called with a nil transaction"))
+		recordAuditAppendMetric(ctx, e, telemetry.AuditEventOutcomeFailed, "nil_transaction", err)
+		return AuditEvent{}, err
 	}
 	if !e.Decision.Valid() {
-		return AuditEvent{}, apierr.Internal(fmt.Errorf("store: AuditRepository.Append called with an invalid decision %q", e.Decision))
+		err := apierr.Internal(fmt.Errorf("store: AuditRepository.Append called with an invalid decision %q", e.Decision))
+		recordAuditAppendMetric(ctx, e, telemetry.AuditEventOutcomeFailed, "invalid_decision", err)
+		return AuditEvent{}, err
 	}
 	if e.ID == "" {
 		id, err := newAuditID()
 		if err != nil {
-			return AuditEvent{}, apierr.Internal(err)
+			wrapped := apierr.Internal(err)
+			recordAuditAppendMetric(ctx, e, telemetry.AuditEventOutcomeFailed, "id_generation_failed", wrapped)
+			return AuditEvent{}, wrapped
 		}
 		e.ID = id
 	}
 	metadata, err := marshalAuditMetadata(e.Metadata)
 	if err != nil {
-		return AuditEvent{}, apierr.Internal(err)
+		wrapped := apierr.Internal(err)
+		recordAuditAppendMetric(ctx, e, telemetry.AuditEventOutcomeFailed, "metadata_marshal_failed", wrapped)
+		return AuditEvent{}, wrapped
 	}
 	row := tx.QueryRow(ctx,
 		`INSERT INTO audit_events
@@ -127,9 +137,33 @@ func (r *AuditRepository) Append(ctx context.Context, tx *Tx, e AuditEvent) (Aud
 		e.IPAddress, e.UserAgent, metadata)
 	created, err := scanAuditEvent(row)
 	if err != nil {
-		return AuditEvent{}, mapWriteError(err, "an audit event with this id already exists")
+		wrapped := mapWriteError(err, "an audit event with this id already exists")
+		recordAuditAppendMetric(ctx, e, telemetry.AuditEventOutcomeFailed, "write_failed", wrapped)
+		return AuditEvent{}, wrapped
 	}
+	recordAuditAppendMetric(ctx, created, telemetry.AuditEventOutcomeRecorded, created.Reason, nil)
 	return created, nil
+}
+
+func recordAuditAppendMetric(ctx context.Context, e AuditEvent, outcome telemetry.AuditEventOutcome, reason string, err error) {
+	errorCode := ""
+	if err != nil {
+		errorCode = string(yerr.From(err).Code)
+	}
+	telemetry.DefaultAuditEventMetrics.RecordAuditEventAppend(ctx, telemetry.AuditEventObservation{
+		Action:         e.Action,
+		ResourceKind:   e.ResourceKind,
+		ResourceID:     e.ResourceID,
+		Decision:       string(e.Decision),
+		Outcome:        outcome,
+		Reason:         reason,
+		ErrorCode:      errorCode,
+		RequestID:      e.RequestID,
+		CorrelationID:  e.CorrelationID,
+		OrganizationID: e.OrganizationID,
+		ActorID:        e.ActorID,
+		JobID:          e.Metadata["job_id"],
+	})
 }
 
 // ListByOrganization returns the most recent audit events for organizationID,

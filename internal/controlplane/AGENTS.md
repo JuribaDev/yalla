@@ -113,6 +113,14 @@ do not mix customer API handlers into CLI packages.
   should emit validation and infrastructure-error decisions without requiring a
   usable store transaction, and `/metrics` exposes the process snapshot under
   `data.quota_usage`.
+- `telemetry.AuditEventMetrics` follows the same low-cardinality collector
+  pattern for audit-log appends: group only by `action`, `resource_kind`,
+  `decision`, `outcome`, bounded `reason`, and stable `error_code`; keep
+  request/correlation/org/resource/actor/job identifiers as latest-sample
+  incident hints. Emit from `store.AuditRepository.Append` for both recorded
+  and failed append attempts so direct store services and the higher-level
+  auditor share one instrumentation boundary, and `/metrics` exposes the
+  snapshot under `data.audit_events`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

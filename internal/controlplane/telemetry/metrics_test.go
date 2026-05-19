@@ -352,3 +352,106 @@ func findQuotaUsageMetric(metrics []QuotaUsageMetric, resource, mode string, out
 	}
 	return nil
 }
+
+func TestAuditEventMetricsRecordsSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewAuditEventMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{
+		RequestID:     "req_audit_context",
+		CorrelationID: "corr_audit_context",
+	})
+
+	metrics.RecordAuditEventAppend(ctx, AuditEventObservation{
+		Action:         "project.create",
+		ResourceKind:   "project",
+		ResourceID:     "proj_audit_metrics",
+		Decision:       "allowed",
+		Outcome:        AuditEventOutcomeRecorded,
+		Reason:         "allowed_by_role",
+		RequestID:      "req_audit_row",
+		CorrelationID:  "corr_audit_row",
+		OrganizationID: "org_audit_metrics",
+		ActorID:        "usr_audit_metrics",
+		JobID:          "job_audit_metrics",
+	})
+	metrics.RecordAuditEventAppend(ctx, AuditEventObservation{
+		Action:         "project.create",
+		ResourceKind:   "project",
+		ResourceID:     "proj_audit_metrics",
+		Decision:       "allowed",
+		Outcome:        AuditEventOutcomeFailed,
+		Reason:         "write_failed",
+		ErrorCode:      "E_DB_UNAVAILABLE",
+		OrganizationID: "org_audit_metrics",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalEvents != 2 {
+		t.Fatalf("total_events = %d, want 2", snapshot.TotalEvents)
+	}
+	if len(snapshot.Series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	recorded := findAuditEventMetric(snapshot.Series, "project.create", "project", "allowed", AuditEventOutcomeRecorded, "allowed_by_role")
+	if recorded == nil {
+		t.Fatalf("missing recorded metric: %+v", snapshot.Series)
+	}
+	if recorded.Count != 1 || recorded.ErrorCode != "" {
+		t.Errorf("recorded metric = %+v, want count=1 and no error code", *recorded)
+	}
+	if recorded.RequestID != "req_audit_row" || recorded.CorrelationID != "corr_audit_row" {
+		t.Errorf("recorded metric = %+v, want audit row request/correlation ids", *recorded)
+	}
+	if recorded.OrganizationID != "org_audit_metrics" || recorded.ResourceID != "proj_audit_metrics" || recorded.ActorID != "usr_audit_metrics" || recorded.JobID != "job_audit_metrics" {
+		t.Errorf("recorded metric = %+v, want latest-sample identity hints", *recorded)
+	}
+
+	failed := findAuditEventMetric(snapshot.Series, "project.create", "project", "allowed", AuditEventOutcomeFailed, "write_failed")
+	if failed == nil {
+		t.Fatalf("missing failed metric: %+v", snapshot.Series)
+	}
+	if failed.ErrorCode != "E_DB_UNAVAILABLE" || failed.RequestID != "req_audit_context" || failed.CorrelationID != "corr_audit_context" {
+		t.Errorf("failed metric = %+v, want stable error code and context correlation fallback", *failed)
+	}
+}
+
+func TestAuditEventMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewAuditEventMetrics()
+	metrics.RecordAuditEventAppend(context.Background(), AuditEventObservation{
+		Action:         "project.create\nAuthorization: Bearer yka_secret",
+		ResourceKind:   "project",
+		ResourceID:     "proj_bad\nsecret",
+		Decision:       "maybe",
+		Outcome:        "surprising",
+		Reason:         "reason with token=secret",
+		ErrorCode:      "E_DB_UNAVAILABLE\nsecret",
+		OrganizationID: "org_ok",
+		ActorID:        "usr ok",
+		JobID:          "job_ok",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalEvents != 1 || len(snapshot.Series) != 1 {
+		t.Fatalf("snapshot = %+v, want one bounded series", snapshot)
+	}
+	got := snapshot.Series[0]
+	if got.Action != "other" || got.ResourceKind != "project" || got.Decision != "other" || got.Outcome != AuditEventOutcomeFailed || got.Reason != "other" || got.ErrorCode != "other" {
+		t.Fatalf("metric = %+v, want bounded dimensions", got)
+	}
+	if got.OrganizationID != "org_ok" || got.ResourceID != "" || got.ActorID != "" || got.JobID != "job_ok" {
+		t.Fatalf("metric = %+v, want only safe identifiers retained", got)
+	}
+}
+
+func findAuditEventMetric(metrics []AuditEventMetric, action, resourceKind, decision string, outcome AuditEventOutcome, reason string) *AuditEventMetric {
+	for i := range metrics {
+		if metrics[i].Action == action && metrics[i].ResourceKind == resourceKind && metrics[i].Decision == decision && metrics[i].Outcome == outcome && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
