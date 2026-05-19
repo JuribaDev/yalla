@@ -22,6 +22,10 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	policyMetrics := telemetry.NewPolicyDecisionMetrics()
 	traceMetrics := telemetry.NewTraceSpanMetrics()
 	slowQueryMetrics := telemetry.NewSlowQueryMetrics()
+	readinessMetrics := telemetry.NewReadinessDegradationMetrics()
+	readiness := runtime.NewReadiness("database", "migrations", "queue")
+	readiness.MarkReady("migrations")
+	readiness.MarkReady("queue")
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
 		Path:       "/api/projects/proj_metrics_probe",
@@ -61,9 +65,9 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		Outcome:   "success",
 	})
 	handler := NewHandler(
-		runtime.BuildInfo{Version: "test"}, nil, nil, nil,
+		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
-		traceMetrics, slowQueryMetrics,
+		traceMetrics, slowQueryMetrics, readinessMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -71,6 +75,11 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	req = httptest.NewRequest(http.MethodGet, "/missing", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req.Header.Set("X-Request-Id", "req-readyz-metrics")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -95,6 +104,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			PolicyDecisions     telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
 			TraceSpans          telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
 			SlowQueries         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
+			Readiness           telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -142,6 +152,19 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	if len(env.Data.SlowQueries.Series) != 1 || env.Data.SlowQueries.Series[0].Operation != "read" || env.Data.SlowQueries.Series[0].QueryKind != "select" {
 		t.Fatalf("slow query series = %+v, want read/select metric", env.Data.SlowQueries.Series)
 	}
+	if env.Data.Readiness.TotalProbes == 0 {
+		t.Fatalf("readiness total_probes = %d, want readyz probe observations", env.Data.Readiness.TotalProbes)
+	}
+	foundReadyzFailure := false
+	for _, series := range env.Data.Readiness.Series {
+		if series.Check == "database" && series.Status == "failing" && series.Reason == "pending" && series.RequestID == "req-readyz-metrics" {
+			foundReadyzFailure = true
+			break
+		}
+	}
+	if !foundReadyzFailure {
+		t.Fatalf("readiness metrics missing database pending failure: %+v", env.Data.Readiness.Series)
+	}
 	foundRequestFailure := false
 	for _, metric := range env.Data.Requests {
 		if metric.Route == "unmatched" {
@@ -164,5 +187,53 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if !foundSuccess || !foundFailure {
 		t.Fatalf("trace spans missing success=%v failure=%v: %+v", foundSuccess, foundFailure, env.Data.TraceSpans.Series)
+	}
+}
+
+func TestMetricsEndpointIncludesReadinessDegradation(t *testing.T) {
+	t.Parallel()
+
+	readiness := runtime.NewReadiness("database", "migrations", "queue")
+	readiness.MarkReady("migrations")
+	readiness.MarkReady("queue")
+	readinessMetrics := telemetry.NewReadinessDegradationMetrics()
+	handler := NewHandler(
+		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
+		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, readinessMetrics,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req.Header.Set("X-Request-Id", "req-readyz-metrics")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readyz status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Readiness telemetry.ReadinessDegradationSnapshot `json:"readiness_degradation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode metrics response: %v", err)
+	}
+	if env.Data.Readiness.TotalProbes != 3 {
+		t.Fatalf("readiness total_probes = %d, want one observation per gate", env.Data.Readiness.TotalProbes)
+	}
+	var foundFailure bool
+	for _, series := range env.Data.Readiness.Series {
+		if series.Check == "database" && series.Status == "failing" && series.Reason == "pending" && series.RequestID == "req-readyz-metrics" {
+			foundFailure = true
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("readiness degradation series missing pending database failure: %+v", env.Data.Readiness.Series)
 	}
 }

@@ -42,6 +42,10 @@ var DefaultPolicyDecisionMetrics = NewPolicyDecisionMetrics()
 // used by the store unless tests or embedders inject their own collector.
 var DefaultSlowQueryMetrics = NewSlowQueryMetrics()
 
+// DefaultReadinessDegradationMetrics is the process-wide readiness probe
+// collector used by the HTTP API unless tests or embedders inject their own.
+var DefaultReadinessDegradationMetrics = NewReadinessDegradationMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -509,6 +513,56 @@ type slowQueryMetricSeries struct {
 	SlowQueryMetric
 }
 
+// ReadinessDegradationObservation is one /readyz dependency-gate observation.
+// Check, Status, and Reason are aggregate dimensions; identifiers are latest
+// sample hints for incident joins and must never be used as dashboard labels.
+type ReadinessDegradationObservation struct {
+	Check          string
+	Status         string
+	Reason         string
+	OrganizationID string
+	PrincipalID    string
+	JobID          string
+}
+
+// ReadinessDegradationMetric is one aggregate readiness degradation series.
+type ReadinessDegradationMetric struct {
+	Check          string `json:"check"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Count          int64  `json:"count"`
+	RequestID      string `json:"request_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	PrincipalID    string `json:"principal_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+}
+
+// ReadinessDegradationSnapshot is the JSON-serializable operational view
+// exposed to operators, tests, and metrics endpoints.
+type ReadinessDegradationSnapshot struct {
+	TotalProbes int64                        `json:"total_probes"`
+	Series      []ReadinessDegradationMetric `json:"series"`
+}
+
+// ReadinessDegradationMetrics stores low-cardinality readiness probe counters.
+// It is safe for concurrent use by API handlers.
+type ReadinessDegradationMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[readinessDegradationMetricKey]*readinessDegradationMetricSeries
+}
+
+type readinessDegradationMetricKey struct {
+	check  string
+	status string
+	reason string
+}
+
+type readinessDegradationMetricSeries struct {
+	ReadinessDegradationMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -544,6 +598,12 @@ func NewPolicyDecisionMetrics() *PolicyDecisionMetrics {
 // NewSlowQueryMetrics returns an empty datastore slow-query metrics collector.
 func NewSlowQueryMetrics() *SlowQueryMetrics {
 	return &SlowQueryMetrics{series: make(map[slowQueryMetricKey]*slowQueryMetricSeries)}
+}
+
+// NewReadinessDegradationMetrics returns an empty readiness degradation
+// collector.
+func NewReadinessDegradationMetrics() *ReadinessDegradationMetrics {
+	return &ReadinessDegradationMetrics{series: make(map[readinessDegradationMetricKey]*readinessDegradationMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -769,6 +829,35 @@ func (m *SlowQueryMetrics) Snapshot() SlowQueryMetricsSnapshot {
 			return a.QueryKind < b.QueryKind
 		}
 		return a.Outcome < b.Outcome
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all readiness degradation metrics
+// currently held by the collector.
+func (m *ReadinessDegradationMetrics) Snapshot() ReadinessDegradationSnapshot {
+	if m == nil {
+		return ReadinessDegradationSnapshot{Series: []ReadinessDegradationMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := ReadinessDegradationSnapshot{
+		TotalProbes: m.total,
+		Series:      make([]ReadinessDegradationMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.ReadinessDegradationMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Check != b.Check {
+			return a.Check < b.Check
+		}
+		if a.Status != b.Status {
+			return a.Status < b.Status
+		}
+		return a.Reason < b.Reason
 	})
 	return out
 }
@@ -1157,6 +1246,53 @@ func (m *SlowQueryMetrics) RecordSlowQuery(ctx context.Context, event SlowQueryO
 	series.JobID = safeMetricID(jobID)
 }
 
+// RecordReadinessProbe aggregates one readiness dependency-gate observation.
+func (m *ReadinessDegradationMetrics) RecordReadinessProbe(ctx context.Context, event ReadinessDegradationObservation) {
+	if m == nil {
+		return
+	}
+	check := metricAuditToken(event.Check, "unknown")
+	status := metricReadinessStatus(event.Status)
+	reason := metricAuditToken(event.Reason, "unknown")
+
+	corr := FromContext(ctx)
+	orgID, principalID := "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID = f.snapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+
+	key := readinessDegradationMetricKey{
+		check:  check,
+		status: status,
+		reason: reason,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &readinessDegradationMetricSeries{ReadinessDegradationMetric: ReadinessDegradationMetric{
+			Check:  check,
+			Status: status,
+			Reason: reason,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.JobID = safeMetricID(event.JobID)
+}
+
 func metricMethod(method string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
@@ -1288,6 +1424,17 @@ func metricJobStatusClass(status string) string {
 		return "failure"
 	default:
 		return "other"
+	}
+}
+
+func metricReadinessStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "passing", "failing":
+		return strings.TrimSpace(status)
+	case "":
+		return "unknown"
+	default:
+		return "unknown"
 	}
 }
 

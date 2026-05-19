@@ -3,9 +3,10 @@
 Yalla exposes in-process operational metrics at `GET /metrics`. The endpoint
 uses the standard `yalla.output.v1` envelope and includes HTTP request metrics,
 distributed trace-span metrics, private Dokploy dependency metrics, quota usage
-metrics, audit event metrics, policy decision metrics, and datastore slow-query
-metrics. It is intended for operators, agents, and incident tooling that need a
-quick view of API behavior without reading application logs first.
+metrics, audit event metrics, policy decision metrics, datastore slow-query
+metrics, and readiness degradation metrics. It is intended for operators,
+agents, and incident tooling that need a quick view of API behavior without
+reading application logs first.
 
 The metric series are intentionally low cardinality:
 
@@ -53,3 +54,28 @@ Incident workflow:
    identifier.
 4. Use the safe organization/resource hints only after confirming the request
    scope in the matching API or worker log.
+
+## Readiness Degradation
+
+Readiness degradation metrics live under `data.readiness_degradation`. The
+`/readyz` handler records one observation per configured dependency gate on
+each probe. Series are grouped only by:
+
+- `check` (`database`, `migrations`, `queue`, `dokploy`, or another fixed
+  process gate)
+- `status` (`passing` or `failing`)
+- `reason` (`ready` or `pending`)
+
+Each series carries the latest `request_id`, `correlation_id`, and safe
+organization/principal/job hints when present. Normal load-balancer probes are
+public and usually have no tenant identifiers; keep those fields as join hints,
+not labels.
+
+Incident workflow:
+
+1. Check `data.readiness_degradation.series` for `status="failing"` and
+   `reason="pending"`.
+2. Use `check` to identify the blocking dependency gate.
+3. Copy the latest `request_id` or `correlation_id` into structured log
+   search to inspect the matching `/readyz` probe and adjacent startup logs.
+4. Treat absent tenant identifiers as expected for unauthenticated probes.

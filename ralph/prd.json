@@ -7996,8 +7996,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: readiness degradation reasons."
+      "passes": true,
+      "notes": "Implemented readiness degradation metrics with low-cardinality check/status/reason series, safe latest-sample request/correlation/org/principal/job hints, /readyz instrumentation, /metrics exposure under data.readiness_degradation, unit and HTTP contract coverage, and operator documentation."
     },
     {
       "id": "BE-0374",

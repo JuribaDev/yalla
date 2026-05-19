@@ -700,3 +700,83 @@ func findAuditEventMetric(metrics []AuditEventMetric, action, resourceKind, deci
 	}
 	return nil
 }
+
+func TestReadinessDegradationMetricsRecordsReasons(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewReadinessDegradationMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{
+		RequestID:     "req_readyz_context",
+		CorrelationID: "corr_readyz_context",
+	})
+
+	metrics.RecordReadinessProbe(ctx, ReadinessDegradationObservation{
+		Check:  "database",
+		Status: "failing",
+		Reason: "pending",
+	})
+	metrics.RecordReadinessProbe(ctx, ReadinessDegradationObservation{
+		Check:  "database",
+		Status: "passing",
+		Reason: "ready",
+		JobID:  "job_readyz_context",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalProbes != 2 {
+		t.Fatalf("total_probes = %d, want 2", snapshot.TotalProbes)
+	}
+	if len(snapshot.Series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	failing := findReadinessDegradationMetric(snapshot.Series, "database", "failing", "pending")
+	if failing == nil {
+		t.Fatalf("missing failing database readiness metric: %+v", snapshot.Series)
+	}
+	if failing.Count != 1 || failing.RequestID != "req_readyz_context" || failing.CorrelationID != "corr_readyz_context" {
+		t.Errorf("failing metric = %+v, want context correlation hints", *failing)
+	}
+
+	passing := findReadinessDegradationMetric(snapshot.Series, "database", "passing", "ready")
+	if passing == nil {
+		t.Fatalf("missing passing database readiness metric: %+v", snapshot.Series)
+	}
+	if passing.JobID != "job_readyz_context" {
+		t.Errorf("passing metric = %+v, want safe job id hint", *passing)
+	}
+}
+
+func TestReadinessDegradationMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewReadinessDegradationMetrics()
+	metrics.RecordReadinessProbe(context.Background(), ReadinessDegradationObservation{
+		Check:          "database\nAuthorization: Bearer yka_secret",
+		Status:         "flapping",
+		Reason:         "token=secret",
+		OrganizationID: "org_readyz_safe",
+		JobID:          "job bad",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalProbes != 1 || len(snapshot.Series) != 1 {
+		t.Fatalf("snapshot = %+v, want one bounded series", snapshot)
+	}
+	got := snapshot.Series[0]
+	if got.Check != "other" || got.Status != "unknown" || got.Reason != "other" {
+		t.Fatalf("metric = %+v, want bounded dimensions", got)
+	}
+	if got.OrganizationID != "org_readyz_safe" || got.JobID != "" {
+		t.Fatalf("metric = %+v, want only safe identifiers retained", got)
+	}
+}
+
+func findReadinessDegradationMetric(metrics []ReadinessDegradationMetric, check, status, reason string) *ReadinessDegradationMetric {
+	for i := range metrics {
+		if metrics[i].Check == check && metrics[i].Status == status && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
+}

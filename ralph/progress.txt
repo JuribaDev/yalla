@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Readiness degradation metrics follow the existing low-cardinality telemetry collector pattern: `/readyz` emits one `telemetry.ReadinessDegradationMetrics` observation per configured dependency gate, grouped by `(check, status, reason)` with request/correlation/org/principal/job IDs kept only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.readiness_degradation`.
 - Store slow-query observability is centralized at the `store.Store` boundary, not inside individual repositories: `Store.Read`/`Write`, `Tx`, and the read-only querier wrappers observe query duration, emit logs only after the slow threshold, and record `telemetry.SlowQueryMetrics` grouped by `(operation, query_kind, outcome)`. The signal deliberately omits SQL text, bind args, table names, DSNs, and driver error strings; request/correlation/org/principal/resource/job IDs are latest-sample incident hints exposed under `/metrics` as `data.slow_queries`.
 - Trace-span metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.TraceSpanMetrics` groups by `(name, kind, route, component, outcome, status_class, error_code)`, stores request/correlation/org/principal/resource/job IDs plus redacted targets only as latest-sample incident hints, is emitted by `telemetry.TraceHTTPSpans` for HTTP server spans, and `/metrics` exposes the snapshot under `data.trace_spans`.
 - Structured HTTP error logs are a telemetry/envelope bridge: `apienvelope.WriteErrorStatus` records the stable public `error_code` through a structural `RecordErrorCode` interface implemented by telemetry's response recorder, while `RequestLogging` emits low-cardinality `status_class`/`outcome` plus correlation hints (`request_id`, `correlation_id`, org/principal/resource/job IDs) without parsing response bodies or logging headers/bodies.
@@ -38048,4 +38049,45 @@ change that widened Reason to caller-supplied data.
   - Store wrappers that forward a `sql string` parameter to pgx must be included in the SQL-injection static-test passthrough exemption; repository call sites remain the real SQL-constant enforcement boundary.
   - Slow-query observability should never log raw SQL, even table names, because variable/resource table names and predicates can reveal sensitive implementation detail during incidents.
   - `/metrics` snapshots should add new observability families as explicit named data fields and keep high-cardinality IDs as latest-sample hints only.
+---
+
+## 2026-05-19 11:43 +03 - BE-0373
+- What was implemented
+  - Added `telemetry.ReadinessDegradationMetrics` with low-cardinality `(check, status, reason)` series and safe latest-sample request/correlation/org/principal/job hints.
+  - Instrumented `/readyz` to record one readiness observation per configured dependency gate on each probe.
+  - Exposed the readiness snapshot from `GET /metrics` under `data.readiness_degradation` and documented the operator incident workflow.
+  - Marked BE-0373 passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `docs/operations/http-request-metrics.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/telemetry -run TestReadinessDegradationMetrics -count=1` (red first, then green)
+  - `go test ./internal/controlplane/httpapi -run TestMetricsEndpointIncludesReadinessDegradation -count=1` (red first, then green)
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - Direct `goimports`, `staticcheck`, and `govulncheck` commands were not on the interactive shell PATH during manual checks; the strict pre-commit verification still ran `staticcheck ./...` and `govulncheck ./...` through the repo script and both passed.
+  - No Postgres-backed integration tests were required by this observability-only story; the migration filter was still run and passed/skipped according to existing harness behavior.
+- Remaining risks or follow-ups
+  - Normal unauthenticated readiness probes usually have no organization or principal hints; this is expected, and operators should join by request/correlation ID first.
+- **Learnings for future iterations:**
+  - Readiness telemetry should live beside the existing in-memory collectors in `internal/controlplane/telemetry` and be injected through `NewHandler` route options for deterministic tests.
+  - `/readyz` records one observation per configured gate, not one aggregate process-level row, so operators can see the specific blocking dependency without high-cardinality labels.
 ---

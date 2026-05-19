@@ -61,6 +61,7 @@ type metricsSnapshot struct {
 	PolicyDecisionSnapshot    telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
 	TraceSpanSnapshot         telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
 	SlowQuerySnapshot         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
+	ReadinessSnapshot         telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
 }
 
 // healthzPayload is the data block of the GET /healthz success envelope.
@@ -225,6 +226,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	policyMetrics := telemetry.DefaultPolicyDecisionMetrics
 	traceMetrics := telemetry.DefaultTraceSpanMetrics
 	slowQueryMetrics := telemetry.DefaultSlowQueryMetrics
+	readinessMetrics := telemetry.DefaultReadinessDegradationMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -289,6 +291,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(*telemetry.SlowQueryMetrics); ok && v != nil {
 			slowQueryMetrics = v
 		}
+		if v, ok := opt.(*telemetry.ReadinessDegradationMetrics); ok && v != nil {
+			readinessMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -314,7 +319,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Path:               "/metrics",
 				OperationID:        "getMetrics",
 				Summary:            "Read operational metrics",
-				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, distributed trace-span metrics, private Dokploy dependency metrics, quota usage decision metrics, audit-log append metrics, policy authorization decision metrics, and datastore slow-query metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; trace spans are grouped by span name, kind, matched route, component, outcome, status class, and stable error code; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code; policy decision series are grouped by action, resource kind, allow/deny decision, and stable policy reason; slow-query series are grouped only by store operation, SQL statement kind, and success/error outcome. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use trace_spans to find slow or failing spans by route/component/outcome and slow_queries to identify datastore pressure by statement kind, then join the latest request_id/correlation_id to structured logs before investigating tenant/resource identifiers. Secrets in request targets, Dokploy endpoint values, and SQL text are redacted or omitted before storage, and metric identifiers are emitted only when they pass the safe correlation-id character set.",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics, distributed trace-span metrics, private Dokploy dependency metrics, quota usage decision metrics, audit-log append metrics, policy authorization decision metrics, datastore slow-query metrics, and readiness degradation metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; trace spans are grouped by span name, kind, matched route, component, outcome, status class, and stable error code; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability; quota usage series are grouped by quota resource, enforcement mode, decision outcome, and bounded reason; audit event series are grouped by action, resource kind, allow/deny decision, append outcome, bounded reason, and stable error code; policy decision series are grouped by action, resource kind, allow/deny decision, and stable policy reason; slow-query series are grouped only by store operation, SQL statement kind, and success/error outcome; readiness series are grouped by dependency check, passing/failing status, and bounded reason. Request ids, correlation ids, organization ids, principal ids, job ids, actor ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs, audit rows, or job rows during incidents without turning high-cardinality identifiers into dashboard labels. Operators should use trace_spans to find slow or failing spans by route/component/outcome, slow_queries to identify datastore pressure by statement kind, and readiness_degradation to identify the failing startup dependency gate, then join the latest request_id/correlation_id to structured logs before investigating tenant/resource identifiers. Secrets in request targets, Dokploy endpoint values, and SQL text are redacted or omitted before storage, and metric identifiers are emitted only when they pass the safe correlation-id character set.",
 				Tags:               []string{tagOperations},
 				SuccessDescription: "The current in-process operational metric snapshot.",
 			},
@@ -327,6 +332,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 					PolicyDecisionSnapshot:    policyMetrics.Snapshot(),
 					TraceSpanSnapshot:         traceMetrics.Snapshot(),
 					SlowQuerySnapshot:         slowQueryMetrics.Snapshot(),
+					ReadinessSnapshot:         readinessMetrics.Snapshot(),
 				})
 			},
 		},
@@ -340,7 +346,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Tags:               []string{tagOperations},
 				SuccessDescription: "Every startup dependency check has passed; the data block reports each check.",
 			},
-			handler: readyzHandler(readiness),
+			handler: readyzHandler(readiness, readinessMetrics),
 		},
 		{
 			endpoint: openapi.Endpoint{
@@ -3216,7 +3222,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 // code's default status because "not ready yet" is a liveness signal, not an
 // upstream fault. A nil reporter is treated as always-ready, which suits
 // tests and processes with no startup dependencies.
-func readyzHandler(readiness runtime.ReadinessReporter) http.HandlerFunc {
+func readyzHandler(readiness runtime.ReadinessReporter, metrics *telemetry.ReadinessDegradationMetrics) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		checks := map[string]bool{}
 		ready := true
@@ -3224,6 +3230,7 @@ func readyzHandler(readiness runtime.ReadinessReporter) http.HandlerFunc {
 			checks = readiness.Snapshot()
 			ready = readiness.Ready()
 		}
+		recordReadinessMetrics(r, metrics, checks)
 		if ready {
 			apienvelope.WriteData(w, http.StatusOK, requestID(r), readyzPayload{
 				Status: "ready",
@@ -3241,6 +3248,25 @@ func readyzHandler(readiness runtime.ReadinessReporter) http.HandlerFunc {
 		}
 		apienvelope.WriteErrorStatus(w, http.StatusServiceUnavailable, requestID(r),
 			yerr.New(yerr.CodeServer, "service is not ready").WithHint(hint))
+	}
+}
+
+func recordReadinessMetrics(r *http.Request, metrics *telemetry.ReadinessDegradationMetrics, checks map[string]bool) {
+	if metrics == nil {
+		return
+	}
+	for check, passing := range checks {
+		status := "passing"
+		reason := "ready"
+		if !passing {
+			status = "failing"
+			reason = "pending"
+		}
+		metrics.RecordReadinessProbe(r.Context(), telemetry.ReadinessDegradationObservation{
+			Check:  check,
+			Status: status,
+			Reason: reason,
+		})
 	}
 }
 

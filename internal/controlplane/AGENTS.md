@@ -147,6 +147,12 @@ do not mix customer API handlers into CLI packages.
   must not be logged or stored; request/correlation/org/principal/resource/job
   identifiers are latest-sample incident hints only, exposed under
   `/metrics` as `data.slow_queries`.
+- Readiness degradation metrics follow the same low-cardinality collector
+  pattern: `/readyz` records one `telemetry.ReadinessDegradationMetrics`
+  observation per configured dependency gate, grouped only by `(check, status,
+  reason)`. Request/correlation/org/principal/job identifiers are latest-sample
+  hints only, and `/metrics` exposes the snapshot under
+  `data.readiness_degradation`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux
