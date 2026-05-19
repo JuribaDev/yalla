@@ -304,6 +304,12 @@ if ! go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifac
   required_failed=1
 fi
 
+# Required: observability dashboard guide artifact static tests
+step "go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact"
+if ! go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

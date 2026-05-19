@@ -162,6 +162,9 @@ jobs:
       - name: Environment variable reference artifact static tests
         run: go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact
 
+      - name: Observability dashboard guide artifact static tests
+        run: go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

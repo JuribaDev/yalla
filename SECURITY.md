@@ -856,6 +856,23 @@ external live-Dokploy smoke test warning.
 CI pins the environment variable reference with
 `go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact`.
 
+## Observability Dashboard Guide Artifact
+
+The developer-facing observability dashboard guide lives at
+`docs/development/observability-dashboard-guide.md`. It documents how to build,
+validate, and maintain the observability dashboard for the backend binaries
+(`cmd/yalla-api` and `cmd/yalla-worker`), the metric sources and collectors,
+required environment variables, expected output shapes, verification commands,
+failure recovery guidance, and the redaction contract.
+
+The document uses only `<redacted:...>` placeholders for secret-shaped values
+and documents the exact verification commands, expected output shapes,
+health/readiness probes, structured JSON log expectations, and the opt-in
+external live-Dokploy smoke test warning.
+
+CI pins the observability dashboard guide with
+`go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact`.
+
 ## Rollback Checklist Artifact
 
 The production rollback checklist lives at

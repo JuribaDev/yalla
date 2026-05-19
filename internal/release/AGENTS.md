@@ -249,6 +249,20 @@ external live-Dokploy smoke test warning. Any future environment-variable-
 reference change should update the guide, SECURITY.md verification-gates row,
 CI step, and `scripts/verify.sh` in the same edit.
 
+## Observability dashboard guide artifact (BE-0559)
+
+`observability_dashboard_guide_static_test.go` pins the developer-facing
+observability dashboard guide at `docs/development/observability-dashboard-guide.md`:
+the guide must document how to build, validate, and maintain the observability
+dashboard for the backend binaries (`cmd/yalla-api` and `cmd/yalla-worker`),
+all metric sources and collectors, required environment variables, expected
+output shapes, verification commands, failure recovery guidance, the redaction
+contract, exact verification commands, expected output shapes, health/readiness
+probes, structured JSON log expectations, and the opt-in external live-Dokploy
+smoke test warning. Any future observability-dashboard-guide change should
+update the guide, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Release checklist artifact (BE-0551)
 
 `release_checklist_artifact_static_test.go` pins the production release
