@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
+	"github.com/JuribaDev/yalla/internal/controlplane/backoffice"
 	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
@@ -364,6 +365,12 @@ func main() {
 		logger.Error("failed to initialize the admin import service", "error", err.Error())
 		os.Exit(1)
 	}
+	adminConfigImpact, err := backoffice.NewStoreImpactReader(dataStore)
+	if err != nil {
+		logger.Error("failed to initialize the admin config impact reader", "error", err.Error())
+		os.Exit(1)
+	}
+	adminConfigValidator := backoffice.NewValidator(backoffice.WithImpactReader(adminConfigImpact))
 	breakGlassService, err := store.NewBreakGlassService(dataStore, store.NewOrganizationRepository(), store.NewBreakGlassRepository(), auditRepo, nil)
 	if err != nil {
 		logger.Error("failed to initialize the break-glass service", "error", err.Error())
@@ -442,7 +449,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceBackupService, serviceBackupService, serviceBackupService, serviceBackupService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter, previewService, jobReader, driftFindingReader, dokployRefReader, adminImportService),
+		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceBackupService, serviceBackupService, serviceBackupService, serviceBackupService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter, previewService, jobReader, driftFindingReader, dokployRefReader, adminImportService, adminConfigValidator),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

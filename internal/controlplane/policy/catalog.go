@@ -128,10 +128,11 @@ var defaultActionCatalog = map[Action]Capability{
 	ActionOrganizationDelete: CapOwner,
 
 	// Internal break-glass / support tooling.
-	ActionAdminRead:       CapSupport,
-	ActionAdminImport:     CapSupport,
-	ActionAdminReconcile:  CapSupport,
-	ActionAdminBreakGlass: CapSupport,
+	ActionAdminRead:           CapSupport,
+	ActionAdminImport:         CapSupport,
+	ActionAdminReconcile:      CapSupport,
+	ActionAdminConfigValidate: CapSupport,
+	ActionAdminBreakGlass:     CapSupport,
 }
 
 // CustomRoleResolver resolves a non-built-in role name to its capability set.

@@ -202,6 +202,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var dokployRefs DokployRefReader
 	var adminDokployReconciler AdminDokployReconciler
 	var adminDokployImporter AdminDokployImporter
+	var adminConfigDryRunner AdminConfigDryRunner
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
@@ -227,6 +228,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminDokployImporter); ok {
 			adminDokployImporter = v
+		}
+		if v, ok := opt.(AdminConfigDryRunner); ok {
+			adminConfigDryRunner = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -406,6 +410,20 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// organization, so the tenant boundary is structural — there is
 			// no caller input that could point the write at another tenant.
 			handler: createProjectHandler(projectCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/config/dry-run",
+				OperationID:        "dryRunAdminConfig",
+				Summary:            "Dry-run backoffice config",
+				Description:        "Validates a candidate backoffice runtime configuration payload before publish. The request supplies the config domain, an optional config_set_id, the candidate payload, and optional simulate_organization_ids for impact simulation. Action admin.config.validate is support-only until the finer backoffice permissions story splits pricing, metering, billing, feature-flag, and publish roles. The response is always a yalla.output.v1 envelope for a well-formed dry-run request: candidate defects are returned as stable blocking_errors and warnings so operators and agents can fix every issue in one pass. Malformed request shape and unknown selected organizations still return typed yalla.error.v1 errors. Secret-looking credential_ref values are rejected without echoing the submitted value.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminConfigValidate),
+				SuccessDescription: "The dry-run validation report.",
+			},
+			handler: dryRunAdminConfigHandler(adminConfigDryRunner),
 		},
 		{
 			endpoint: openapi.Endpoint{

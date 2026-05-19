@@ -364,8 +364,8 @@ func TestCatalogAndRolesAreWellFormed(t *testing.T) {
 			t.Fatalf("action %q maps to unknown capability %q", action, required)
 		}
 	}
-	if len(defaultActionCatalog) != 61 {
-		t.Fatalf("catalog has %d actions, want 61", len(defaultActionCatalog))
+	if len(defaultActionCatalog) != 62 {
+		t.Fatalf("catalog has %d actions, want 62", len(defaultActionCatalog))
 	}
 
 	roles := BuiltinRoles()

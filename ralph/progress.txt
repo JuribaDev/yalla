@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice dry-run validation is a side-effect-free `internal/controlplane/backoffice` service with optional read ports for existence/impact checks: malformed request shape returns typed API errors, while candidate configuration defects return a successful `yalla.output.v1` report with stable `warnings`, `blocking_errors`, and `simulated_organizations` arrays. Secret-looking credential values are rejected without echoing the submitted value.
 - Backoffice runtime configuration uses global `admin_config_sets` plus `admin_config_versions`, not tenant tables: create editable drafts, publish immutable effective-at versions, archive instead of deleting, and make runtime readers select only `status='published'` rows whose `effective_at` has passed. Bump the set `revision` on version mutations so future cache layers have a monotonic invalidation token.
 - Worker queue metrics follow the HTTP metrics collector shape: aggregate series by low-cardinality dimensions only (`event`, `job_type`, `status`, `status_class`), keep job/request/correlation/org/project/environment/service identifiers as latest-sample log-join hints, and emit worker events only after successful claim/outcome commits so metrics reflect durable queue state.
 - Billing-grade container metric stories follow the same four-piece tracked-metric vertical as Traefik/build metering: add a runtime `metering.MetricDefinition`, extend the closed `quota_resource` domain plus `store.QuotaResource`, quarantine samples before billing unless attribution resolves a full org/project/environment/service scope, and emit idempotent `usage_events` whose current-period aggregation is visible through the organization usage projection.
@@ -37442,4 +37443,19 @@ change that widened Reason to caller-supplied data.
   - Backoffice config tables are global operator configuration, not tenant-scoped customer data.
   - Published config payloads should be treated as immutable runtime candidates; later changes should create new versions or archive old versions.
   - Runtime consumers should use a published/effective-at read path and a monotonic config-set revision token for cache invalidation.
+---
+
+## 2026-05-19 08:32 +03 - BE-0600
+- Implemented support-only backoffice dry-run validation for candidate runtime config before publish.
+- Added `internal/controlplane/backoffice` with deterministic schema/reference validation for plans, entitlements, metric definitions, metering sources, billing providers, unsafe deletes, secret-looking credential refs, and selected-organization impact simulation.
+- Added `POST /v1/admin/config/dry-run` with OpenAPI route metadata, stable `yalla.output.v1` dry-run reports, typed `yalla.error.v1` request/dependency errors, and support-only `admin.config.validate` authorization.
+- Wired `cmd/yalla-api` to use a store-backed impact reader over current-period `usage_counters`; normal tests do not require live Dokploy.
+- Files changed: `cmd/yalla-api/main.go`; `internal/controlplane/backoffice/*`; `internal/controlplane/httpapi/admin_config.go`; `internal/controlplane/httpapi/admin_config_test.go`; `internal/controlplane/httpapi/routes.go`; `internal/controlplane/httpapi/server.go`; `internal/controlplane/policy/actions.go`; `internal/controlplane/policy/catalog.go`; `internal/controlplane/policy/policy_test.go`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `goimports -w .` skipped because goimports is not installed; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`.
+- Results: all required and focused checks passed. `golangci-lint` passed with 0 issues after adding the package comment. `staticcheck` and `govulncheck` are not installed.
+- Remaining risks or follow-ups: BE-0613 should split `admin.config.validate` into finer backoffice permissions; future publish APIs should call the same validator before accepting published config versions; config-set-id existence can be tightened when the backoffice draft/publish APIs land.
+- **Learnings for future iterations:**
+  - Backoffice dry-run candidate defects should be data in a successful report, not one-error-at-a-time HTTP failures, so operators and agents can fix the entire candidate in one loop.
+  - Route-option dependencies avoid sweeping the large `NewHandler` positional argument list for optional admin surfaces.
+  - Impact simulation can stay Dokploy-free by using Yalla's current-period `usage_counters` and tenant-existence checks from Postgres.
 ---

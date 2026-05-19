@@ -96,10 +96,11 @@ const (
 	ActionPreviewDelete Action = "preview.delete"
 
 	// Internal break-glass / support actions.
-	ActionAdminRead       Action = "admin.read"
-	ActionAdminImport     Action = "admin.import"
-	ActionAdminReconcile  Action = "admin.reconcile"
-	ActionAdminBreakGlass Action = "admin.break_glass"
+	ActionAdminRead           Action = "admin.read"
+	ActionAdminImport         Action = "admin.import"
+	ActionAdminReconcile      Action = "admin.reconcile"
+	ActionAdminConfigValidate Action = "admin.config.validate"
+	ActionAdminBreakGlass     Action = "admin.break_glass"
 )
 
 // allActions is the authoritative enumeration of every catalogued action. It
@@ -168,6 +169,7 @@ var allActions = []Action{
 	ActionAdminRead,
 	ActionAdminImport,
 	ActionAdminReconcile,
+	ActionAdminConfigValidate,
 	ActionAdminBreakGlass,
 }
 
