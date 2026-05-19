@@ -12480,8 +12480,8 @@
       ],
       "type": "backoffice-billing-api",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented support-gated backoffice billing provider APIs: GET/PUT /v1/admin/billing/providers/{provider_key} and POST /v1/admin/billing/providers/{provider_key}/test. Added admin_billing_providers persistence with disabled/manual/stripe provider types, encrypted write-only credentials, export cadence, retry policy, dry-run mode, runtime enabled-provider reload, audited store service writes, OpenAPI route metadata, API binary wiring, and focused HTTP/store tests covering success, validation, authn/authz, not found, conflict, secret redaction, manual/disabled/Stripe placeholder behavior, test reports, and runtime reload."
     },
     {
       "id": "BE-0610",

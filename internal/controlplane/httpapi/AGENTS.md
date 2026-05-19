@@ -200,6 +200,14 @@ to `AdminUsageAggregationScheduleService`, expose interval/replay/close-delay
 and late-event mode as stable top-level fields, and disable schedules instead
 of deleting runtime history.
 
+## Backoffice billing providers
+
+Backoffice billing provider routes use `policy.ActionBillingManage`. Keep
+credentials write-only: handlers may accept `credential_value`, but response
+payloads expose only `credential_set` plus non-secret provider metadata. The
+side-effect-free test route validates local provider config and fake-counter
+mapping without contacting Stripe or another live provider.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an

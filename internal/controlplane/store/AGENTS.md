@@ -73,6 +73,21 @@ Postgres persistence for control-plane source-of-truth state.
   `admin.usage_aggregation_schedule.*` audit event in one `Store.Write`
   transaction.
 
+## Billing providers
+
+- `admin_billing_providers` is global backoffice runtime config for billing
+  export adapters. Store only non-secret provider metadata plus the sealed
+  credential tuple; keep the legacy `credential_value` column empty so
+  write-only secrets never persist as plaintext.
+- Mutations go through `AdminBillingProviderService`, which verifies the actor
+  organization, seals `credential_value` before opening the transaction, writes
+  the provider config, and appends `admin.billing_provider.*` audit events with
+  credential/reason redaction in one `Store.Write` transaction.
+- Runtime workers should load exporting providers via
+  `BillingProviderConfigRepository.ListRuntimeEnabled`; disabled provider rows
+  are retained for audit/config history but are excluded from runtime export
+  loops.
+
 ## Tenant hierarchy schema
 
 - The `Organization -> Project -> Environment -> Service` chain is in

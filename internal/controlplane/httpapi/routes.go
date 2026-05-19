@@ -224,6 +224,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminMetricDefinitionManager AdminMetricDefinitionManager
 	var adminAttributionRuleManager AdminAttributionRuleManager
 	var adminUsageAggregationScheduleManager AdminUsageAggregationScheduleManager
+	var adminBillingProviderManager AdminBillingProviderManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -281,6 +282,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminUsageAggregationScheduleManager); ok {
 			adminUsageAggregationScheduleManager = v
+		}
+		if v, ok := opt.(AdminBillingProviderManager); ok {
+			adminBillingProviderManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -851,6 +855,51 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The usage aggregation schedule was disabled and audited.",
 			},
 			handler: disableAdminUsageAggregationScheduleHandler(adminUsageAggregationScheduleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/billing/providers/{provider_key}",
+				OperationID:        "getAdminBillingProvider",
+				Summary:            "Get a billing provider",
+				Description:        "Returns the current backoffice billing export provider configuration without exposing write-only credentials. Action billing.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionBillingManage),
+				PathParams:         []openapi.PathParam{{Name: "provider_key", Description: "Stable billing provider key."}},
+				SuccessDescription: "The current billing provider configuration.",
+			},
+			handler: getAdminBillingProviderHandler(adminBillingProviderManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/billing/providers/{provider_key}",
+				OperationID:        "upsertAdminBillingProvider",
+				Summary:            "Configure a billing provider",
+				Description:        "Creates or updates one audited billing export provider. Supported provider types are disabled, manual, and stripe placeholder. Credentials are write-only, encrypted at rest, and never returned.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionBillingManage),
+				PathParams:         []openapi.PathParam{{Name: "provider_key", Description: "Stable billing provider key."}},
+				SuccessDescription: "The billing provider was persisted and audited.",
+			},
+			handler: upsertAdminBillingProviderHandler(adminBillingProviderManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/billing/providers/{provider_key}/test",
+				OperationID:        "testAdminBillingProvider",
+				Summary:            "Test a billing provider",
+				Description:        "Performs a side-effect-free provider configuration and fake-counter export mapping test without contacting an external billing provider.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionBillingManage),
+				PathParams:         []openapi.PathParam{{Name: "provider_key", Description: "Stable billing provider key."}},
+				SuccessDescription: "The billing provider test report.",
+			},
+			handler: testAdminBillingProviderHandler(adminBillingProviderManager),
 		},
 		{
 			endpoint: openapi.Endpoint{
