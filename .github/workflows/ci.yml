@@ -156,6 +156,9 @@ jobs:
       - name: Security review checklist artifact static tests
         run: go test ./internal/release/... -run TestSecurityReviewChecklistArtifact
 
+      - name: Production config reference artifact static tests
+        run: go test ./internal/release/... -run TestProductionConfigReferenceArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 

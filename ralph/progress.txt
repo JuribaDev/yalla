@@ -40024,3 +40024,36 @@ change that widened Reason to caller-supplied data.
   - When matching substrings across markdown line breaks, be careful about newlines and markdown bold (`**word**`) breaking naive substring matches.
   - The existing `docs/operations/backup-restore.md` was comprehensive enough to satisfy the acceptance criteria without content changes; only the pinning static test and wiring were needed.
 ---
+
+## 2026-05-19 21:33 +03 - BE-0557
+- What was implemented
+  - Created `docs/operations/production-config-reference.md` documenting all backend environment variables consumed by `yalla-api` and `yalla-worker`, the four profiles (`local`, `test`, `staging`, `production`), per-profile defaults, validation rules, failure recovery guidance, redaction contract, exact verification commands, expected output shapes, health/readiness probes, structured JSON log expectations, and the opt-in external live-Dokploy smoke test warning.
+  - Created `internal/release/production_config_reference_static_test.go` pinning the document content with seven test functions covering review scope, required variables, validation/recovery, verification commands, expected outputs, redaction/recovery, and release-gate wiring.
+  - Wired the new static artifact gate into `scripts/verify.sh`, `.github/workflows/ci.yml`, `SECURITY.md` (verification-gates table row and dedicated section), and `internal/release/AGENTS.md`.
+- Files changed
+  - `docs/operations/production-config-reference.md`
+  - `internal/release/production_config_reference_static_test.go`
+  - `scripts/verify.sh`
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test ./internal/release/... -run TestProductionConfigReferenceArtifact -v`
+  - `bash scripts/verify.sh`
+- Results
+  - All required and focused checks passed.
+  - The new static test passed on first run after content adjustments.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - Documentation artifacts should use the existing static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase.
+  - The forbidden-secret scan in static tests is case-insensitive for the forbidden list but case-sensitive for the document content check, so be careful with exact casing in both directions.
+---

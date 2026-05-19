@@ -11492,8 +11492,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: production config reference."
+      "passes": true,
+      "notes": "Created docs/operations/production-config-reference.md documenting all backend environment variables, profiles, per-profile defaults, validation rules, failure recovery, redaction contract, exact verification commands, expected outputs, health/readiness probes, structured JSON log expectations, and opt-in external live-Dokploy smoke test warning. Created internal/release/production_config_reference_static_test.go pinning the document content. Wired into scripts/verify.sh, .github/workflows/ci.yml, SECURITY.md, and internal/release/AGENTS.md."
     },
     {
       "id": "BE-0558",

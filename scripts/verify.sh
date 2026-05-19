@@ -292,6 +292,12 @@ if ! go test ./internal/release/... -run TestSecurityReviewChecklistArtifact; th
   required_failed=1
 fi
 
+# Required: production config reference artifact static tests
+step "go test ./internal/release/... -run TestProductionConfigReferenceArtifact"
+if ! go test ./internal/release/... -run TestProductionConfigReferenceArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

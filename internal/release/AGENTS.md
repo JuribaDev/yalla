@@ -221,6 +221,20 @@ secret redaction, and failure recovery. Any future security-review-doc change
 should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Production config reference artifact (BE-0557)
+
+`production_config_reference_static_test.go` pins the operator-facing
+production configuration reference at `docs/operations/production-config-reference.md`:
+the guide must document every environment variable consumed by the deployed
+backend binaries (`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`),
+the four profiles (`local`, `test`, `staging`, `production`), per-profile
+defaults, validation rules, failure recovery guidance, the redaction contract,
+exact verification commands, expected output shapes, health/readiness probes,
+structured JSON log expectations, and the opt-in external live-Dokploy smoke
+test warning. Any future production-config-reference change should update the
+guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
+the same edit.
+
 ## Release checklist artifact (BE-0551)
 
 `release_checklist_artifact_static_test.go` pins the production release

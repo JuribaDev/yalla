@@ -113,6 +113,7 @@ defined in `.github/workflows/ci.yml`:
 | Fake Dokploy usage artifact | `go test ./internal/release/... -run TestFakeDokployUsageArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | OpenAPI update procedure artifact | `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Security review checklist artifact | `go test ./internal/release/... -run TestSecurityReviewChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Production config reference artifact | `go test ./internal/release/... -run TestProductionConfigReferenceArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -817,6 +818,25 @@ TestLiveDokploySmoke ./...` smoke test that must never run against production.
 
 CI pins the security review checklist artifact with
 `go test ./internal/release/... -run TestSecurityReviewChecklistArtifact`.
+
+## Production Config Reference Artifact
+
+The production configuration reference lives at
+`docs/operations/production-config-reference.md`. It documents every environment
+variable consumed by the deployed backend binaries
+(`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`), the four
+profiles (`local`, `test`, `staging`, `production`), per-profile defaults,
+validation rules, failure recovery guidance, and the redaction contract.
+
+The document references `deploy/config/control-plane.env.example` as the
+canonical starting point and `/etc/yalla/control-plane.env` as the operator-managed
+runtime copy. It uses only `<redacted:...>` placeholders for secret-shaped
+values and documents the exact verification commands, expected output shapes,
+health/readiness probes, structured JSON log expectations, and the opt-in
+external live-Dokploy smoke test warning.
+
+CI pins the production config reference with
+`go test ./internal/release/... -run TestProductionConfigReferenceArtifact`.
 
 ## Rollback Checklist Artifact
 
