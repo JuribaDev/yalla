@@ -39,6 +39,9 @@ const (
 	QuotaResourceMembers               QuotaResource = "members"
 	QuotaResourceConcurrentDeployments QuotaResource = "concurrent_deployments"
 	QuotaResourceMonthlyDeployments    QuotaResource = "monthly_deployments"
+	QuotaResourceDeployments           QuotaResource = "deployments"
+	QuotaResourceFailedDeployments     QuotaResource = "failed_deployments"
+	QuotaResourceBuildMinutes          QuotaResource = "build_minutes"
 )
 
 // quotaResources is the membership set behind QuotaResource.Valid.
@@ -60,6 +63,9 @@ var quotaResources = map[QuotaResource]struct{}{
 	QuotaResourceMembers:               {},
 	QuotaResourceConcurrentDeployments: {},
 	QuotaResourceMonthlyDeployments:    {},
+	QuotaResourceDeployments:           {},
+	QuotaResourceFailedDeployments:     {},
+	QuotaResourceBuildMinutes:          {},
 }
 
 // Valid reports whether r is one of the closed set of quota dimensions.

@@ -208,6 +208,12 @@ do not mix customer API handlers into CLI packages.
   deterministic Dokploy/Traefik names containing the service id, require a
   matching service-level `dokploy_refs` row, and quarantine missing-ref,
   deleted-service, and unmanaged samples instead of billing them.
+- Deployment usage metering should be emitted from Yalla timelines, never from
+  Dokploy current state. Count deployment outcomes from terminal
+  `deployment_events`; derive `build_minutes` from immutable `job_attempts`
+  durations, falling back to terminal provisioning-job timestamps only when no
+  attempt rows exist. Use append-only `usage_events` with stable idempotency
+  keys for replay.
 - Idempotency for mutating endpoints is `httpapi.RequireIdempotency(store, ttl)`
   — middleware installed **inside** `RequireAuth` (it reads
   `policy.PrincipalFromContext` to scope the `Idempotency-Key` to a principal

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Build/deployment metering is a bridge from Yalla source-of-truth timelines into append-only `usage_events`: deployment counts come from terminal `deployment_events` (never Dokploy current state), successful/rolled-back deployments use `deployments`, failed deployments use `failed_deployments`, cancelled deployments do not emit deployment-count usage, and `build_minutes` sums completed `job_attempts` durations with a terminal `provisioning_jobs.started_at/finished_at` fallback. Idempotency keys are per deployment outcome (`deployment:<id>:<status>`) and per job duration (`build_minutes:<job_id>`).
 - Traefik metric attribution is a separate layer after source collection: extract explicit Yalla service labels before deterministic Dokploy/Traefik names containing `svc_<id>`/`svc-<id>`, resolve only services that still have a service-level `dokploy_refs` mapping, attach full org/project/environment/service scope plus attribution source/confidence metadata, and quarantine missing-ref, deleted-service, and unmanaged samples so they never become billing-grade `usage_events` automatically.
 - Traefik metering source collection lives under `internal/controlplane/metering` and should stay source-only: query bounded Prometheus windows, normalize counters into deterministic unattributed samples, attach `query_version` plus raw-sample checksum metadata, and leave tenant attribution/quarantine plus `usage_events` writes to later attribution/aggregation layers.
 - Billing-period usage counters are replayed from append-only `usage_events` through `store.UsageCounterRepository.AggregateUsageEvents`: open periods upsert deterministic `(organization_id, key, unit, period_start, period_end, source)` counters, while previously closed counters keep their frozen quantity and record net-new late-arriving usage in `usage_counter_adjustments` so replays are idempotent and invoice adjustments stay auditable.
@@ -36918,4 +36919,52 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Cron schedule drift should be treated like build/env value drift: the value is repairer-only, while action type, reason, refs, review events, and unmanaged records stay value-free.
   - Role/type drift must short-circuit before cron schedule repair so a cron schedule is never pushed into an upstream service whose runtime subtype no longer matches Yalla source of truth.
+---
+## 2026-05-19 06:38 +03 - BE-0576
+- What was implemented
+  - Added `metering.DeploymentUsageEmitter` to emit append-only usage events from Yalla deployment and worker timelines.
+  - Deployment counts now come from terminal `deployment_events`: succeeded/rolled_back emit `deployments`, failed emits `failed_deployments`, and cancelled emits no deployment-count usage.
+  - Build minutes now come from worker timestamps: sum completed `job_attempts` durations, with terminal `provisioning_jobs.started_at/finished_at` fallback when no attempt rows exist.
+  - Added quota/usage resource keys and migration `0053_build_deployment_metering_resources` for `deployments`, `failed_deployments`, and `build_minutes`.
+  - Added integration coverage for success, failure, retry duration, cancellation duration, idempotent replay, validation, not-found behavior, missing event/job behavior, and cross-tenant isolation.
+  - Marked BE-0576 passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/metering/deployment_usage.go`
+  - `internal/controlplane/metering/deployment_usage_test.go`
+  - `internal/controlplane/store/quota.go`
+  - `internal/controlplane/store/quota_internal_test.go`
+  - `internal/controlplane/store/migrate/migrations/0053_build_deployment_metering_resources.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0053_build_deployment_metering_resources.down.sql`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/metering -run TestDeploymentUsageEmitter -count=1` (first red run failed on missing emitter/resource keys; green after implementation)
+  - `go test ./...` (first full run exposed the quota resource lockstep guard; green after updating it)
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - Direct PATH probes did not find `staticcheck` or `govulncheck`, but the pre-commit hook later ran them through `scripts/verify.sh --strict --release`.
+  - Pre-commit hook: `scripts/verify.sh --strict --release`
+- Results
+  - Required formatting, module cleanup, unit/integration tests, race detector, vet, backend-focused suites, migration selector, policy matrix selector, quota concurrency selector, fake-Dokploy selector, and lint all passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - The pre-commit strict verification passed, including `govulncheck ./...`, `staticcheck ./...`, GoReleaser config validation, snapshot release build, and opt-in skip of external live-Dokploy smoke.
+  - Postgres-backed metering tests use `testutil.RequireMigratedDB`; they require no live Dokploy server.
+- Remaining risks or follow-ups
+  - The emitter is a store-backed bridge; a later worker/scheduler story still needs to decide when to call it during deployment job settlement or replay.
+  - Future metric-definition/backoffice stories should expose these new usage resources through their configuration surfaces.
+- **Learnings for future iterations:**
+  - Deployment metering must read terminal `deployment_events` before emitting deployment-count usage so billing never infers customer deploys from mutable Dokploy current state.
+  - Retry build time should sum immutable `job_attempts`; cancelled attempts still contribute elapsed worker time, but cancelled deployments should not consume the successful/failed deployment-count entitlement key.
+  - Adding a quota/usage resource requires both the Go `QuotaResource` closed set and a new `ALTER DOMAIN quota_resource` migration; `TestQuotaResourceValid` pins the Go-side lockstep count.
 ---
