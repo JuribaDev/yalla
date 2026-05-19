@@ -115,6 +115,7 @@ defined in `.github/workflows/ci.yml`:
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -472,6 +473,30 @@ that must never target production.
 
 CI pins the on-call dashboard artifact with
 `go test ./internal/release/... -run TestOnCallDashboardArtifact`.
+
+## SLO Document Artifact
+
+The production SLO document lives at `docs/operations/slo.md`. It ties
+customer-facing objectives to the versioned backend binaries
+(`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`), the Postgres
+source-of-truth boundary, durable provisioning jobs, private Dokploy API
+dependency, and the stable response-envelope contract. The SLO evidence surface
+is intentionally narrow: `/metrics`, `/healthz`, `/readyz`, `/version`, and
+the backup freshness probe.
+
+The artifact requires runtime secrets to stay in operator-managed
+configuration such as `/etc/yalla/control-plane.env`, keeps SLO labels
+low-cardinality, and treats `request_id`, `correlation_id`, organization,
+principal, resource, service, and job IDs as incident join hints rather than
+labels. It documents `data.slo_burn_rates`, API availability, API latency,
+provisioning job completion, backup freshness, audit durability, error budget
+policy, structured JSON logs, readiness degradation metrics, policy decision
+metrics, audit event metrics, dead-letter alerts, secret-redaction canaries,
+support break-glass with `support.manage`, and opt-in external live-Dokploy
+smoke tests that must never target production.
+
+CI pins the SLO document artifact with
+`go test ./internal/release/... -run TestSLODocumentArtifact`.
 
 ## TLS Termination and Proxy Header Trust
 

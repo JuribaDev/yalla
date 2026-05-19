@@ -162,6 +162,9 @@ jobs:
       - name: On-call dashboard artifact static tests
         run: go test ./internal/release/... -run TestOnCallDashboardArtifact
 
+      - name: SLO document artifact static tests
+        run: go test ./internal/release/... -run TestSLODocumentArtifact
+
       - name: Race detector
         run: go test -race ./...
 

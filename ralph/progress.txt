@@ -1,4 +1,13 @@
 ## Codebase Patterns
+- SLO document artifacts follow the same static-release-gate pattern as other
+  operations artifacts: keep `docs/operations/slo.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and `internal/release/slo_document_artifact_static_test.go`
+  in lockstep; reference both `/usr/local/bin/yalla-api` and
+  `/usr/local/bin/yalla-worker`, document the Yalla API -> Postgres source of
+  truth -> worker -> private Dokploy API boundary, pin `/healthz`, `/readyz`,
+  `/version`, `/metrics`, stable JSON envelopes, low-cardinality
+  `data.slo_burn_rates`, structured log redaction, break-glass support access,
+  and the opt-in external Dokploy smoke warning.
 - On-call dashboard operations artifacts follow the same static-release-gate
   pattern as runbook artifacts: keep `docs/operations/on-call-dashboard.md`,
   SECURITY.md, CI, `scripts/verify.sh`, and
@@ -39276,4 +39285,16 @@ change that widened Reason to caller-supplied data.
   - The on-call dashboard artifact is a documentation/static-release-gate story like BE-0419 and BE-0420, but it should explicitly bind to both `GET /dashboards/control-plane.json` and `GET /metrics`.
   - Dashboard credentials should be documented as least-privilege and read-only; tenant, principal, resource, service, and job IDs remain incident join hints, not labels.
   - Exact static-test substrings should avoid Markdown wrapping surprises when they pin operator-facing contract sentences.
+---
+
+## 2026-05-19 17:31:13 +03 - BE-0422
+- What was implemented: added the production SLO document artifact for the Yalla Control Plane API and worker, including objective targets, error-budget policy, health/readiness/log expectations, least-privilege access, redaction requirements, and verification commands; added a static release test and wired it into CI, `scripts/verify.sh`, and SECURITY.md; marked BE-0422 passing in `ralph/prd.json`.
+- Files changed: `docs/operations/slo.md`, `internal/release/slo_document_artifact_static_test.go`, `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, `internal/release/AGENTS.md`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/release/... -run TestSLODocumentArtifact` RED before implementation; `gofmt -w .`; `goimports -w .` attempted; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run ./...`; focused `go test ./internal/release/... -run TestSLODocumentArtifact`; pre-commit `scripts/verify.sh --strict --release`.
+- Results: all required checks passed; `golangci-lint run ./...` passed with 0 issues; pre-commit strict release gate passed, including `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`. `goimports` is not installed locally and was reported explicitly.
+- Remaining risks or follow-ups: none for this story; external live-Dokploy smoke remains opt-in and was not run because this documentation/static-gate story does not require a live private Dokploy target.
+- **Learnings for future iterations:**
+  - Operations artifact stories continue to use a focused static release test plus docs/security/CI/verify wiring, rather than relying on human review of markdown only.
+  - Static tests intentionally pin exact, short substrings; avoid line-wrapping load-bearing phrases such as `Customer / Agent / CI` or add a stable sentence containing the exact phrase.
+  - SLO evidence should stay low-cardinality and use IDs only as incident join hints, matching the existing dashboard and telemetry patterns.
 ---

@@ -240,6 +240,21 @@ verification including the opt-in live-Dokploy smoke test warning. Any future
 dashboard artifact change should update the artifact, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## SLO document artifact (BE-0422)
+
+`slo_document_artifact_static_test.go` pins the production SLO document at
+`docs/operations/slo.md`: the artifact must reference both
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, document the
+Customer / Agent / CI -> Postgres source of truth -> worker -> private Dokploy
+API boundary, keep runtime secrets in operator-managed configuration, define
+low-cardinality SLO objectives and error-budget policy, describe `/healthz`,
+`/readyz`, `/version`, `/metrics`, stable JSON envelopes, structured log
+redaction, readiness/policy/audit/dead-letter/secret-redaction evidence, support
+break-glass access, and explicit verification including the opt-in live-Dokploy
+smoke test warning. Any future SLO document change should update the artifact,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing
