@@ -36528,3 +36528,13 @@ change that widened Reason to caller-supplied data.
   - Use the existing `ActionReviewServiceTypeChange` and `ReasonServiceTypeChanged` contract for database engine mismatch rather than adding a new public drift reason.
   - Seed sensitive database URLs in tests and assert classification fields stay value-free; only repair-only fields should ever carry desired values.
 ---
+## 2026-05-19 04:51:27 +03 - BE-0312
+- What was implemented: Added mysql-specific reconciliation verification covering dangerous engine drift review, deleted upstream database review, safe missing-domain repair, unmanaged extra database quarantine, and redaction-safe classification fields. The production reconciliation engine already handled database subtype drift generically, so this story completed by pinning the mysql contract with tests.
+- Files changed: `internal/controlplane/reconcile/database_mysql_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/reconcile -run 'TestMysqlReconcile'`; `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestFakeDokploy ./...`; `go test -run TestMigrations ./...`.
+- Results: All commands passed. `goimports` is not installed in this environment, so no `goimports -w .` run was possible.
+- Remaining risks or follow-ups: None for BE-0312. Mysql reconciliation currently uses the shared database subtype drift path; future database-engine stories should keep pinning each engine with a focused test file.
+- **Learnings for future iterations:**
+  - The reconcile engine already classifies database engine changes as `ActionReviewServiceTypeChange` / `ReasonServiceTypeChanged` and returns before safe env/domain repairs.
+  - Per-engine reconciliation verification can mirror the postgres database test shape while setting the desired and actual `ServiceDatabase.Engine` values to the target subtype.
+---
