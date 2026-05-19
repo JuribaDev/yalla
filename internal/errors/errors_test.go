@@ -18,6 +18,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeInvalidInput, 2},
 		{CodeConfig, 3},
 		{CodeOrphan, 3},
+		{CodeMigrationRequired, 3},
 		{CodeAuthenticationRequired, 4},
 		{CodeAuthInvalid, 4},
 		{CodeAuthExpired, 4},
@@ -70,6 +71,22 @@ func TestDBUnavailableDescriptionNamesPostgresOutage(t *testing.T) {
 	const want = "Yalla Postgres datastore is temporarily unavailable"
 	if got != want {
 		t.Fatalf("E_DB_UNAVAILABLE description = %q, want %q", got, want)
+	}
+}
+
+func TestMigrationRequiredDescriptionNamesSchemaMismatch(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeMigrationRequired) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "database migrations must be applied before the service can continue"
+	if got != want {
+		t.Fatalf("E_MIGRATION_REQUIRED description = %q, want %q", got, want)
 	}
 }
 

@@ -11036,8 +11036,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_MIGRATION_REQUIRED."
+      "passes": true,
+      "notes": "Implemented stable E_MIGRATION_REQUIRED contract: shared error code and manifest entry, exit code 3, HTTP 503 mapping, non-retryable generic backend taxonomy, typed apierr.MigrationRequired constructor with fixed operator-action hint, yalla.error.v1 envelope rendering with request_id and docs link, and redaction coverage proving datastore migration causes stay server-side."
     },
     {
       "id": "BE-0534",

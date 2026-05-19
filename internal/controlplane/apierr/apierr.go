@@ -19,6 +19,7 @@
 //     DokployBadResponse,
 //     StoreUnavailable, QueueUnavailable, NetworkFailure, Timeout — each
 //     distinguishes which dependency failed via DependencyOf.
+//   - Operator action:      MigrationRequired
 //   - Internal:             Internal
 //
 // Two cross-cutting guarantees back the taxonomy:
@@ -162,6 +163,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDokployBadResponse:     {false, MessageGeneric, "the upstream Dokploy provisioning backend returned an incompatible response"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeDBUnavailable:          {true, MessageGeneric, "the Yalla Postgres datastore is temporarily unavailable"},
+	yerr.CodeMigrationRequired:      {false, MessageGeneric, "database migrations must be applied before the service can continue"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned non-Postgres dependency is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
 	yerr.CodeTimeout:                {true, MessageGeneric, "a dependency call exceeded its timeout"},
@@ -639,6 +641,17 @@ func StoreUnavailable(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeDBUnavailable, "the Yalla datastore is temporarily unavailable").
 		WithHint("this is a transient failure; retry after a short backoff").
 		Wrap(&dependencyError{dep: DependencyStore, cause: cause})
+}
+
+// MigrationRequired builds an E_MIGRATION_REQUIRED error (HTTP 503) for a
+// service path blocked because the database schema is behind the contract this
+// build requires. The cause is preserved via Unwrap for server-side diagnostics
+// only; the public message and hint remain fixed and must not expose DSNs,
+// migration filenames, SQL text, or schema internals.
+func MigrationRequired(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeMigrationRequired, "database migrations must be applied before the service can continue").
+		WithHint("run the required database migrations before retrying").
+		Wrap(cause)
 }
 
 // QueueUnavailable builds an E_UNAVAILABLE error (HTTP 503) for a failed call

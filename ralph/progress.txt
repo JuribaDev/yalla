@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- `apierr.MigrationRequired` is the migration-gating public contract: it returns `E_MIGRATION_REQUIRED` (HTTP 503, non-retryable, generic message, fixed operator-action hint, exit code 3) and wraps schema/migrator causes only for server-side diagnostics. Use it when Postgres is reachable but the applied schema is behind the application contract; keep raw DSNs, SQL, migration filenames, and schema internals off the wire.
 - Postgres datastore outages now have their own public error contract: `apierr.StoreUnavailable` returns `E_DB_UNAVAILABLE` (HTTP 503, retryable, generic-message, dependency-tagged as `postgres`) and must preserve raw pgx/driver causes only for server-side logging. Durable queue outages continue to use `apierr.QueueUnavailable` / `E_UNAVAILABLE`, so new store-backed handler contract tests should assert `E_DB_UNAVAILABLE` for wrapped datastore failures.
 - Successful Dokploy HTTP responses with incompatible/malformed JSON from the typed client map to `apierr.DokployBadResponse()` / `E_DOKPLOY_BAD_RESPONSE` (HTTP 502), not `E_DOKPLOY_UNAVAILABLE`, because the upstream is reachable but violating Yalla's typed response contract. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted decode/upstream detail for server-side diagnostics.
 - Upstream Dokploy 429 rate limits from the typed client map to `apierr.DokployRateLimited()` / `E_DOKPLOY_RATE_LIMITED` (HTTP 502), not customer-facing `E_RATE_LIMITED`, because the throttle is on Yalla's private provisioning dependency rather than the caller's public API bucket. It is retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted upstream detail for server-side diagnostics.
@@ -36100,4 +36101,42 @@ change that widened Reason to caller-supplied data.
   - None for this story.
 - **Learnings for future iterations:**
   - The pre-commit hook may expose optional verification tools that are not visible through the interactive shell PATH; record the hook's stricter result when it runs.
+---
+## 2026-05-19 03:21 +03 - BE-0533
+- What was implemented
+  - Added the stable `E_MIGRATION_REQUIRED` code to the shared error manifest with exit code 3 and a one-line description.
+  - Added backend taxonomy support through `apierr.MigrationRequired`, mapping it to HTTP 503 with non-retryable, generic-message semantics and a fixed operator-action hint.
+  - Added `apienvelope.StatusForCode` mapping and tests proving the yalla.error.v1 envelope carries request_id, docs link, and no datastore migration cause details.
+  - Documented the reusable migration-gating contract in `internal/controlplane/AGENTS.md` and the Codebase Patterns section.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `golangci-lint run ./...`
+  - Pre-commit additionally ran `scripts/verify.sh --strict --release`, including the repository focused suites, `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results
+  - All listed verification commands passed.
+  - `goimports` was not installed, so import formatting beyond `gofmt` was not run.
+  - Interactive-shell `staticcheck` and `govulncheck` were not on PATH, but the pre-commit hook found and ran both successfully; `govulncheck` found no vulnerabilities.
+  - External live Dokploy smoke remained opt-in and was not run because `YALLA_EXTERNAL_DOKPLOY=1` was not configured.
+- Remaining risks or follow-ups
+  - No runtime migrator path was changed in this error-contract story; future startup/readiness code that detects schema drift should call `apierr.MigrationRequired` instead of reusing datastore outage errors.
+- **Learnings for future iterations:**
+  - `E_MIGRATION_REQUIRED` is for reachable Postgres with schema drift/operator action required, not a transient datastore outage. Keep it separate from `E_DB_UNAVAILABLE`.
+  - The envelope redactor is a defence-in-depth backstop, not permission to attach raw DSNs to public hints. Constructors for generic-message codes should own fixed public hints and wrap raw details as causes only.
 ---

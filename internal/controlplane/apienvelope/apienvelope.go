@@ -99,7 +99,8 @@ var envelopeRedactor = output.NewRedactor()
 //	E_DOKPLOY_CONFLICT, E_DOKPLOY_RATE_LIMITED, E_DOKPLOY_UNAVAILABLE,
 //	E_DOKPLOY_BAD_RESPONSE, E_UPSTREAM_BUG, E_NETWORK -> 502 Bad Gateway
 //	E_TIMEOUT                                 -> 504 Gateway Timeout
-//	E_DB_UNAVAILABLE, E_UNAVAILABLE           -> 503 Service Unavailable
+//	E_DB_UNAVAILABLE, E_MIGRATION_REQUIRED,
+//	E_UNAVAILABLE                             -> 503 Service Unavailable
 //	E_CANCELED                                -> 499 Client Closed Request
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
@@ -122,7 +123,7 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusBadGateway
 	case yerr.CodeTimeout:
 		return http.StatusGatewayTimeout
-	case yerr.CodeDBUnavailable, yerr.CodeUnavailable:
+	case yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable:
 		return http.StatusServiceUnavailable
 	case yerr.CodeCanceled:
 		// 499 is the de facto "client closed request" status. It has no

@@ -202,6 +202,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeNetwork, http.StatusBadGateway},
 		{yerr.CodeTimeout, http.StatusGatewayTimeout},
 		{yerr.CodeDBUnavailable, http.StatusServiceUnavailable},
+		{yerr.CodeMigrationRequired, http.StatusServiceUnavailable},
 		{yerr.CodeUnavailable, http.StatusServiceUnavailable},
 		{yerr.CodeCanceled, 499},
 		{yerr.CodeInternal, http.StatusInternalServerError},

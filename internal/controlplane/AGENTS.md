@@ -36,6 +36,11 @@ do not mix customer API handlers into CLI packages.
   failures are recoverable with `apierr.DependencyOf`. Postgres store failures
   use `E_DB_UNAVAILABLE`; durable queue failures continue to use
   `E_UNAVAILABLE`.
+  Use `apierr.MigrationRequired` for schema-gating failures where Postgres is
+  reachable but the applied migration version is behind this build's required
+  contract. It renders `E_MIGRATION_REQUIRED` as HTTP 503 with a generic public
+  message and a fixed operator-action hint; wrap raw migrator/schema/DSN detail
+  only as the server-side cause.
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
   A non-self authorization attempt with an empty `policy.Resource.Scope.OrganizationID`

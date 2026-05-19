@@ -59,7 +59,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
-		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
 	for _, code := range required {
@@ -110,6 +110,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
 		{"dokploy bad response", DokployBadResponse(stderrors.New("x")), yerr.CodeDokployBadResponse, 502},
 		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeDBUnavailable, 503},
+		{"migration required", MigrationRequired(stderrors.New("x")), yerr.CodeMigrationRequired, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
 		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
@@ -132,6 +133,54 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 				t.Errorf("%s produced an empty message", tc.name)
 			}
 		})
+	}
+}
+
+func TestMigrationRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "postgres://user:pass@127.0.0.1:5432/yalla?sslmode=disable"
+	cause := stderrors.New("schema version behind on " + leaked)
+	err := MigrationRequired(cause)
+	if err.Code != yerr.CodeMigrationRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeMigrationRequired)
+	}
+	if err.Message != "database migrations must be applied before the service can continue" {
+		t.Fatalf("message = %q, want fixed generic migration-required message", err.Message)
+	}
+	if err.Hint != "run the required database migrations before retrying" {
+		t.Fatalf("hint = %q, want fixed operator-action hint", err.Hint)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 503 {
+			t.Errorf("HTTPStatus = %d, want 503", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_MIGRATION_REQUIRED must not be retryable without operator action")
+		}
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("MigrationRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-migration-required", err)
+	body := rec.Body.String()
+	if rec.Code != 503 {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-migration-required"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeMigrationRequired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "postgres://") || strings.Contains(body, "pass@") || strings.Contains(body, "127.0.0.1") {
+		t.Errorf("migration-required envelope leaked datastore details: %s", body)
 	}
 }
 
