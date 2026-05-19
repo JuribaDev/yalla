@@ -156,6 +156,9 @@ jobs:
       - name: Deployment runbook artifact static tests
         run: go test ./internal/release/... -run TestDeploymentRunbookArtifact
 
+      - name: Local development setup artifact static tests
+        run: go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact
+
       - name: Incident response runbook artifact static tests
         run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
 

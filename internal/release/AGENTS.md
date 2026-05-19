@@ -227,6 +227,19 @@ verification. Any future deployment-runbook change should update the runbook,
 SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
 same edit.
 
+## Local development setup artifact (BE-0541)
+
+`local_development_setup_static_test.go` pins the backend local development
+guide at `docs/development/local-development.md`: the guide must document exact
+Postgres-only and full `docker compose` commands, required `YALLA_*`
+environment variables as `<redacted:...>` placeholders, expected health and
+test outputs, failure recovery, stable `yalla.output.v1` / `yalla.error.v1`
+envelopes with `request_id`, isolated Postgres migration-backed integration
+tests, fake-Dokploy-by-default behavior, structured log redaction, and the
+opt-in external Dokploy smoke warning. Any future local-development guide
+change should update the guide, SECURITY.md verification-gates row, CI step,
+and `scripts/verify.sh` in the same edit.
+
 ## Incident response runbook artifact (BE-0420)
 
 `incident_response_runbook_static_test.go` pins the production incident

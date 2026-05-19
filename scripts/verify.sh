@@ -292,6 +292,12 @@ if ! go test ./internal/release/... -run TestDeploymentRunbookArtifact; then
   required_failed=1
 fi
 
+# Required: local development setup artifact static tests
+step "go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact"
+if ! go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact; then
+  required_failed=1
+fi
+
 # Required: incident response runbook artifact static tests
 step "go test ./internal/release/... -run TestIncidentResponseRunbookArtifact"
 if ! go test ./internal/release/... -run TestIncidentResponseRunbookArtifact; then

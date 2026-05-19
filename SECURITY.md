@@ -113,6 +113,7 @@ defined in `.github/workflows/ci.yml`:
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -424,6 +425,27 @@ durable job state, metrics, dead-letter alerts, and structured JSON logs.
 
 CI pins the deployment runbook with
 `go test ./internal/release/... -run TestDeploymentRunbookArtifact`.
+
+## Local Development Setup Artifact
+
+The backend local development setup lives at
+`docs/development/local-development.md`. It documents the local Postgres
+dependency, isolated migration-backed integration tests, the optional full
+Docker Compose control-plane stack, expected health/readiness outputs, and
+failure recovery commands. The document preserves the production boundary:
+Customer / Agent / CI traffic reaches the Yalla API, Postgres remains the
+source of truth, the worker performs provisioning, and Dokploy stays private.
+
+The checked-in setup guide intentionally uses only `<redacted:...>`
+placeholders for secret-shaped values. It documents that customers never
+receive Dokploy API tokens and that database URLs, rendered environment
+values, API keys, cookies, request bodies, response bodies, and Dokploy
+credentials stay out of logs, errors, audit metadata, tests, and docs.
+External Dokploy smoke tests remain opt-in and must never run against
+production.
+
+CI pins the local development setup with
+`go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact`.
 
 ## Incident Response Runbook Artifact
 
