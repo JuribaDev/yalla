@@ -162,6 +162,9 @@ jobs:
       - name: Local development setup artifact static tests
         run: go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact
 
+      - name: API handler conventions artifact static tests
+        run: go test ./internal/release/... -run TestAPIHandlerConventionsArtifact
+
       - name: Incident response runbook artifact static tests
         run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
 

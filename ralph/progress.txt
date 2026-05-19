@@ -1,4 +1,14 @@
 ## Codebase Patterns
+- API handler convention docs follow the static-release-gate pattern used by
+  development and operations artifacts: keep
+  `docs/development/api-handler-conventions.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, and
+  `internal/release/api_handler_conventions_static_test.go` in lockstep;
+  document route registration through `httpapi/routes.go` `newRouteTable`,
+  OpenAPI metadata, thin handlers, bounded `validate.DecodeJSON`, typed
+  `apierr` errors, `apienvelope` rendering, request IDs, scoped policy,
+  tenant isolation, idempotency, quota, audit, fake-Dokploy-by-default tests,
+  redacted environment placeholders, expected envelope output, and recovery.
 - Database migration authoring docs follow the static-release-gate pattern:
   keep `docs/development/database-migration-authoring.md`, SECURITY.md, CI,
   `scripts/verify.sh`, and
@@ -39406,4 +39416,45 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Developer documentation under `docs/development` should be treated like operations artifacts when it governs production-sensitive behavior: add a focused `internal/release` static test and wire it through CI, `scripts/verify.sh`, and SECURITY.md.
   - Static doc tests use literal substring matching, so required contractual phrases must stay contiguous even when Markdown prose is wrapped for readability.
+---
+
+## 2026-05-19 18:00 +03 - BE-0543
+- What was implemented
+  - Added `docs/development/api-handler-conventions.md` documenting the production API handler workflow, route/OpenAPI registration, thin-handler boundaries, stable envelopes, typed errors, request IDs, auth/policy/quota/idempotency/audit ordering, tenant isolation, fake-Dokploy-by-default tests, redacted environment variables, expected outputs, and failure recovery.
+  - Added `internal/release/api_handler_conventions_static_test.go` to pin the document, secret-safety checks, and release-gate wiring.
+  - Wired the artifact into `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Marked BE-0543 passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/api-handler-conventions.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/api_handler_conventions_static_test.go`
+  - `scripts/verify.sh`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - Red phase: `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact` failed before the guide and gate wiring existed.
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run 'TestEveryRegisteredRouteIsDocumented|TestPolicyMatrix|TestQuotaConcurrency|TestFakeDokploy' ./...`
+  - `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact`
+  - `golangci-lint run ./...`
+  - Strict pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required and focused checks passed.
+  - `golangci-lint` passed with 0 issues.
+  - Strict pre-commit verification passed `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+  - `goimports` was not installed.
+- Remaining risks or follow-ups
+  - None for BE-0543. Future handler docs changes must keep the guide, release static test, SECURITY.md, CI, and `scripts/verify.sh` in lockstep.
+- **Learnings for future iterations:**
+  - Static documentation stories should start with an `internal/release/*_static_test.go` red phase that checks the document body, redaction constraints, and gate wiring.
+  - Avoid making secret-safety static tests forbid redacted environment variable placeholders that the document is required to show.
+  - Handler documentation should point developers to the existing `httpapi/routes.go` route-table and envelope renderer contracts instead of duplicating implementation details that drift.
 ---

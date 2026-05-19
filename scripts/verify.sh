@@ -304,6 +304,12 @@ if ! go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact; then
   required_failed=1
 fi
 
+# Required: API handler conventions artifact static tests
+step "go test ./internal/release/... -run TestAPIHandlerConventionsArtifact"
+if ! go test ./internal/release/... -run TestAPIHandlerConventionsArtifact; then
+  required_failed=1
+fi
+
 # Required: incident response runbook artifact static tests
 step "go test ./internal/release/... -run TestIncidentResponseRunbookArtifact"
 if ! go test ./internal/release/... -run TestIncidentResponseRunbookArtifact; then

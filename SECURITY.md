@@ -115,6 +115,7 @@ defined in `.github/workflows/ci.yml`:
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| API handler conventions artifact | `go test ./internal/release/... -run TestAPIHandlerConventionsArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Incident response runbook artifact | `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | On-call dashboard artifact | `go test ./internal/release/... -run TestOnCallDashboardArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | SLO document artifact | `go test ./internal/release/... -run TestSLODocumentArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -469,6 +470,25 @@ production.
 
 CI pins the local development setup with
 `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact`.
+
+## API Handler Conventions Artifact
+
+The backend API handler convention guide lives at
+`docs/development/api-handler-conventions.md`. It documents how new and changed
+handlers are registered through `internal/controlplane/httpapi/routes.go`,
+documented with OpenAPI metadata, decoded through bounded validators,
+authorized with scoped policy actions, and rendered only through stable
+`yalla.output.v1` / `yalla.error.v1` envelopes with request IDs.
+
+The guide preserves the production boundary: the Yalla API owns customer-facing
+intent, Postgres remains the source of truth, workers call the private Dokploy
+API through typed clients, and handlers never expose raw Dokploy operations or
+live credentials. It also pins required local environment variables with
+redacted placeholders, expected verification output, tenant-isolation testing,
+idempotency, quota, audit, and failure recovery guidance.
+
+CI pins the API handler conventions with
+`go test ./internal/release/... -run TestAPIHandlerConventionsArtifact`.
 
 ## Incident Response Runbook Artifact
 

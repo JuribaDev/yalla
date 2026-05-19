@@ -11226,8 +11226,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: API handler conventions."
+      "passes": true,
+      "notes": "Implemented docs/development/api-handler-conventions.md with exact handler workflow, required redacted env vars, expected envelope/test output, failure recovery, safety rules, and contract-test guidance. Added internal/release static artifact coverage plus CI, scripts/verify.sh, SECURITY.md, and AGENTS.md release-gate wiring. Fresh gofmt, go mod tidy, go test ./..., go test -race ./..., go vet ./..., focused controlplane/release suites, golangci-lint, and strict pre-commit scripts/verify.sh --strict --release passed, including govulncheck, staticcheck, goreleaser check, and snapshot release. goimports was not installed in the direct shell."
     },
     {
       "id": "BE-0544",

@@ -254,6 +254,19 @@ opt-in external Dokploy smoke warning. Any future local-development guide
 change should update the guide, SECURITY.md verification-gates row, CI step,
 and `scripts/verify.sh` in the same edit.
 
+## API handler conventions artifact (BE-0543)
+
+`api_handler_conventions_static_test.go` pins the backend API handler guide at
+`docs/development/api-handler-conventions.md`: the guide must document route
+registration through `internal/controlplane/httpapi/routes.go` / `newRouteTable`,
+OpenAPI metadata, thin handler shape, bounded `validate.DecodeJSON` request
+decoding, `apierr` errors, `apienvelope` rendering, request IDs, policy action
+scope, tenant isolation, idempotency, quota, audit, fake-Dokploy-by-default
+testing, exact verification commands, expected envelope output, and failure
+recovery. Any future API-handler guide change should update the guide,
+SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in the
+same edit.
+
 ## Incident response runbook artifact (BE-0420)
 
 `incident_response_runbook_static_test.go` pins the production incident
