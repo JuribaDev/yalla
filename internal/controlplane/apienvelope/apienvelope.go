@@ -103,6 +103,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_DB_UNAVAILABLE, E_MIGRATION_REQUIRED,
 //	E_UNAVAILABLE                             -> 503 Service Unavailable
 //	E_CANCELED                                -> 499 Client Closed Request
+//	E_SECRET_DECRYPTION                     -> 500 Internal Server Error
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
 	switch code {
@@ -130,6 +131,8 @@ func StatusForCode(code yerr.Code) int {
 		// 499 is the de facto "client closed request" status. It has no
 		// net/http constant, but it is the deterministic value agents expect.
 		return 499
+	case yerr.CodeSecretDecryption:
+		return http.StatusInternalServerError
 	default:
 		// CodeInternal, CodeUnknown, CodeConfig, CodeOrphan, CodeNoInput, and
 		// any future code we have not classified yet all collapse to 500 so a

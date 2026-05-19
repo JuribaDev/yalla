@@ -62,10 +62,12 @@ service) under the Dokploy-compatible precedence
    can fix every problem in one round trip. Field paths follow
    `<scope>.variables[<index>].key` and never echo the rejected value.
 6. **Server-side failures**: a sealed row whose `SecretProvider` does
-   not match the resolver's provider, an `Open` that fails with
-   `secrets.ErrUnknownKey` / wrapped `ErrInvalidCiphertext`, or a
-   resolver constructed with a nil/empty-id provider surfaces as
-   `apierr.Internal`. None of these paths echo plaintext or ciphertext.
+   not match the resolver's provider, or an `Open` that fails with
+   `secrets.ErrUnknownKey` / wrapped `ErrInvalidCiphertext`, surfaces as
+   `apierr.SecretDecryption` / `E_SECRET_DECRYPTION`. A resolver
+   constructed with a nil/empty-id provider still fails fast as a wiring
+   error. None of these paths echo plaintext, ciphertext, provider ids,
+   or key ids on the public wire.
 7. **Redaction**: `Resolved.LogValue`, `Rendered.LogValue`, and
    `ScopedVariable.LogValue` redact value and ciphertext at the slog
    boundary. `Explained` redacts every value to `output.Sentinel`.

@@ -11093,8 +11093,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_SECRET_DECRYPTION."
+      "passes": true,
+      "notes": "Stable error code: E_SECRET_DECRYPTION. Implemented as a generic-message HTTP 500 typed backend error via apierr.SecretDecryption, with yalla.error.v1 envelope/doc-link/redaction tests and variables resolver secret-open failures routed through the new constructor."
     },
     {
       "id": "BE-0537",

@@ -50,7 +50,7 @@ var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // For secret rows: Value is ignored and the plaintext is recovered
 // through Resolver.provider.Open(SecretCiphertext, SecretKeyID). A
 // secret row whose SecretProvider does not match the resolver's
-// provider id surfaces as apierr.Internal wrapping
+// provider id surfaces as apierr.SecretDecryption wrapping
 // secrets.ErrUnsupportedProvider rather than as a customer input error.
 type ScopedVariable struct {
 	// ResourceID is the source-of-truth row id (e.g.
@@ -268,7 +268,7 @@ func NewResolver(p secrets.Provider) (*Resolver, error) {
 // as apierr.FieldViolation values and returned as a single
 // apierr.InvalidInput. Server-side failures (unable to Open a sealed
 // row because the provider id mismatches, the key id is unknown, or
-// the ciphertext fails authentication) surface as apierr.Internal with
+// the ciphertext fails authentication) surface as apierr.SecretDecryption with
 // a wrapped cause for server-side logging — never as a customer-input
 // violation, and never echoing the plaintext or ciphertext.
 func (r *Resolver) Resolve(in ResolveInput, opts Options) (Resolved, error) {
@@ -326,7 +326,7 @@ func (r *Resolver) Resolve(in ResolveInput, opts Options) (Resolved, error) {
 
 			plaintext, openErr := r.materialise(raw)
 			if openErr != nil {
-				return Resolved{}, apierr.Internal(openErr)
+				return Resolved{}, apierr.SecretDecryption(openErr)
 			}
 
 			contrib := Contribution{

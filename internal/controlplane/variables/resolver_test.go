@@ -344,7 +344,7 @@ func (brokenOpenProvider) Seal(plaintext []byte) ([]byte, string, error) {
 }
 func (brokenOpenProvider) Open([]byte, string) ([]byte, error) { return nil, secrets.ErrUnknownKey }
 
-func TestResolveSecretOpenFailureSurfacesInternal(t *testing.T) {
+func TestResolveSecretOpenFailureSurfacesSecretDecryption(t *testing.T) {
 	t.Parallel()
 	p := brokenOpenProvider{}
 	r, err := variables.NewResolver(p)
@@ -356,22 +356,22 @@ func TestResolveSecretOpenFailureSurfacesInternal(t *testing.T) {
 	}
 	_, err = r.Resolve(in, variables.Options{})
 	if err == nil {
-		t.Fatalf("expected Internal, got nil")
+		t.Fatalf("expected SecretDecryption, got nil")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInternal {
-		t.Fatalf("expected CodeInternal, got %T code=%v err=%v", err, ye.Code, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeSecretDecryption {
+		t.Fatalf("expected CodeSecretDecryption, got %T code=%v err=%v", err, ye.Code, err)
 	}
 	if !errors.Is(err, secrets.ErrUnknownKey) {
 		t.Fatalf("wrapped cause should preserve ErrUnknownKey: %v", err)
 	}
-	// The Internal envelope MUST NOT echo the plaintext.
+	// The SecretDecryption envelope MUST NOT echo the plaintext.
 	if strings.Contains(err.Error(), "very-secret-do-not-leak") {
-		t.Fatalf("Internal error leaked plaintext: %q", err.Error())
+		t.Fatalf("SecretDecryption error leaked plaintext: %q", err.Error())
 	}
 }
 
-func TestResolveMismatchedProviderSurfacesInternal(t *testing.T) {
+func TestResolveMismatchedProviderSurfacesSecretDecryption(t *testing.T) {
 	t.Parallel()
 	r, err := variables.NewResolver(plaintextProvider())
 	if err != nil {
@@ -392,7 +392,11 @@ func TestResolveMismatchedProviderSurfacesInternal(t *testing.T) {
 	}
 	_, err = r.Resolve(in, variables.Options{})
 	if err == nil {
-		t.Fatalf("expected Internal")
+		t.Fatalf("expected SecretDecryption")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeSecretDecryption {
+		t.Fatalf("expected CodeSecretDecryption, got %T code=%v err=%v", err, ye.Code, err)
 	}
 	if !errors.Is(err, secrets.ErrUnsupportedProvider) {
 		t.Fatalf("expected wrapped ErrUnsupportedProvider, got %v", err)

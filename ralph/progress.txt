@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Secret-open failures are a distinct public error contract: use `apierr.SecretDecryption()` / `E_SECRET_DECRYPTION` for failures opening sealed secret material (provider mismatch, unknown key, invalid ciphertext). It is HTTP 500, non-retryable, MessageGeneric, preserves the cause only for server-side diagnostics, and public envelopes must not expose plaintext, ciphertext, provider ids, key ids, or crypto details.
 - Worker provisioning-job outcome writes distinguish cancelled jobs from stale lease ownership: `JobRepository.Transition` returns `apierr.JobCancelled()` / `E_JOB_CANCELLED` when an expected-lease outcome targets a job already moved to `cancelled`, while lease-owner mismatch on an active/reclaimed job remains `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED`.
 - Provisioning job outcome writes should prove lease ownership at commit time: `worker.StoreClaimer.complete` sets `store.JobTransition.ExpectedLeaseOwner`, and `JobRepository.Transition` returns typed `apierr.JobNotClaimed()` / `E_JOB_NOT_CLAIMED` when the locked row is no longer leased by that worker. This prevents stale workers from overwriting a job already reclaimed after lease expiry.
 - Reconciliation-service-type stories should pin the subtype with a focused `internal/controlplane/reconcile/*_test.go` matrix while updating the canonical closed-set table when a new `ActionType` / `DriftReason` is introduced. Build/source config drift is value-bearing like env vars: route desired values only through Repairer-only fields (`Action.DesiredBuild`), keep `Type`/`Kind`/`Reason`/IDs value-free, and normalize build settings before diffing so renderer defaults (blank builder => dockerfile, blank dockerfile path => `Dockerfile`) do not create false positives.
@@ -36258,4 +36259,39 @@ change that widened Reason to caller-supplied data.
   - None for this story.
 - **Learnings for future iterations:**
   - The pre-commit hook can expose optional tools that are not on the interactive shell PATH; record both the interactive availability and hook result when they differ.
+---
+## 2026-05-19 03:56 +03 - BE-0536
+- What was implemented
+  - Added stable `E_SECRET_DECRYPTION` to the shared error registry, backend taxonomy, HTTP status mapping, and envelope contract tests.
+  - Added `apierr.SecretDecryption` with a generic public message/hint and wrapped cause for server-side diagnostics only.
+  - Routed variables resolver secret-open/provider-mismatch failures through `apierr.SecretDecryption` instead of generic `apierr.Internal`.
+  - Updated redaction static guard coverage and local AGENTS.md guidance for secret-open failures.
+- Files changed
+  - `internal/errors/errors.go`, `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `internal/controlplane/variables/resolver.go`, `internal/controlplane/variables/resolver_test.go`, `internal/controlplane/variables/env_var_redaction_static_test.go`
+  - `internal/controlplane/AGENTS.md`, `internal/controlplane/variables/AGENTS.md`
+  - `ralph/prd.json`, `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr ./internal/controlplane/variables`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; `staticcheck` is not installed.
+  - `govulncheck ./...` attempted; `govulncheck` is not installed.
+- Results
+  - Required checks passed.
+  - Focused contract/resolver tests passed.
+  - `golangci-lint` reported `0 issues`.
+  - `E_SECRET_DECRYPTION` is marked passing in `ralph/prd.json`.
+- Remaining risks or follow-ups
+  - No persistence or live Dokploy coverage was needed for this error-contract-only story.
+- **Learnings for future iterations:**
+  - Secret decryption/open failures should not use generic internal errors; use `apierr.SecretDecryption` so agents can distinguish undecryptable secret material from unrelated server bugs while still receiving only a generic redacted public envelope.
+  - When a new typed error can wrap secret-bearing causes, update package-specific static redaction analyzers so the new constructor is treated as an error surface.
 ---

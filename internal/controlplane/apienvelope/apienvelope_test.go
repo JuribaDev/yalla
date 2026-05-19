@@ -207,6 +207,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeMigrationRequired, http.StatusServiceUnavailable},
 		{yerr.CodeUnavailable, http.StatusServiceUnavailable},
 		{yerr.CodeCanceled, 499},
+		{yerr.CodeSecretDecryption, http.StatusInternalServerError},
 		{yerr.CodeInternal, http.StatusInternalServerError},
 		{yerr.CodeUnknown, http.StatusInternalServerError},
 		{yerr.CodeConfig, http.StatusInternalServerError},

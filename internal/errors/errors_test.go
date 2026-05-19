@@ -19,6 +19,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeConfig, 3},
 		{CodeOrphan, 3},
 		{CodeMigrationRequired, 3},
+		{CodeSecretDecryption, 1},
 		{CodeAuthenticationRequired, 4},
 		{CodeAuthInvalid, 4},
 		{CodeAuthExpired, 4},
@@ -121,6 +122,22 @@ func TestMigrationRequiredDescriptionNamesSchemaMismatch(t *testing.T) {
 	const want = "database migrations must be applied before the service can continue"
 	if got != want {
 		t.Fatalf("E_MIGRATION_REQUIRED description = %q, want %q", got, want)
+	}
+}
+
+func TestSecretDecryptionDescriptionNamesSecretOpenFailure(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeSecretDecryption) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "sealed secret material could not be decrypted"
+	if got != want {
+		t.Fatalf("E_SECRET_DECRYPTION description = %q, want %q", got, want)
 	}
 }
 

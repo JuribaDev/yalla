@@ -41,6 +41,10 @@ do not mix customer API handlers into CLI packages.
   contract. It renders `E_MIGRATION_REQUIRED` as HTTP 503 with a generic public
   message and a fixed operator-action hint; wrap raw migrator/schema/DSN detail
   only as the server-side cause.
+  Use `apierr.SecretDecryption` for failures opening sealed secret material
+  (provider mismatch, unknown key, invalid ciphertext). It renders
+  `E_SECRET_DECRYPTION` as HTTP 500 with a generic public message; wrap
+  provider/key/ciphertext/crypto detail only as the server-side cause.
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
   A non-self authorization attempt with an empty `policy.Resource.Scope.OrganizationID`

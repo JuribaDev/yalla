@@ -34,7 +34,8 @@ import (
 //   2. (Resolved).Explain — the customer-facing projection whose
 //      ExplainedVariable.Value is always output.Sentinel.
 //   3. The error / apierr surfaces — no error message, no
-//      apierr.FieldViolation reason, no apierr.Internal wrapped error may
+//      apierr.FieldViolation reason, no apierr.Internal/apierr.SecretDecryption
+//      wrapped error may
 //      interpolate a `.Value` or `.SecretCiphertext` selector, nor a local
 //      identifier named `plaintext`.
 //
@@ -95,10 +96,11 @@ var errorFormingFuncs = map[string]map[string]bool{
 		"New": true,
 	},
 	"apierr": {
-		"Internal":     true,
-		"InvalidInput": true,
-		"NotFound":     true,
-		"Conflict":     true,
+		"Internal":         true,
+		"SecretDecryption": true,
+		"InvalidInput":     true,
+		"NotFound":         true,
+		"Conflict":         true,
 	},
 }
 
@@ -209,7 +211,8 @@ func TestRedactionExplainedVariableLiteralsRedactValue(t *testing.T) {
 // the local identifier `plaintext`. This is rule (3) of the static control:
 // even when LogValue and Explain are intact, a regression that wraps the
 // Open failure as `fmt.Errorf("could not open %q", v.Value)` would leak the
-// plaintext through the apierr.Internal cause chain into operator logs.
+// plaintext through the apierr.Internal/apierr.SecretDecryption cause chain
+// into operator logs.
 func TestRedactionNoPlaintextInErrorSurface(t *testing.T) {
 	t.Parallel()
 

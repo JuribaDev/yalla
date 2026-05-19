@@ -20,6 +20,7 @@
 //     StoreUnavailable, QueueUnavailable, NetworkFailure, Timeout — each
 //     distinguishes which dependency failed via DependencyOf.
 //   - Operator action:      MigrationRequired
+//   - Secret handling:      SecretDecryption
 //   - Internal:             Internal
 //
 // Two cross-cutting guarantees back the taxonomy:
@@ -166,6 +167,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeDBUnavailable:          {true, MessageGeneric, "the Yalla Postgres datastore is temporarily unavailable"},
 	yerr.CodeMigrationRequired:      {false, MessageGeneric, "database migrations must be applied before the service can continue"},
+	yerr.CodeSecretDecryption:       {false, MessageGeneric, "sealed secret material could not be decrypted"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned non-Postgres dependency is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
 	yerr.CodeTimeout:                {true, MessageGeneric, "a dependency call exceeded its timeout"},
@@ -671,6 +673,17 @@ func StoreUnavailable(cause error) *yerr.Error {
 func MigrationRequired(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeMigrationRequired, "database migrations must be applied before the service can continue").
 		WithHint("run the required database migrations before retrying").
+		Wrap(cause)
+}
+
+// SecretDecryption builds an E_SECRET_DECRYPTION error (HTTP 500) for a
+// server-side failure to open sealed secret material. The public message and
+// hint are fixed and generic: they must never expose plaintext, ciphertext
+// bytes, provider ids, key ids, or cryptographic error details. The cause is
+// preserved via Unwrap for server-side diagnostics only.
+func SecretDecryption(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeSecretDecryption, "sealed secret material could not be decrypted").
+		WithHint("contact Yalla support; secret material needs operator attention").
 		Wrap(cause)
 }
 

@@ -60,7 +60,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
-		yerr.CodeTimeout, yerr.CodeInternal,
+		yerr.CodeTimeout, yerr.CodeSecretDecryption, yerr.CodeInternal,
 	}
 	for _, code := range required {
 		if _, ok := Lookup(code); !ok {
@@ -116,6 +116,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
 		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
+		{"secret decryption", SecretDecryption(stderrors.New("x")), yerr.CodeSecretDecryption, 500},
 		{"internal", Internal(stderrors.New("x")), yerr.CodeInternal, 500},
 	}
 	for _, tc := range cases {
@@ -183,6 +184,57 @@ func TestMigrationRequiredContract(t *testing.T) {
 	}
 	if strings.Contains(body, "postgres://") || strings.Contains(body, "pass@") || strings.Contains(body, "127.0.0.1") {
 		t.Errorf("migration-required envelope leaked datastore details: %s", body)
+	}
+}
+
+func TestSecretDecryptionContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "sk_live_secret_decryption_should_not_leak"
+	cause := stderrors.New("open failed for key k_old: " + secret)
+	err := SecretDecryption(cause)
+	if err.Code != yerr.CodeSecretDecryption {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeSecretDecryption)
+	}
+	if err.Message != "sealed secret material could not be decrypted" {
+		t.Fatalf("message = %q", err.Message)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_SECRET_DECRYPTION is not catalogued")
+	}
+	if entry.HTTPStatus != 500 {
+		t.Errorf("HTTPStatus = %d, want 500", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("SecretDecryption must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-secret-open", err)
+	body := rec.Body.String()
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "k_old"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-secret-open"`) ||
+		!strings.Contains(body, string(yerr.CodeSecretDecryption)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeSecretDecryption)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
 	}
 }
 
@@ -1056,6 +1108,7 @@ func TestGenericMessageCodesNeverEchoCause(t *testing.T) {
 		{"queue", QueueUnavailable(cause)},
 		{"network", NetworkFailure(cause)},
 		{"timeout", Timeout(DependencyDokploy, cause)},
+		{"secret decryption", SecretDecryption(cause)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
