@@ -165,6 +165,15 @@ do not mix customer API handlers into CLI packages.
   and `/metrics` exposes it under `data.dead_letter_alerts`; operators should
   page on firing alerts, then join the latest job/request/correlation ids to
   structured worker logs and the provisioning job row.
+- Reconciliation drift alert metrics follow the same low-cardinality collector
+  pattern: `telemetry.ReconciliationDriftAlertMetrics` groups only by
+  `(drift_kind, action_type, reason, severity, status)`. `reconcile.Reconciler`
+  emits firing observations after each tick for planned drift actions and a
+  resolved `none/none/no_drift` observation when the plan is clean. `/metrics`
+  exposes it under `data.reconciliation_drift_alerts`; operators should page
+  on dangerous drift, ticket persistent safe/unmanaged drift, then join the
+  latest request/correlation/job/org/service hints to structured logs and the
+  support-only drift findings view.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

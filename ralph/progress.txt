@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Reconciliation drift alert metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.ReconciliationDriftAlertMetrics` groups by `(drift_kind, action_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `reconcile.Reconciler` after completed ticks as firing per planned drift action or resolved `none/none/no_drift` for clean plans, and `/metrics` exposes the snapshot under `data.reconciliation_drift_alerts`.
 - Dead-letter alert metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness/SLO metrics: `telemetry.DeadLetterAlertMetrics` groups by `(job_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `worker.StoreClaimer` only after a `dead_letter` transition commits, and `/metrics` exposes the snapshot under `data.dead_letter_alerts`.
 - SLO burn-rate metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness metrics: `telemetry.SLOBurnRateMetrics` groups by `(objective, window, severity, status, signal)`, stores burn-rate/error-budget numbers plus request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.slo_burn_rates`.
 - Readiness degradation metrics follow the existing low-cardinality telemetry collector pattern: `/readyz` emits one `telemetry.ReadinessDegradationMetrics` observation per configured dependency gate, grouped by `(check, status, reason)` with request/correlation/org/principal/job IDs kept only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.readiness_degradation`.
@@ -301,6 +302,53 @@
 - **Learnings for future iterations:**
   - The envelope renderer can expose telemetry-only metadata via a tiny structural interface on `http.ResponseWriter`; this avoids parsing JSON response bodies and avoids an import cycle from `apienvelope` to `telemetry`.
   - Keep high-cardinality org/principal/resource/job IDs as log-join hints only; use `method`, `route`, `status_class`, `outcome`, and `error_code` for dashboard filters.
+---
+## 2026-05-19 12:15 +03 - BE-0376
+- What was implemented
+  - Added `telemetry.ReconciliationDriftAlertMetrics` with low-cardinality `(drift_kind, action_type, reason, severity, status)` series and safe latest-sample request/correlation/org/project/environment/service/resource/job hints.
+  - Wired `reconcile.Reconciler` to emit firing drift alerts after completed ticks for each planned action and a resolved `none/none/no_drift` alert when no drift is found.
+  - Exposed the snapshot in `/metrics` as `data.reconciliation_drift_alerts` and documented the operator workflow in the OpenAPI route description and local AGENTS docs.
+  - Added tests for alert aggregation, cardinality bounding, unsafe identifier dropping, reconcile success/failure emission, no-drift resolution, HTTP metrics exposure, and secret non-leakage.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/reconcile/reconcile.go`
+  - `internal/controlplane/reconcile/reconcile_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `internal/controlplane/reconcile/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/telemetry -run TestReconciliationDriftAlertMetrics`
+  - `go test ./internal/controlplane/reconcile -run TestReconcile_Records`
+  - `go test ./internal/controlplane/httpapi -run TestMetricsEndpointReturnsEnvelopeSnapshot`
+  - `go test ./internal/controlplane/telemetry ./internal/controlplane/reconcile ./internal/controlplane/httpapi`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go vet ./...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestOpenAPI ./...`
+  - `go test -run TestRedaction ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All commands above passed.
+  - The pre-commit strict verification hook also passed `scripts/verify.sh --strict --release`, including its optional `govulncheck`, `staticcheck`, `golangci-lint`, GoReleaser check, and snapshot release gates.
+  - `goimports` was not installed locally, so it was not run separately.
+- Remaining risks or follow-ups
+  - No live Dokploy smoke was run; this story is pure reconcile/telemetry/HTTP metrics instrumentation.
+- **Learnings for future iterations:**
+  - Reconciliation drift alerts should stay separate from persisted drift findings: metrics are the low-cardinality incident trigger, while the support-only drift findings view is the detailed triage surface.
+  - Emit alert observations after `Apply` completes so failure counts are known, but keep failure error strings out of metrics entirely.
+  - A clean reconcile tick should emit a resolved `none/none/no_drift` observation so dashboards can distinguish "no drift" from "reconciler stopped emitting".
 ---
 
 

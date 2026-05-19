@@ -8053,8 +8053,8 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
-      "notes": "Observability topic: reconciliation drift alerts."
+      "passes": true,
+      "notes": "Implemented reconciliation drift alert metrics with low-cardinality drift_kind/action_type/reason/severity/status series, safe latest-sample request/correlation/org/project/environment/service/resource/job hints, Reconciler emission for firing drift actions and resolved no-drift ticks, /metrics exposure under data.reconciliation_drift_alerts, telemetry/reconcile/HTTP coverage, and operator documentation."
     },
     {
       "id": "BE-0377",

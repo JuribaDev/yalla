@@ -56,6 +56,11 @@ var DefaultSLOBurnRateMetrics = NewSLOBurnRateMetrics()
 // collector used by worker claimers unless tests or embedders inject their own.
 var DefaultDeadLetterAlertMetrics = NewDeadLetterAlertMetrics()
 
+// DefaultReconciliationDriftAlertMetrics is the process-wide reconciliation
+// drift alert collector used by reconcilers unless tests or embedders inject
+// their own collector.
+var DefaultReconciliationDriftAlertMetrics = NewReconciliationDriftAlertMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -707,6 +712,78 @@ type deadLetterAlertMetricSeries struct {
 	DeadLetterAlertMetric
 }
 
+// ReconciliationDriftAlertObservation is one operational alert observation
+// produced by a reconciliation tick. DriftKind, ActionType, Reason, Severity,
+// and Status are bounded aggregate dimensions; identifiers describe only the
+// latest sample so dashboards stay low-cardinality.
+type ReconciliationDriftAlertObservation struct {
+	DriftKind      string
+	ActionType     string
+	Reason         string
+	Severity       string
+	Status         string
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	PrincipalID    string
+	ResourceKind   string
+	ResourceID     string
+	JobID          string
+	ActionCount    int
+	FailureCount   int
+}
+
+// ReconciliationDriftAlertMetric is one aggregate reconciliation drift alert
+// series.
+type ReconciliationDriftAlertMetric struct {
+	DriftKind      string `json:"drift_kind"`
+	ActionType     string `json:"action_type"`
+	Reason         string `json:"reason"`
+	Severity       string `json:"severity"`
+	Status         string `json:"status"`
+	Count          int64  `json:"count"`
+	RequestID      string `json:"request_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	ServiceID      string `json:"service_id,omitempty"`
+	PrincipalID    string `json:"principal_id,omitempty"`
+	ResourceKind   string `json:"resource_kind,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+	ActionCount    int    `json:"action_count,omitempty"`
+	FailureCount   int    `json:"failure_count,omitempty"`
+}
+
+// ReconciliationDriftAlertMetricsSnapshot is the JSON-serializable
+// operational view exposed to operators, tests, and the /metrics endpoint.
+type ReconciliationDriftAlertMetricsSnapshot struct {
+	TotalAlerts int64                            `json:"total_alerts"`
+	Series      []ReconciliationDriftAlertMetric `json:"series"`
+}
+
+// ReconciliationDriftAlertMetrics stores low-cardinality reconciliation drift
+// alert counters. It is safe for concurrent use by API and worker goroutines.
+type ReconciliationDriftAlertMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[reconciliationDriftAlertMetricKey]*reconciliationDriftAlertMetricSeries
+}
+
+type reconciliationDriftAlertMetricKey struct {
+	driftKind  string
+	actionType string
+	reason     string
+	severity   string
+	status     string
+}
+
+type reconciliationDriftAlertMetricSeries struct {
+	ReconciliationDriftAlertMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -758,6 +835,12 @@ func NewSLOBurnRateMetrics() *SLOBurnRateMetrics {
 // NewDeadLetterAlertMetrics returns an empty dead-letter alert collector.
 func NewDeadLetterAlertMetrics() *DeadLetterAlertMetrics {
 	return &DeadLetterAlertMetrics{series: make(map[deadLetterAlertMetricKey]*deadLetterAlertMetricSeries)}
+}
+
+// NewReconciliationDriftAlertMetrics returns an empty reconciliation drift
+// alert collector.
+func NewReconciliationDriftAlertMetrics() *ReconciliationDriftAlertMetrics {
+	return &ReconciliationDriftAlertMetrics{series: make(map[reconciliationDriftAlertMetricKey]*reconciliationDriftAlertMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -1071,6 +1154,41 @@ func (m *DeadLetterAlertMetrics) Snapshot() DeadLetterAlertMetricsSnapshot {
 		a, b := out.Series[i], out.Series[j]
 		if a.JobType != b.JobType {
 			return a.JobType < b.JobType
+		}
+		if a.Reason != b.Reason {
+			return a.Reason < b.Reason
+		}
+		if a.Severity != b.Severity {
+			return a.Severity < b.Severity
+		}
+		return a.Status < b.Status
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all reconciliation drift alert
+// metrics currently held by the collector.
+func (m *ReconciliationDriftAlertMetrics) Snapshot() ReconciliationDriftAlertMetricsSnapshot {
+	if m == nil {
+		return ReconciliationDriftAlertMetricsSnapshot{Series: []ReconciliationDriftAlertMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := ReconciliationDriftAlertMetricsSnapshot{
+		TotalAlerts: m.total,
+		Series:      make([]ReconciliationDriftAlertMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.ReconciliationDriftAlertMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.DriftKind != b.DriftKind {
+			return a.DriftKind < b.DriftKind
+		}
+		if a.ActionType != b.ActionType {
+			return a.ActionType < b.ActionType
 		}
 		if a.Reason != b.Reason {
 			return a.Reason < b.Reason
@@ -1648,6 +1766,80 @@ func (m *DeadLetterAlertMetrics) RecordDeadLetterAlert(ctx context.Context, even
 	series.JobID = safeMetricID(jobID)
 	series.Attempt = int(clampMetricCount(int64(event.Attempt)))
 	series.MaxAttempts = int(clampMetricCount(int64(event.MaxAttempts)))
+}
+
+// RecordReconciliationDriftAlert aggregates one reconciliation drift alert
+// observation.
+func (m *ReconciliationDriftAlertMetrics) RecordReconciliationDriftAlert(ctx context.Context, event ReconciliationDriftAlertObservation) {
+	if m == nil {
+		return
+	}
+	driftKind := metricSLOToken(event.DriftKind, "unknown")
+	actionType := metricSLOToken(event.ActionType, "unknown")
+	reason := metricSLOToken(event.Reason, "unknown")
+	severity := metricSLOSeverity(event.Severity)
+	status := metricSLOStatus(event.Status)
+
+	corr := FromContext(ctx)
+	orgID, principalID, resourceKind, resourceID, jobID := "", "", "", "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ = f.logSnapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+	if strings.TrimSpace(event.ResourceKind) != "" {
+		resourceKind = strings.TrimSpace(event.ResourceKind)
+	}
+	if strings.TrimSpace(event.ResourceID) != "" {
+		resourceID = strings.TrimSpace(event.ResourceID)
+	}
+	if strings.TrimSpace(event.ServiceID) != "" && resourceID == "" {
+		resourceKind = "service"
+		resourceID = strings.TrimSpace(event.ServiceID)
+	}
+	if strings.TrimSpace(event.JobID) != "" {
+		jobID = strings.TrimSpace(event.JobID)
+	}
+
+	key := reconciliationDriftAlertMetricKey{
+		driftKind:  driftKind,
+		actionType: actionType,
+		reason:     reason,
+		severity:   severity,
+		status:     status,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &reconciliationDriftAlertMetricSeries{ReconciliationDriftAlertMetric: ReconciliationDriftAlertMetric{
+			DriftKind:  driftKind,
+			ActionType: actionType,
+			Reason:     reason,
+			Severity:   severity,
+			Status:     status,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.ProjectID = safeMetricID(event.ProjectID)
+	series.EnvironmentID = safeMetricID(event.EnvironmentID)
+	series.ServiceID = safeMetricID(event.ServiceID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.ResourceKind = safeMetricID(resourceKind)
+	series.ResourceID = safeMetricID(resourceID)
+	series.JobID = safeMetricID(jobID)
+	series.ActionCount = int(clampMetricCount(int64(event.ActionCount)))
+	series.FailureCount = int(clampMetricCount(int64(event.FailureCount)))
 }
 
 func metricMethod(method string) string {

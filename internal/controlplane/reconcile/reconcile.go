@@ -82,6 +82,9 @@ type Config struct {
 	// secrets registered, which still scrubs Authorization-style headers
 	// and token-bearing query parameters from upstream error dumps.
 	Redactor *output.Redactor
+	// DriftAlerts receives low-cardinality reconciliation drift alert
+	// observations. Nil defaults to telemetry.DefaultReconciliationDriftAlertMetrics.
+	DriftAlerts *telemetry.ReconciliationDriftAlertMetrics
 }
 
 // Reconciler detects and resolves drift between desired and actual state. It
@@ -95,6 +98,7 @@ type Reconciler struct {
 	logger    *slog.Logger
 	now       func() time.Time
 	redactor  *output.Redactor
+	alerts    *telemetry.ReconciliationDriftAlertMetrics
 }
 
 // New validates cfg and returns a ready Reconciler. Construction failures are
@@ -128,6 +132,10 @@ func New(cfg Config) (*Reconciler, error) {
 	if redactor == nil {
 		redactor = output.NewRedactor()
 	}
+	alerts := cfg.DriftAlerts
+	if alerts == nil {
+		alerts = telemetry.DefaultReconciliationDriftAlertMetrics
+	}
 	return &Reconciler{
 		desired:   cfg.Desired,
 		actual:    cfg.Actual,
@@ -137,6 +145,7 @@ func New(cfg Config) (*Reconciler, error) {
 		logger:    logger,
 		now:       clock,
 		redactor:  redactor,
+		alerts:    alerts,
 	}, nil
 }
 
@@ -251,6 +260,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, orgID domain.ID) (Result, er
 		return Result{}, err
 	}
 	res, err := r.Apply(ctx, plan)
+	r.recordDriftAlerts(ctx, plan, res)
 	r.logger.InfoContext(ctx, "reconcile tick complete",
 		append(telemetry.LogAttrs(ctx),
 			slog.String("organization_id", redact(r.redactor, string(orgID))),
@@ -261,6 +271,73 @@ func (r *Reconciler) Reconcile(ctx context.Context, orgID domain.ID) (Result, er
 			slog.Int("failures", len(res.Failures)),
 		)...)
 	return res, err
+}
+
+func (r *Reconciler) recordDriftAlerts(ctx context.Context, plan Plan, res Result) {
+	if r.alerts == nil {
+		return
+	}
+	if len(plan.Actions) == 0 {
+		r.alerts.RecordReconciliationDriftAlert(ctx, telemetry.ReconciliationDriftAlertObservation{
+			DriftKind:      "none",
+			ActionType:     "none",
+			Reason:         "no_drift",
+			Severity:       "info",
+			Status:         "resolved",
+			OrganizationID: string(plan.OrganizationID),
+		})
+		return
+	}
+	failuresByAction := make(map[actionAlertKey]int, len(res.Failures))
+	for _, failure := range res.Failures {
+		failuresByAction[actionAlertKey{
+			kind:      failure.Action.Kind,
+			action:    failure.Action.Type,
+			reason:    failure.Action.Reason,
+			serviceID: string(failure.Action.Service.ServiceID),
+		}]++
+	}
+	for _, action := range plan.Actions {
+		failures := failuresByAction[actionAlertKey{
+			kind:      action.Kind,
+			action:    action.Type,
+			reason:    action.Reason,
+			serviceID: string(action.Service.ServiceID),
+		}]
+		r.alerts.RecordReconciliationDriftAlert(ctx, telemetry.ReconciliationDriftAlertObservation{
+			DriftKind:      string(action.Kind),
+			ActionType:     string(action.Type),
+			Reason:         string(action.Reason),
+			Severity:       driftAlertSeverity(action.Kind),
+			Status:         "firing",
+			OrganizationID: string(action.Service.OrganizationID),
+			ProjectID:      string(action.Service.ProjectID),
+			EnvironmentID:  string(action.Service.EnvironmentID),
+			ServiceID:      string(action.Service.ServiceID),
+			ResourceKind:   "service",
+			ResourceID:     string(action.Service.ServiceID),
+			ActionCount:    len(plan.Actions),
+			FailureCount:   failures,
+		})
+	}
+}
+
+type actionAlertKey struct {
+	kind      DriftKind
+	action    ActionType
+	reason    DriftReason
+	serviceID string
+}
+
+func driftAlertSeverity(kind DriftKind) string {
+	switch kind {
+	case DriftDangerous:
+		return "page"
+	case DriftSafe, DriftUnmanaged:
+		return "ticket"
+	default:
+		return "info"
+	}
 }
 
 func (r *Reconciler) applySafe(ctx context.Context, action Action) error {

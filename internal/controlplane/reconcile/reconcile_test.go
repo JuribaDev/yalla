@@ -14,6 +14,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/reconcile"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -507,6 +508,84 @@ func TestApply_RedactsSensitiveErrorsInResult(t *testing.T) {
 	}
 }
 
+func TestReconcile_RecordsDriftAlertsForSuccessAndFailurePaths(t *testing.T) {
+	t.Parallel()
+
+	state := simpleDesired()
+	state.Projects[0].Environments[0].Services[0].EnvVars = []reconcile.DesiredEnvVar{
+		{Key: "FOO", Value: "bar"},
+	}
+	desired := &fakeDesiredReader{state: state}
+	actualState := simpleActual()
+	actualState.Projects[0].Environments[0].Services[0].EnvVars = []reconcile.ActualEnvVar{
+		{Key: "ROGUE", Value: "irrelevant"},
+	}
+	const sensitive = "repair failed: Authorization: Bearer yk_reconcile_alert_secret"
+	metrics := telemetry.NewReconciliationDriftAlertMetrics()
+	ctx := telemetry.WithLogFields(telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_reconcile_alert",
+		CorrelationID: "corr_reconcile_alert",
+	}))
+	telemetry.SetJobID(ctx, "job_reconcile_alert")
+	rec := newReconciler(t, &reconcile.Config{
+		Desired: desired, Actual: &fakeActualReader{state: actualState},
+		Repairer: &fakeRepairer{envErr: stderrors.New(sensitive)},
+		Reviewer: &fakeReviewer{}, Unmanaged: &fakeUnmanaged{},
+		DriftAlerts: metrics,
+	})
+
+	res, err := rec.Reconcile(ctx, validOrgID)
+	if err != nil {
+		t.Fatalf("Reconcile error: %v", err)
+	}
+	if len(res.Failures) != 1 || res.Repaired != 1 {
+		t.Fatalf("result = %+v, want one failed safe action and one repaired safe action", res)
+	}
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalAlerts != 2 {
+		t.Fatalf("total drift alerts = %d, want 2: %+v", snapshot.TotalAlerts, snapshot.Series)
+	}
+	failed := findReconcileDriftAlert(snapshot.Series, "safe", "update_env_var", "env_var_missing", "ticket", "firing")
+	if failed == nil {
+		t.Fatalf("missing safe update_env_var drift alert: %+v", snapshot.Series)
+	}
+	if failed.RequestID != "req_reconcile_alert" || failed.CorrelationID != "corr_reconcile_alert" ||
+		failed.OrganizationID != string(validOrgID) || failed.ServiceID == "" || failed.JobID != "job_reconcile_alert" ||
+		failed.ActionCount != 2 || failed.FailureCount != 1 {
+		t.Errorf("failed alert hints = %+v, want request/org/service/job/action/failure hints", *failed)
+	}
+	if strings.Contains(sprintDriftAlerts(snapshot.Series), "yk_reconcile_alert_secret") {
+		t.Fatalf("drift alert metrics leaked secret: %+v", snapshot.Series)
+	}
+}
+
+func TestReconcile_RecordsResolvedDriftAlertWhenNoDrift(t *testing.T) {
+	t.Parallel()
+
+	metrics := telemetry.NewReconciliationDriftAlertMetrics()
+	rec := newReconciler(t, &reconcile.Config{
+		Desired: &fakeDesiredReader{state: simpleDesired()}, Actual: &fakeActualReader{state: simpleActual()},
+		Repairer: &fakeRepairer{}, Reviewer: &fakeReviewer{}, Unmanaged: &fakeUnmanaged{},
+		DriftAlerts: metrics,
+	})
+	res, err := rec.Reconcile(context.Background(), validOrgID)
+	if err != nil {
+		t.Fatalf("Reconcile error: %v", err)
+	}
+	if res.Repaired != 0 || res.Reviewed != 0 || res.Quarantined != 0 || len(res.Failures) != 0 {
+		t.Fatalf("result = %+v, want clean reconciliation", res)
+	}
+	snapshot := metrics.Snapshot()
+	resolved := findReconcileDriftAlert(snapshot.Series, "none", "none", "no_drift", "info", "resolved")
+	if resolved == nil {
+		t.Fatalf("missing no-drift resolved alert: %+v", snapshot.Series)
+	}
+	if resolved.OrganizationID != string(validOrgID) {
+		t.Errorf("resolved alert org = %q, want %q", resolved.OrganizationID, validOrgID)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Helpers and fakes.
 // ----------------------------------------------------------------------------
@@ -601,6 +680,30 @@ func filterActual(in []reconcile.ActualService, keep func(reconcile.ActualServic
 		}
 	}
 	return out
+}
+
+func findReconcileDriftAlert(metrics []telemetry.ReconciliationDriftAlertMetric, driftKind, actionType, reason, severity, status string) *telemetry.ReconciliationDriftAlertMetric {
+	for i := range metrics {
+		if metrics[i].DriftKind == driftKind && metrics[i].ActionType == actionType && metrics[i].Reason == reason && metrics[i].Severity == severity && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
+func sprintDriftAlerts(metrics []telemetry.ReconciliationDriftAlertMetric) string {
+	var b strings.Builder
+	for _, m := range metrics {
+		b.WriteString(m.DriftKind)
+		b.WriteString(m.ActionType)
+		b.WriteString(m.Reason)
+		b.WriteString(m.OrganizationID)
+		b.WriteString(m.ProjectID)
+		b.WriteString(m.EnvironmentID)
+		b.WriteString(m.ServiceID)
+		b.WriteString(m.JobID)
+	}
+	return b.String()
 }
 
 type fakeDesiredReader struct {

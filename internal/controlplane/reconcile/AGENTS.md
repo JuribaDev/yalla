@@ -61,6 +61,15 @@ produces a deterministic Plan of actions classified as `DriftSafe`,
   string scrubbed through the configured `output.Redactor` so a Dokploy
   Authorization header or token query parameter that bleeds into an upstream
   error message stays redacted.
+- **Drift alert telemetry.** `Reconciler.Reconcile` emits
+  `telemetry.ReconciliationDriftAlertMetrics` after each completed tick. Keep
+  alert labels limited to `(drift_kind, action_type, reason, severity, status)`
+  and put request/correlation/job/org/project/environment/service identifiers
+  only in latest-sample hints. Do not include repair/reviewer error strings,
+  env var values, domain hostnames, build settings, or cron schedules in the
+  metric surface. Operators use `data.reconciliation_drift_alerts` from
+  `/metrics` to identify dangerous drift, then join hints to logs and drift
+  findings for triage.
 - **Validation surface.** The only request input the engine validates is the
   organization id passed to `Plan` / `Reconcile` — `domain.ParseID` plus a
   kind check, returning a typed `apierr.InvalidInput`. Anything else is the

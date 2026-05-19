@@ -403,6 +403,114 @@ func findDeadLetterAlertMetric(metrics []DeadLetterAlertMetric, jobType, reason,
 	return nil
 }
 
+func TestReconciliationDriftAlertMetricsRecordsLowCardinalityAlerts(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewReconciliationDriftAlertMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req_drift_alert", CorrelationID: "corr_drift_alert"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org_context_drift")
+	SetPrincipalID(ctx, "usr_drift")
+	SetResource(ctx, "service", "svc_drift")
+	SetJobID(ctx, "job_context_drift")
+
+	metrics.RecordReconciliationDriftAlert(ctx, ReconciliationDriftAlertObservation{
+		DriftKind:      "dangerous",
+		ActionType:     "review_missing_service",
+		Reason:         "service_missing",
+		Severity:       "page",
+		Status:         "firing",
+		OrganizationID: "org_drift",
+		ProjectID:      "proj_drift",
+		EnvironmentID:  "env_drift",
+		ServiceID:      "svc_drift",
+		JobID:          "job_drift",
+		ActionCount:    2,
+		FailureCount:   1,
+	})
+	metrics.RecordReconciliationDriftAlert(context.Background(), ReconciliationDriftAlertObservation{
+		DriftKind:  "none",
+		ActionType: "none",
+		Reason:     "no_drift",
+		Severity:   "info",
+		Status:     "resolved",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalAlerts != 2 {
+		t.Fatalf("total_alerts = %d, want 2", snapshot.TotalAlerts)
+	}
+	firing := findReconciliationDriftAlertMetric(snapshot.Series, "dangerous", "review_missing_service", "service_missing", "page", "firing")
+	if firing == nil {
+		t.Fatalf("missing firing reconciliation drift alert metric: %+v", snapshot.Series)
+	}
+	if firing.Count != 1 || firing.ActionCount != 2 || firing.FailureCount != 1 {
+		t.Errorf("firing metric = %+v, want count=1 action_count=2 failure_count=1", *firing)
+	}
+	if firing.RequestID != "req_drift_alert" || firing.CorrelationID != "corr_drift_alert" ||
+		firing.OrganizationID != "org_drift" || firing.ProjectID != "proj_drift" ||
+		firing.EnvironmentID != "env_drift" || firing.ServiceID != "svc_drift" ||
+		firing.PrincipalID != "usr_drift" || firing.ResourceKind != "service" ||
+		firing.ResourceID != "svc_drift" || firing.JobID != "job_drift" {
+		t.Errorf("firing hints = %+v, want request/resource/job correlation", *firing)
+	}
+
+	resolved := findReconciliationDriftAlertMetric(snapshot.Series, "none", "none", "no_drift", "info", "resolved")
+	if resolved == nil {
+		t.Fatalf("missing resolved reconciliation drift alert metric: %+v", snapshot.Series)
+	}
+	if resolved.RequestID != "" || resolved.OrganizationID != "" {
+		t.Errorf("resolved metric without context = %+v, want no unsafe identifiers", *resolved)
+	}
+}
+
+func TestReconciliationDriftAlertMetricsBoundsCardinalityAndDropsUnsafeIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewReconciliationDriftAlertMetrics()
+	ctx := WithCorrelation(context.Background(), Correlation{RequestID: "req\nbad", CorrelationID: "corr_drift_safe"})
+	ctx = withRequestFields(ctx)
+	SetOrgID(ctx, "org unsafe")
+	SetPrincipalID(ctx, "usr_drift_safe")
+	SetResource(ctx, "service\nbad", "svc_drift_safe")
+
+	metrics.RecordReconciliationDriftAlert(ctx, ReconciliationDriftAlertObservation{
+		DriftKind:      "dangerous:prod",
+		ActionType:     "review_missing_service?token=secret",
+		Reason:         "service_missing Authorization: Bearer secret",
+		Severity:       "wake-the-world",
+		Status:         "maybe",
+		OrganizationID: "org unsafe",
+		ProjectID:      "proj_drift_safe",
+		ActionCount:    -1,
+		FailureCount:   -2,
+	})
+
+	snapshot := metrics.Snapshot()
+	got := findReconciliationDriftAlertMetric(snapshot.Series, "other", "other", "other", "other", "unknown")
+	if got == nil {
+		t.Fatalf("missing bounded-cardinality reconciliation drift alert metric: %+v", snapshot.Series)
+	}
+	if got.ActionCount != 0 || got.FailureCount != 0 {
+		t.Errorf("bounded metric = %+v, want negative counts clamped to zero", *got)
+	}
+	if got.RequestID != "" || got.CorrelationID != "corr_drift_safe" {
+		t.Errorf("correlation hints = %q/%q, want unsafe request dropped and safe correlation kept", got.RequestID, got.CorrelationID)
+	}
+	if got.OrganizationID != "" || got.PrincipalID != "usr_drift_safe" || got.ResourceKind != "" || got.ResourceID != "svc_drift_safe" || got.ProjectID != "proj_drift_safe" {
+		t.Errorf("identifier hints = %+v, want only SafeID-clean values", *got)
+	}
+}
+
+func findReconciliationDriftAlertMetric(metrics []ReconciliationDriftAlertMetric, driftKind, actionType, reason, severity, status string) *ReconciliationDriftAlertMetric {
+	for i := range metrics {
+		if metrics[i].DriftKind == driftKind && metrics[i].ActionType == actionType && metrics[i].Reason == reason && metrics[i].Severity == severity && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
 func TestTraceSpanMetricsRecordsHTTPSpansForSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 

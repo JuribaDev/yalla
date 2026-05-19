@@ -25,6 +25,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	readinessMetrics := telemetry.NewReadinessDegradationMetrics()
 	sloMetrics := telemetry.NewSLOBurnRateMetrics()
 	deadLetterMetrics := telemetry.NewDeadLetterAlertMetrics()
+	driftAlertMetrics := telemetry.NewReconciliationDriftAlertMetrics()
 	readiness := runtime.NewReadiness("database", "migrations", "queue")
 	readiness.MarkReady("migrations")
 	readiness.MarkReady("queue")
@@ -55,6 +56,20 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		JobID:          "job_metrics_dead_letter",
 		Attempt:        5,
 		MaxAttempts:    5,
+	})
+	driftAlertMetrics.RecordReconciliationDriftAlert(telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_drift_metrics",
+		CorrelationID: "corr_drift_metrics",
+	}), telemetry.ReconciliationDriftAlertObservation{
+		DriftKind:      "dangerous",
+		ActionType:     "review_missing_service",
+		Reason:         "service_missing",
+		Severity:       "page",
+		Status:         "firing",
+		OrganizationID: "org_metrics_drift",
+		ServiceID:      "svc_metrics_drift",
+		JobID:          "job_metrics_drift",
+		ActionCount:    1,
 	})
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
@@ -98,6 +113,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
 		traceMetrics, slowQueryMetrics, readinessMetrics, sloMetrics, deadLetterMetrics,
+		driftAlertMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -126,17 +142,18 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		OK            bool   `json:"ok"`
 		RequestID     string `json:"request_id"`
 		Data          struct {
-			TotalRequests       int64                                      `json:"total_requests"`
-			Requests            []telemetry.HTTPRequestMetric              `json:"requests"`
-			DokployDependencies telemetry.DokployDependencyMetricsSnapshot `json:"dokploy_dependencies"`
-			QuotaUsage          telemetry.QuotaUsageMetricsSnapshot        `json:"quota_usage"`
-			AuditEvents         telemetry.AuditEventMetricsSnapshot        `json:"audit_events"`
-			PolicyDecisions     telemetry.PolicyDecisionMetricsSnapshot    `json:"policy_decisions"`
-			TraceSpans          telemetry.TraceSpanMetricsSnapshot         `json:"trace_spans"`
-			SlowQueries         telemetry.SlowQueryMetricsSnapshot         `json:"slow_queries"`
-			Readiness           telemetry.ReadinessDegradationSnapshot     `json:"readiness_degradation"`
-			SLOBurnRates        telemetry.SLOBurnRateMetricsSnapshot       `json:"slo_burn_rates"`
-			DeadLetterAlerts    telemetry.DeadLetterAlertMetricsSnapshot   `json:"dead_letter_alerts"`
+			TotalRequests       int64                                             `json:"total_requests"`
+			Requests            []telemetry.HTTPRequestMetric                     `json:"requests"`
+			DokployDependencies telemetry.DokployDependencyMetricsSnapshot        `json:"dokploy_dependencies"`
+			QuotaUsage          telemetry.QuotaUsageMetricsSnapshot               `json:"quota_usage"`
+			AuditEvents         telemetry.AuditEventMetricsSnapshot               `json:"audit_events"`
+			PolicyDecisions     telemetry.PolicyDecisionMetricsSnapshot           `json:"policy_decisions"`
+			TraceSpans          telemetry.TraceSpanMetricsSnapshot                `json:"trace_spans"`
+			SlowQueries         telemetry.SlowQueryMetricsSnapshot                `json:"slow_queries"`
+			Readiness           telemetry.ReadinessDegradationSnapshot            `json:"readiness_degradation"`
+			SLOBurnRates        telemetry.SLOBurnRateMetricsSnapshot              `json:"slo_burn_rates"`
+			DeadLetterAlerts    telemetry.DeadLetterAlertMetricsSnapshot          `json:"dead_letter_alerts"`
+			DriftAlerts         telemetry.ReconciliationDriftAlertMetricsSnapshot `json:"reconciliation_drift_alerts"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -198,6 +215,12 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if len(env.Data.DeadLetterAlerts.Series) != 1 || env.Data.DeadLetterAlerts.Series[0].JobType != "ensure_service" || env.Data.DeadLetterAlerts.Series[0].OrganizationID != "org_metrics_dead_letter" || env.Data.DeadLetterAlerts.Series[0].JobID != "job_metrics_dead_letter" {
 		t.Fatalf("dead-letter alert series = %+v, want ensure_service with safe org/job hints", env.Data.DeadLetterAlerts.Series)
+	}
+	if env.Data.DriftAlerts.TotalAlerts != 1 {
+		t.Fatalf("reconciliation drift total_alerts = %d, want 1", env.Data.DriftAlerts.TotalAlerts)
+	}
+	if len(env.Data.DriftAlerts.Series) != 1 || env.Data.DriftAlerts.Series[0].DriftKind != "dangerous" || env.Data.DriftAlerts.Series[0].OrganizationID != "org_metrics_drift" || env.Data.DriftAlerts.Series[0].JobID != "job_metrics_drift" {
+		t.Fatalf("reconciliation drift alert series = %+v, want dangerous drift with safe org/job hints", env.Data.DriftAlerts.Series)
 	}
 	foundReadyzFailure := false
 	for _, series := range env.Data.Readiness.Series {
