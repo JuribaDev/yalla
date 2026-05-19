@@ -179,6 +179,20 @@ Dokploy smoke, and secret redaction. Any future worker-job-authoring-doc change
 should update the guide, SECURITY.md verification-gates row, CI step, and
 `scripts/verify.sh` in the same edit.
 
+## Fake Dokploy usage artifact (BE-0548)
+
+`fake_dokploy_usage_static_test.go` pins the developer-facing fake Dokploy
+usage guide at `docs/development/fake-dokploy-usage.md`: the guide must
+document `internal/controlplane/dokploy/dokployfake`, `dokployfake.New`,
+`internal/controlplane/dokploy`, `internal/controlplane/worker`,
+`internal/controlplane/httpapi`, the Yalla API -> Postgres source of truth ->
+provisioning worker -> private Dokploy API boundary, exact fake-Dokploy
+verification commands, required redacted environment variables, expected
+outputs, failure recovery, stable JSON envelopes, isolated Postgres tests,
+tenant-scoped `dokploy_refs`, opt-in live Dokploy smoke, and secret redaction.
+Any future fake-Dokploy-usage-doc change should update the guide, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## Seed admin command artifact (BE-0415)
 
 `seed_admin_command_static_test.go` pins the checked-in seed-admin command

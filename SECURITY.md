@@ -110,6 +110,7 @@ defined in `.github/workflows/ci.yml`:
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration authoring artifact | `go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Worker job authoring artifact | `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Fake Dokploy usage artifact | `go test ./internal/release/... -run TestFakeDokployUsageArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -350,6 +351,34 @@ external live-Dokploy smoke test that must never run against production.
 
 CI pins the guide and release gate with
 `go test ./internal/release/... -run TestWorkerJobAuthoringArtifact`.
+
+## Fake Dokploy Usage Artifact
+
+The fake Dokploy usage guide lives at
+`docs/development/fake-dokploy-usage.md`. It documents how backend tests use
+`internal/controlplane/dokploy/dokployfake` and `dokployfake.New` for
+Dokploy-shaped behavior without reaching a live Dokploy server. The guide
+covers the Yalla API -> Postgres source of truth -> provisioning worker ->
+private Dokploy API boundary, typed client usage in
+`internal/controlplane/dokploy`, worker provisioning paths in
+`internal/controlplane/worker`, HTTP contract tests in
+`internal/controlplane/httpapi`, tenant-scoped `dokploy_refs`, and recorder
+redaction through `output.Sentinel`.
+
+The guide keeps runtime secrets operator-managed and uses only
+`<redacted:...>` placeholders for local environment values. It documents the
+canonical checks: `go test -run TestFakeDokploy ./...`,
+`go test ./internal/controlplane/dokploy/...`,
+`go test ./internal/controlplane/worker/...`,
+`go test ./internal/controlplane/httpapi/...`, `go test ./...`,
+`go test -race ./...`, `go vet ./...`, and `scripts/verify.sh`. It also
+documents stable `yalla.output.v1` and `yalla.error.v1` envelopes, request IDs,
+isolated Postgres integration tests, fake-Dokploy-by-default behavior,
+failure recovery, and the opt-in external live-Dokploy smoke test that must
+never run against production.
+
+CI pins the guide and release gate with
+`go test ./internal/release/... -run TestFakeDokployUsageArtifact`.
 
 ## Seed Admin Command Artifact
 

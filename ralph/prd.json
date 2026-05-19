@@ -11321,8 +11321,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: fake Dokploy usage."
+      "passes": true,
+      "notes": "Documented fake Dokploy usage and pinned the artifact with static release tests, CI, scripts/verify.sh, and SECURITY.md."
     },
     {
       "id": "BE-0549",

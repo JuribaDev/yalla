@@ -1,4 +1,14 @@
 ## Codebase Patterns
+- Fake Dokploy usage documentation follows the static-release-gate pattern:
+  keep `docs/development/fake-dokploy-usage.md`, SECURITY.md, CI,
+  `scripts/verify.sh`, `internal/release/AGENTS.md`, and
+  `internal/release/fake_dokploy_usage_static_test.go` in lockstep; document
+  `internal/controlplane/dokploy/dokployfake`, `dokployfake.New`,
+  `internal/controlplane/dokploy`, `internal/controlplane/worker`,
+  `internal/controlplane/httpapi`, exact fake-Dokploy verification commands,
+  required redacted environment variables, expected outputs, stable envelopes,
+  tenant-scoped `dokploy_refs`, isolated Postgres tests, opt-in live Dokploy
+  smoke, failure recovery, and redaction.
 - Worker job authoring documentation follows the static-release-gate pattern:
   keep `docs/development/worker-job-authoring.md`, SECURITY.md, CI,
   `scripts/verify.sh`, `internal/release/AGENTS.md`, and
@@ -433,6 +443,48 @@
   - Operations commands that mutate backend state should call a dedicated `yalla-api` maintenance flag rather than embedding shell SQL, so the Go binary owns validation, transactionality, audit, and logging.
   - Static release tests should pin the script, binary flag, runbook, SECURITY.md gate row, CI step, and `scripts/verify.sh` together to prevent operations artifact drift.
   - Dry-run plans should show command shape and `YALLA_*` variable names only; runtime seed values stay in the env file and are never echoed.
+---
+## 2026-05-19 18:31 +03 - BE-0548
+- What was implemented
+  - Added the production-grade fake Dokploy usage guide at `docs/development/fake-dokploy-usage.md`.
+  - Added `internal/release/fake_dokploy_usage_static_test.go` to pin guide content, redaction expectations, commands, environment variables, expected outputs, and release-gate wiring.
+  - Wired the new static test into `.github/workflows/ci.yml`, `scripts/verify.sh`, `SECURITY.md`, and `internal/release/AGENTS.md`.
+  - Added the reusable fake-Dokploy documentation pattern to the top `## Codebase Patterns` section.
+  - Marked BE-0548 as passing in `ralph/prd.json`.
+- Files changed
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `docs/development/fake-dokploy-usage.md`
+  - `internal/release/AGENTS.md`
+  - `internal/release/fake_dokploy_usage_static_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+  - `scripts/verify.sh`
+- Verification run
+  - `go test ./internal/release/... -run TestFakeDokployUsageArtifact` failed first on the missing guide/wiring, as expected for TDD.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go vet ./...`
+  - `go test ./internal/release/... -run TestFakeDokployUsageArtifact`
+  - `go test -race ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `scripts/verify.sh`
+  - pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required checks passed.
+  - `scripts/verify.sh` passed and exercised the new `TestFakeDokployUsageArtifact` gate.
+  - `golangci-lint run ./...` passed with 0 issues inside `scripts/verify.sh`.
+  - The strict pre-commit hook ran `govulncheck ./...` with no vulnerabilities found, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`; all passed.
+- Remaining risks or follow-ups
+  - No runtime Dokploy behavior changed in this story.
+  - Remaining documentation stories after BE-0548 still have `passes: false`.
+- **Learnings for future iterations:**
+  - Fake Dokploy docs should preserve the test boundary: normal tests use per-test `dokployfake.New` instances and the typed client path, while `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` remains the only live-Dokploy path.
+  - The fake-Dokploy guide must keep redacted env placeholders, `output.Sentinel`, stable envelopes, tenant-scoped `dokploy_refs`, and exact fake-Dokploy verification commands visible because the static artifact test pins those strings.
 ---
 
 - Security-verification SSRF blocklist pattern, validate-port instance (BE-0349 pattern, internal/controlplane/validate/{ssrf.go, ssrf_static_test.go, ssrf_test.go, fuzz_test.go, AGENTS.md}; SIXTH worked instance of the BE-0344 two-test template and FIRST in the validate package — confirms the template scales to "this pure validator MUST funnel its parsed host through a named blocklist helper" invariants in addition to single-function-hardening (BE-0346), per-call-site predicate scans (BE-0344/0345/0347), and absence-of-API scans (BE-0348). Six SSRF-flavoured rules this instance surfaces that the earlier five do NOT capture: (a) The analyzer is a per-function call-presence scan rather than a per-call-site scan or absence-of-API scan: each of {URL, GitRepoURL} is parsed via findFuncDecl, its body walked with ast.Inspect, and the predicate "calls disallowedSSRFHost by exact identifier" must hold. Exact-identifier matching is the load-bearing rule — a synthetic "calls disallowedHost (look-alike)" fixture is in the self-check so a future refactor that renames the helper inside one validator (but not the other) fails the static guard; substring or prefix matching here would mask the regression. (b) The reason text is a closed set, NOT a templated string with the host interpolated. Nine canonical reasons (8 IP-range classifications + 1 hostname classification) live in package-private constants emitted by ipReason / disallowedSSRFHost. The runtime test pins the set via canonicalSSRFReasons + isCanonicalSSRFReason and asserts every rejection is set-membership equal — strictly stronger than substring redaction checks, because words like "localhost" / "metadata" / "loopback" / "private" appear in the classification text BY DESIGN and would false-positive a substring "host did not appear in reason" guard. The BE-0343 redaction-fixture-collision pattern (choose canary values that don't collide with stable reason phrases) is the predecessor; the closed-set assertion is the next-strongest form. (c) Reject IP literals via net.ParseIP first, then hostnames; the order matters because an IP literal can never be made safe by downstream DNS, so the unconditional-reject decision happens before any hostname rule applies. The IP classifier uses Go stdlib's IsUnspecified / IsLoopback / IsLinkLocalUnicast / IsLinkLocalMulticast / IsMulticast / IsPrivate as the first cut, then adds the four IPv4 ranges stdlib does NOT classify (CGNAT 100.64/10, benchmark 198.18/15, limited broadcast 255.255.255.255 — 169.254/16 is already covered by IsLinkLocalUnicast). Whitelisting IsPrivate alone would miss the cloud-metadata range (169.254.169.254 is link-local, not private). (d) Hostname forbidden set is asymmetric: an exact-match map (forbiddenSSRFHostnames) for {localhost, ip6-localhost, ip6-loopback, metadata, metadata.google.internal, metadata.aws.internal, 169.254.169.254} and a leading-dot suffix list (forbiddenSSRFHostSuffixes) for {.localhost, .internal, .local, .localdomain}. The leading dot on suffixes is required — a bare ".local" suffix without the dot would false-positive on "flocal.example.com". TestSSRFHostnameListsAreCanonical is a sealing-trap pinning required entries AND the leading-dot invariant; dropping any documented entry fails the build. (e) GitRepoURL has THREE entry shapes (https:// / ssh:// / scp-like git@host:path) and the SSRF check must fire on ALL THREE: the analyzer pins the presence of ONE disallowedSSRFHost call in the function body, but the runtime test exercises each shape independently (https loopback, ssh link-local v6, scp .internal, etc.) so a future split that drops the call from the scp branch alone — analyzer still happy because the https branch still has it — surfaces in the runtime table. The lesson: presence-of-call analyzers are necessary but not sufficient; per-shape runtime coverage is the second wall. (f) IPv6 literals in URL form MUST use the bracketed `[fd00::1]` shape because url.Parse with a colon-bearing v6 address outside brackets parses the colons as port separators; the runtime test fixtures call this out explicitly. The disallowedSSRFHost helper strips one set of surrounding brackets so it accepts BOTH the URL-extracted (already unbracketed) form AND a literal bracketed form a caller might supply directly. Layered defence is explicit in AGENTS.md: this is the PURE validator layer (no DNS) and a second wall in the HTTP/git client at fetch time is REQUIRED to catch DNS-rebinding (a public name resolving to an internal IP at fetch time). The validator is the first wall; the runtime resolved-IP re-check is a separate story.
