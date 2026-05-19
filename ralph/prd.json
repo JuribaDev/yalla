@@ -11511,8 +11511,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: environment variable reference."
+      "passes": true,
+      "notes": "Created developer-facing environment variable reference at docs/development/environment-variable-reference.md with static test at internal/release/environment_variable_reference_static_test.go, wired into scripts/verify.sh, CI, SECURITY.md, and internal/release/AGENTS.md."
     },
     {
       "id": "BE-0559",

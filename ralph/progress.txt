@@ -40057,3 +40057,36 @@ change that widened Reason to caller-supplied data.
   - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase.
   - The forbidden-secret scan in static tests is case-insensitive for the forbidden list but case-sensitive for the document content check, so be careful with exact casing in both directions.
 ---
+
+## 2026-05-19 21:50 +03 - BE-0558
+- What was implemented
+  - Added `docs/development/environment-variable-reference.md`, the developer-facing reference for every environment variable consumed by the backend binaries (`cmd/yalla-api` and `cmd/yalla-worker`).
+  - Added `internal/release/environment_variable_reference_static_test.go` to pin the document contents through the static-release-gate pattern.
+  - Wired the new artifact into `scripts/verify.sh`, `.github/workflows/ci.yml`, `SECURITY.md` (verification-gates table row + dedicated section), and `internal/release/AGENTS.md`.
+- Files changed
+  - `docs/development/environment-variable-reference.md`
+  - `internal/release/environment_variable_reference_static_test.go`
+  - `scripts/verify.sh`
+  - `.github/workflows/ci.yml`
+  - `SECURITY.md`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact` passed after iterative document adjustments.
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `scripts/verify.sh --quiet`
+- Results
+  - All required and focused checks passed.
+  - No code changes to backend logic; this is a documentation artifact story.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - Documentation artifacts in this range should use the existing static-release-gate pattern: add the markdown artifact, a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase (e.g., "database URLs, Dokploy tokens" must not span a newline).
+  - The developer-facing env-var reference complements the operator-facing `docs/operations/production-config-reference.md`; both should be updated when new env vars are added.
+---

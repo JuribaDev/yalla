@@ -114,6 +114,7 @@ defined in `.github/workflows/ci.yml`:
 | OpenAPI update procedure artifact | `go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Security review checklist artifact | `go test ./internal/release/... -run TestSecurityReviewChecklistArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Production config reference artifact | `go test ./internal/release/... -run TestProductionConfigReferenceArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Environment variable reference artifact | `go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -837,6 +838,23 @@ external live-Dokploy smoke test warning.
 
 CI pins the production config reference with
 `go test ./internal/release/... -run TestProductionConfigReferenceArtifact`.
+
+## Environment Variable Reference Artifact
+
+The developer-facing environment variable reference lives at
+`docs/development/environment-variable-reference.md`. It documents every
+environment variable consumed by the backend binaries (`cmd/yalla-api` and
+`cmd/yalla-worker`), the four profiles (`local`, `test`, `staging`, `production`),
+per-profile defaults, validation rules, local development quick-start recipes,
+failure recovery guidance, and the redaction contract.
+
+The document uses only `<redacted:...>` placeholders for secret-shaped values
+and documents the exact verification commands, expected output shapes,
+health/readiness probes, structured JSON log expectations, and the opt-in
+external live-Dokploy smoke test warning.
+
+CI pins the environment variable reference with
+`go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact`.
 
 ## Rollback Checklist Artifact
 

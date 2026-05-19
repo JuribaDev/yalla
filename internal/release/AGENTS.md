@@ -235,6 +235,20 @@ test warning. Any future production-config-reference change should update the
 guide, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh` in
 the same edit.
 
+## Environment variable reference artifact (BE-0558)
+
+`environment_variable_reference_static_test.go` pins the developer-facing
+environment variable reference at `docs/development/environment-variable-reference.md`:
+the guide must document every environment variable consumed by the backend
+binaries (`cmd/yalla-api` and `cmd/yalla-worker`), the four profiles
+(`local`, `test`, `staging`, `production`), per-profile defaults, validation
+rules, local development quick-start recipes, failure recovery guidance, the
+redaction contract, exact verification commands, expected output shapes,
+health/readiness probes, structured JSON log expectations, and the opt-in
+external live-Dokploy smoke test warning. Any future environment-variable-
+reference change should update the guide, SECURITY.md verification-gates row,
+CI step, and `scripts/verify.sh` in the same edit.
+
 ## Release checklist artifact (BE-0551)
 
 `release_checklist_artifact_static_test.go` pins the production release

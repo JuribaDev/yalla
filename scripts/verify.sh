@@ -298,6 +298,12 @@ if ! go test ./internal/release/... -run TestProductionConfigReferenceArtifact; 
   required_failed=1
 fi
 
+# Required: environment variable reference artifact static tests
+step "go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact"
+if ! go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact; then
+  required_failed=1
+fi
+
 # Required: seed admin command artifact static tests
 step "go test ./internal/release/... -run TestSeedAdminCommand"
 if ! go test ./internal/release/... -run TestSeedAdminCommand; then

@@ -159,6 +159,9 @@ jobs:
       - name: Production config reference artifact static tests
         run: go test ./internal/release/... -run TestProductionConfigReferenceArtifact
 
+      - name: Environment variable reference artifact static tests
+        run: go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact
+
       - name: Seed admin command artifact static tests
         run: go test ./internal/release/... -run TestSeedAdminCommand
 
