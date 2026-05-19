@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
+	"time"
 )
 
 // DefaultPlan is the plan name LimitsReader uses when none is supplied. A
@@ -33,7 +35,9 @@ type PlanLookup func(ctx context.Context, q Querier, organizationID string) (str
 type LimitsReader struct {
 	store    *Store
 	repo     *QuotaRepository
+	subs     *SubscriptionRepository
 	planFunc PlanLookup
+	clock    func() time.Time
 }
 
 // NewLimitsReader builds a LimitsReader over store. plans resolves the
@@ -44,7 +48,7 @@ func NewLimitsReader(s *Store, plans PlanLookup) (*LimitsReader, error) {
 	if s == nil {
 		return nil, errors.New("store: nil store")
 	}
-	return &LimitsReader{store: s, repo: NewQuotaRepository(), planFunc: plans}, nil
+	return &LimitsReader{store: s, repo: NewQuotaRepository(), subs: NewSubscriptionRepository(), planFunc: plans, clock: time.Now}, nil
 }
 
 // ListEffectiveLimits returns the effective limits configured for
@@ -59,6 +63,23 @@ func NewLimitsReader(s *Store, plans PlanLookup) (*LimitsReader, error) {
 func (r *LimitsReader) ListEffectiveLimits(ctx context.Context, organizationID string) ([]EffectiveQuotaLimit, error) {
 	var limits []EffectiveQuotaLimit
 	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		at := r.clock().UTC()
+		current, ok, err := readCurrentSubscriptionView(ctx, q, organizationID, at)
+		if err != nil {
+			return err
+		}
+		if ok {
+			entitlements, err := r.subs.ResolveEntitlements(ctx, q, organizationID, at)
+			if err != nil {
+				return err
+			}
+			usage, err := quotaUsageCounterMap(ctx, q, organizationID)
+			if err != nil {
+				return err
+			}
+			limits = effectiveLimitsFromEntitlements(entitlements, usage, current)
+			return nil
+		}
 		plan, planErr := r.resolvePlan(ctx, q, organizationID)
 		if planErr != nil {
 			return planErr
@@ -71,6 +92,36 @@ func (r *LimitsReader) ListEffectiveLimits(ctx context.Context, organizationID s
 		return nil, err
 	}
 	return limits, nil
+}
+
+func effectiveLimitsFromEntitlements(entitlements []EffectiveEntitlement, usage map[QuotaResource]int64, current currentSubscriptionView) []EffectiveQuotaLimit {
+	out := make([]EffectiveQuotaLimit, 0, len(entitlements))
+	for _, ent := range entitlements {
+		resource := QuotaResource(ent.EntitlementKey)
+		if !resource.Valid() {
+			continue
+		}
+		limit := int64(0)
+		if ent.LimitValue != nil {
+			limit = *ent.LimitValue
+		}
+		start := current.CurrentPeriodStart
+		end := current.CurrentPeriodEnd
+		out = append(out, EffectiveQuotaLimit{
+			Resource:          resource,
+			LimitValue:        limit,
+			EnforcementMode:   ent.EnforcementMode,
+			Scope:             entitlementScope(ent.Source),
+			UsedValue:         usage[resource],
+			ResetPeriodStart:  &start,
+			ResetPeriodEnd:    &end,
+			WarningThresholds: warningThresholdCopy(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Resource < out[j].Resource
+	})
+	return out
 }
 
 // resolvePlan resolves the plan name through the configured PlanLookup, with

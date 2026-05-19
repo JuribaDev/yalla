@@ -227,6 +227,15 @@ shape and a new middleware that does not will fail the build.
    in the route pattern without a matching `PathParams` entry serves fine but
    publishes an undocumented parameter.
 
+## Pricing and Usage Responses
+
+- Customer-facing limits/usage responses may expose stable source labels,
+  counters, reset periods, warning thresholds, and trend summaries, but must
+  not expose provider ids, plan ids, subscription ids, override ids, or
+  override reasons. Keep empty collection fields as `[]` for agents; for
+  example, `trend_summaries` remains a non-nil empty array until usage-event
+  aggregation is implemented.
+
 ## Self endpoints (`/v1/me*`)
 
 The `/v1/me` family (`auth.me`, `auth.orgs`, …) is built **purely from the

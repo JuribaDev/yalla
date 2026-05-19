@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
+	"time"
 )
 
 // UsageReader is the store-backed read adapter for the usage surface: the
@@ -16,7 +18,9 @@ import (
 type UsageReader struct {
 	store    *Store
 	repo     *QuotaRepository
+	subs     *SubscriptionRepository
 	planFunc PlanLookup
+	clock    func() time.Time
 }
 
 // NewUsageReader builds a UsageReader over store. plans resolves the
@@ -27,7 +31,7 @@ func NewUsageReader(s *Store, plans PlanLookup) (*UsageReader, error) {
 	if s == nil {
 		return nil, errors.New("store: nil store")
 	}
-	return &UsageReader{store: s, repo: NewQuotaRepository(), planFunc: plans}, nil
+	return &UsageReader{store: s, repo: NewQuotaRepository(), subs: NewSubscriptionRepository(), planFunc: plans, clock: time.Now}, nil
 }
 
 // ListOrganizationUsage returns the current usage counters configured for
@@ -42,6 +46,23 @@ func NewUsageReader(s *Store, plans PlanLookup) (*UsageReader, error) {
 func (r *UsageReader) ListOrganizationUsage(ctx context.Context, organizationID string) ([]OrganizationResourceUsage, error) {
 	var usage []OrganizationResourceUsage
 	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		at := r.clock().UTC()
+		current, ok, err := readCurrentSubscriptionView(ctx, q, organizationID, at)
+		if err != nil {
+			return err
+		}
+		if ok {
+			entitlements, err := r.subs.ResolveEntitlements(ctx, q, organizationID, at)
+			if err != nil {
+				return err
+			}
+			counters, err := quotaUsageCounterMap(ctx, q, organizationID)
+			if err != nil {
+				return err
+			}
+			usage = organizationUsageFromEntitlements(entitlements, counters, current)
+			return nil
+		}
 		plan, planErr := r.resolvePlan(ctx, q, organizationID)
 		if planErr != nil {
 			return planErr
@@ -54,6 +75,57 @@ func (r *UsageReader) ListOrganizationUsage(ctx context.Context, organizationID 
 		return nil, err
 	}
 	return usage, nil
+}
+
+func organizationUsageFromEntitlements(entitlements []EffectiveEntitlement, counters map[QuotaResource]int64, current currentSubscriptionView) []OrganizationResourceUsage {
+	byResource := make(map[QuotaResource]OrganizationResourceUsage, len(entitlements)+len(counters))
+	for _, ent := range entitlements {
+		resource := QuotaResource(ent.EntitlementKey)
+		if !resource.Valid() {
+			continue
+		}
+		start := current.CurrentPeriodStart
+		end := current.CurrentPeriodEnd
+		mode := ent.EnforcementMode
+		scope := entitlementScope(ent.Source)
+		byResource[resource] = OrganizationResourceUsage{
+			Resource:          resource,
+			UsedValue:         counters[resource],
+			LimitValue:        cloneInt64Pointer(ent.LimitValue),
+			EnforcementMode:   &mode,
+			Scope:             &scope,
+			PeriodStart:       &start,
+			PeriodEnd:         &end,
+			WarningThresholds: warningThresholdCopy(),
+		}
+		delete(counters, resource)
+	}
+	for resource, used := range counters {
+		start := current.CurrentPeriodStart
+		end := current.CurrentPeriodEnd
+		byResource[resource] = OrganizationResourceUsage{
+			Resource:    resource,
+			UsedValue:   used,
+			PeriodStart: &start,
+			PeriodEnd:   &end,
+		}
+	}
+	out := make([]OrganizationResourceUsage, 0, len(byResource))
+	for _, row := range byResource {
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Resource < out[j].Resource
+	})
+	return out
+}
+
+func cloneInt64Pointer(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	return &out
 }
 
 // resolvePlan resolves the plan name through the configured PlanLookup, with

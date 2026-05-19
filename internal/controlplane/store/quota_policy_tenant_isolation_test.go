@@ -255,7 +255,7 @@ func TestQuotaRepositoryListEffectiveLimitsCountsAreIsolated(t *testing.T) {
 		{Resource: store.QuotaResourceServices, LimitValue: 22, EnforcementMode: store.EnforcementModeMetered, Scope: store.QuotaScopeOrganization},
 	}
 	for i, w := range wantB {
-		if gotB[i] != w {
+		if gotB[i].Resource != w.Resource || gotB[i].LimitValue != w.LimitValue || gotB[i].EnforcementMode != w.EnforcementMode || gotB[i].Scope != w.Scope {
 			t.Errorf("ListEffectiveLimits(orgB)[%d] = %+v, want %+v", i, gotB[i], w)
 		}
 	}

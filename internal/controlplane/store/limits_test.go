@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
@@ -58,7 +59,7 @@ func TestQuotaRepositoryListEffectiveLimitsResolution(t *testing.T) {
 		{Resource: store.QuotaResourceServices, LimitValue: 25, EnforcementMode: store.EnforcementModeHard, Scope: store.QuotaScopePlanDefault},
 	}
 	for i, w := range want {
-		if got[i] != w {
+		if got[i].Resource != w.Resource || got[i].LimitValue != w.LimitValue || got[i].EnforcementMode != w.EnforcementMode || got[i].Scope != w.Scope {
 			t.Errorf("[%d] = %+v, want %+v", i, got[i], w)
 		}
 	}
@@ -199,6 +200,56 @@ func TestLimitsReaderRespectsCustomPlanLookup(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].LimitValue != 50 {
 		t.Errorf("got = %+v, want a single projects entry of 50 (pro plan default)", got)
+	}
+}
+
+func TestLimitsReaderUsesCurrentSubscriptionEntitlementsWithUsageAndResetPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "EntitledLimits")
+	plan := seededPlan(ctx, t, s, pricing, "starter")
+	projectLimit := int64(2)
+	upsertEntitlementOrFail(ctx, t, s, pricing, store.UpsertPlanEntitlementInput{
+		PlanID:          plan.ID,
+		EntitlementKey:  "projects",
+		LimitValue:      &projectLimit,
+		EnforcementMode: store.EnforcementModeHard,
+	})
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "projects", store.EntitlementSourceSubscriptionOverride, 10, now))
+	seedQuotaUsage(t, db, "qu_limits_entitled_projects", org.ID, "projects", 8)
+
+	reader, err := store.NewLimitsReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewLimitsReader: %v", err)
+	}
+	got, err := reader.ListEffectiveLimits(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListEffectiveLimits: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1; got = %+v", len(got), got)
+	}
+	limit := got[0]
+	if limit.Resource != store.QuotaResourceProjects || limit.LimitValue != 10 || limit.UsedValue != 8 || limit.Scope != store.QuotaScopeSubscriptionOverride {
+		t.Fatalf("entitlement-backed limit = %+v, want projects 8/10 subscription_override", limit)
+	}
+	if limit.ResetPeriodStart == nil || !limit.ResetPeriodStart.Equal(now.Add(-time.Hour)) {
+		t.Errorf("ResetPeriodStart = %v, want current subscription start", limit.ResetPeriodStart)
+	}
+	if limit.ResetPeriodEnd == nil || !limit.ResetPeriodEnd.Equal(now.Add(time.Hour)) {
+		t.Errorf("ResetPeriodEnd = %v, want current subscription end", limit.ResetPeriodEnd)
+	}
+	if len(limit.WarningThresholds) != 3 || limit.WarningThresholds[0] != 80 || limit.WarningThresholds[2] != 100 {
+		t.Errorf("WarningThresholds = %v, want [80 90 100]", limit.WarningThresholds)
 	}
 }
 

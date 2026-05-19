@@ -44,7 +44,9 @@ type UsageReader interface {
 // always a non-nil slice so agents can iterate it without a nil check;
 // resources with neither a counter nor a configured limit are omitted.
 type listUsagePayload struct {
-	Usage []resourceUsage `json:"usage"`
+	Period         *periodResource `json:"period,omitempty"`
+	Usage          []resourceUsage `json:"usage"`
+	TrendSummaries []usageTrend    `json:"trend_summaries"`
 }
 
 // resourceUsage is one entry in a listUsagePayload: the current usage of a
@@ -57,9 +59,16 @@ type listUsagePayload struct {
 // carries credential material: quota dimensions, counts, and ceilings are
 // not sensitive.
 type resourceUsage struct {
-	Resource  string            `json:"resource"`
-	UsedValue int64             `json:"used_value"`
-	Limit     *resourceUsageCap `json:"limit"`
+	Resource          string            `json:"resource"`
+	UsedValue         int64             `json:"used_value"`
+	Limit             *resourceUsageCap `json:"limit"`
+	WarningThresholds []int             `json:"warning_thresholds"`
+}
+
+type usageTrend struct {
+	Resource string `json:"resource"`
+	Window   string `json:"window"`
+	Delta    int64  `json:"delta"`
 }
 
 // resourceUsageCap is the limit half of a resourceUsage: the numeric
@@ -83,8 +92,9 @@ type resourceUsageCap struct {
 // persistence shape can evolve without changing the response.
 func resourceUsageOf(u store.OrganizationResourceUsage) resourceUsage {
 	out := resourceUsage{
-		Resource:  u.Resource.String(),
-		UsedValue: u.UsedValue,
+		Resource:          u.Resource.String(),
+		UsedValue:         u.UsedValue,
+		WarningThresholds: []int{},
 	}
 	if u.LimitValue != nil && u.EnforcementMode != nil && u.Scope != nil {
 		out.Limit = &resourceUsageCap{
@@ -92,6 +102,7 @@ func resourceUsageOf(u store.OrganizationResourceUsage) resourceUsage {
 			EnforcementMode: string(*u.EnforcementMode),
 			Source:          string(*u.Scope),
 		}
+		out.WarningThresholds = warningThresholds(u.WarningThresholds, *u.LimitValue)
 	}
 	return out
 }
@@ -133,12 +144,18 @@ func listUsageHandler(reader UsageReader) http.HandlerFunc {
 		}
 
 		resources := make([]resourceUsage, 0, len(usage))
+		var period *periodResource
 		for _, u := range usage {
+			if period == nil && u.PeriodStart != nil && u.PeriodEnd != nil {
+				period = periodOf(*u.PeriodStart, *u.PeriodEnd)
+			}
 			resources = append(resources, resourceUsageOf(u))
 		}
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listUsagePayload{
-			Usage: resources,
+			Period:         period,
+			Usage:          resources,
+			TrendSummaries: []usageTrend{},
 		})
 	}
 }

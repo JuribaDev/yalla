@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
@@ -271,6 +272,64 @@ func TestUsageReaderRespectsCustomPlanLookup(t *testing.T) {
 	}
 	if got[0].UsedValue != 3 {
 		t.Errorf("UsedValue = %d, want 3", got[0].UsedValue)
+	}
+}
+
+func TestUsageReaderUsesCurrentSubscriptionEntitlementsPeriodAndTenantCounters(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	orgA := seedOrg(t, db, f, "EntitledUsageA")
+	orgB := seedOrg(t, db, f, "EntitledUsageB")
+	plan := seededPlan(ctx, t, s, pricing, "pro")
+	subA := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(orgA.ID, plan.ID, store.SubscriptionStatusActive, now))
+	createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(orgB.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(orgA.ID, subA.ID, "projects", store.EntitlementSourceSubscriptionOverride, 12, now))
+	seedQuotaUsage(t, db, "qu_usage_entitled_projects_a", orgA.ID, "projects", 9)
+	seedQuotaUsage(t, db, "qu_usage_entitled_projects_b", orgB.ID, "projects", 4)
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, orgA.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("got no usage rows, want entitlement-backed rows")
+	}
+	var projects store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceProjects {
+			projects = row
+			break
+		}
+	}
+	if projects.Resource == "" {
+		t.Fatalf("usage rows %+v missing projects entitlement", got)
+	}
+	if projects.UsedValue != 9 {
+		t.Fatalf("projects UsedValue = %d, want org A's counter 9 (not org B's 4)", projects.UsedValue)
+	}
+	if projects.LimitValue == nil || *projects.LimitValue != 12 || projects.Scope == nil || *projects.Scope != store.QuotaScopeSubscriptionOverride {
+		t.Fatalf("projects limit projection = %+v, want subscription override 12", projects)
+	}
+	if projects.PeriodStart == nil || !projects.PeriodStart.Equal(now.Add(-time.Hour)) {
+		t.Errorf("PeriodStart = %v, want current subscription start", projects.PeriodStart)
+	}
+	if projects.PeriodEnd == nil || !projects.PeriodEnd.Equal(now.Add(time.Hour)) {
+		t.Errorf("PeriodEnd = %v, want current subscription end", projects.PeriodEnd)
+	}
+	if len(projects.WarningThresholds) != 3 || projects.WarningThresholds[0] != 80 || projects.WarningThresholds[2] != 100 {
+		t.Errorf("WarningThresholds = %v, want [80 90 100]", projects.WarningThresholds)
 	}
 }
 

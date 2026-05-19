@@ -6,8 +6,10 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
@@ -161,6 +163,15 @@ func decodeErrorEnvelope(t *testing.T, body []byte) (code, message string, reque
 	return env.Error.Code, env.Error.Message, env.RequestID
 }
 
+func mustParseTime(t *testing.T, raw string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		t.Fatalf("parse time %q: %v", raw, err)
+	}
+	return ts
+}
+
 // TestListLimitsReturnsStableEnvelope proves the success path: an authorized
 // owner sees the effective limits for its own organization rendered in the
 // stable yalla.output.v1 envelope, in the order the LimitsReader returned
@@ -209,13 +220,88 @@ func TestListLimitsReturnsStableEnvelope(t *testing.T) {
 		t.Fatalf("len(limits) = %d, want %d; body = %s", got, want, rec.Body.String())
 	}
 	want := []limitResource{
-		{Resource: "projects", LimitValue: 10, EnforcementMode: "hard", Source: "organization"},
-		{Resource: "services", LimitValue: 25, EnforcementMode: "hard", Source: "plan_default"},
-		{Resource: "monthly_deployments", LimitValue: 1_000, EnforcementMode: "metered", Source: "plan_default"},
+		{Resource: "projects", LimitValue: 10, EnforcementMode: "hard", Source: "organization", WarningThresholds: []int{80, 90, 100}},
+		{Resource: "services", LimitValue: 25, EnforcementMode: "hard", Source: "plan_default", WarningThresholds: []int{80, 90, 100}},
+		{Resource: "monthly_deployments", LimitValue: 1_000, EnforcementMode: "metered", Source: "plan_default", WarningThresholds: []int{80, 90, 100}},
 	}
 	for i, got := range payload.Limits {
-		if got != want[i] {
+		if !reflect.DeepEqual(got, want[i]) {
 			t.Errorf("limits[%d] = %+v, want %+v", i, got, want[i])
+		}
+	}
+}
+
+func TestListLimitsReturnsEntitlementUsageResetAndWarningsWithoutInternalIDs(t *testing.T) {
+	t.Parallel()
+
+	const orgID = "org_001"
+	start := mustParseTime(t, "2026-05-01T00:00:00Z")
+	end := mustParseTime(t, "2026-06-01T00:00:00Z")
+	reader := fakeLimitsReader{
+		limits: []store.EffectiveQuotaLimit{
+			{
+				Resource:          store.QuotaResourceProjects,
+				LimitValue:        10,
+				EnforcementMode:   store.EnforcementModeHard,
+				Scope:             store.QuotaScopeSubscriptionOverride,
+				UsedValue:         8,
+				ResetPeriodStart:  &start,
+				ResetPeriodEnd:    &end,
+				WarningThresholds: []int{80, 90, 100},
+			},
+		},
+	}
+
+	handler := listLimitsHandlerFor(limitsActorIdentity(orgID, "user_owner"), nil, reader)
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+orgID+"/limits", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		Data          struct {
+			Limits []struct {
+				Resource        string `json:"resource"`
+				LimitValue      int64  `json:"limit_value"`
+				UsedValue       int64  `json:"used_value"`
+				EnforcementMode string `json:"enforcement_mode"`
+				Source          string `json:"source"`
+				ResetPeriod     struct {
+					Kind  string `json:"kind"`
+					Start string `json:"start"`
+					End   string `json:"end"`
+				} `json:"reset_period"`
+				WarningThresholds []int `json:"warning_thresholds"`
+			} `json:"limits"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("json.Unmarshal: %v\nbody = %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" {
+		t.Fatalf("schema_version = %q, want yalla.output.v1", env.SchemaVersion)
+	}
+	if len(env.Data.Limits) != 1 {
+		t.Fatalf("limits len = %d, want 1", len(env.Data.Limits))
+	}
+	got := env.Data.Limits[0]
+	if got.Resource != "projects" || got.LimitValue != 10 || got.UsedValue != 8 || got.EnforcementMode != "hard" || got.Source != "subscription_override" {
+		t.Fatalf("limit projection = %+v, want projects 8/10 hard subscription_override", got)
+	}
+	if got.ResetPeriod.Kind != "billing_period" || got.ResetPeriod.Start != "2026-05-01T00:00:00Z" || got.ResetPeriod.End != "2026-06-01T00:00:00Z" {
+		t.Errorf("reset_period = %+v, want billing period start/end", got.ResetPeriod)
+	}
+	if want := []int{80, 90, 100}; !reflect.DeepEqual(got.WarningThresholds, want) {
+		t.Errorf("warning_thresholds = %v, want %v", got.WarningThresholds, want)
+	}
+	body := rec.Body.String()
+	for _, forbidden := range []string{"plan_", "sub_", "sent_", "provider", "override reason", "emergency reason"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("limits response leaked internal subscription/provider/override detail %q in %s", forbidden, body)
 		}
 	}
 }

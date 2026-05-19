@@ -178,6 +178,15 @@ const (
 	// override; it takes precedence over the plan default for the same
 	// resource.
 	QuotaScopeOrganization QuotaScope = "organization"
+	// QuotaScopePlan marks an effective limit inherited from the accepted
+	// pricing plan entitlement catalog.
+	QuotaScopePlan QuotaScope = "plan"
+	// QuotaScopeSubscriptionOverride marks an effective limit produced by a
+	// subscription-scoped entitlement override.
+	QuotaScopeSubscriptionOverride QuotaScope = "subscription_override"
+	// QuotaScopeEmergencyAdmin marks an effective limit produced by an
+	// emergency-admin entitlement override.
+	QuotaScopeEmergencyAdmin QuotaScope = "emergency_admin"
 )
 
 // OrganizationResourceUsage is one resource's currently-allocated count for
@@ -194,11 +203,14 @@ const (
 // dimension as unconstrained — the same semantics the limits endpoint uses
 // when it omits the resource entirely.
 type OrganizationResourceUsage struct {
-	Resource        QuotaResource
-	UsedValue       int64
-	LimitValue      *int64
-	EnforcementMode *EnforcementMode
-	Scope           *QuotaScope
+	Resource          QuotaResource
+	UsedValue         int64
+	LimitValue        *int64
+	EnforcementMode   *EnforcementMode
+	Scope             *QuotaScope
+	PeriodStart       *time.Time
+	PeriodEnd         *time.Time
+	WarningThresholds []int
 }
 
 // EffectiveQuotaLimit is one resource's resolved limit, along with the scope
@@ -207,10 +219,14 @@ type OrganizationResourceUsage struct {
 // resolution rule (organization override beats plan default) is applied in
 // SQL so the wire shape always matches what the quota checker would see.
 type EffectiveQuotaLimit struct {
-	Resource        QuotaResource
-	LimitValue      int64
-	EnforcementMode EnforcementMode
-	Scope           QuotaScope
+	Resource          QuotaResource
+	LimitValue        int64
+	EnforcementMode   EnforcementMode
+	Scope             QuotaScope
+	UsedValue         int64
+	ResetPeriodStart  *time.Time
+	ResetPeriodEnd    *time.Time
+	WarningThresholds []int
 }
 
 // QuotaReservation is a short-lived claim on a resource dimension. An active

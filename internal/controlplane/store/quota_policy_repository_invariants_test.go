@@ -411,7 +411,7 @@ func TestQuotaRepositoryListEffectiveLimitsResolvesAcrossScopesInDeterministicOr
 		t.Fatalf("ListEffectiveLimits returned %d rows, want %d (rows = %+v)", len(limits), len(want), limits)
 	}
 	for i, w := range want {
-		if limits[i] != w {
+		if limits[i].Resource != w.Resource || limits[i].LimitValue != w.LimitValue || limits[i].EnforcementMode != w.EnforcementMode || limits[i].Scope != w.Scope {
 			t.Errorf("row %d = %+v, want %+v", i, limits[i], w)
 		}
 	}

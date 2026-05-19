@@ -218,6 +218,14 @@ Postgres persistence for control-plane source-of-truth state.
 
 ## Subscriptions and entitlement overrides (`0050_subscriptions_entitlement_overrides`)
 
+- Customer-visible limits and usage readers should prefer the current accepted
+  subscription entitlement view when one exists, then fall back to legacy
+  `quota_policies` for organizations without a current subscription. Join only
+  tenant-scoped `quota_usage` counters, filter entitlement keys to known
+  `QuotaResource` values for quota API responses, and do not expose provider
+  ids, plan ids, subscription ids, override ids, or override reasons in public
+  projections.
+
 - `subscriptions` bind an organization to the exact immutable `plans.id` it
   accepted. Runtime entitlement reads only consider `trialing`, `active`, and
   `past_due` subscriptions whose current period contains the resolver's

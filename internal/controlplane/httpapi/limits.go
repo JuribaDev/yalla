@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -68,21 +69,54 @@ type listLimitsPayload struct {
 // hard, soft, metered, or disabled — the same closed set the database
 // enforces through the quota_enforcement_mode domain.
 type limitResource struct {
-	Resource        string `json:"resource"`
-	LimitValue      int64  `json:"limit_value"`
-	EnforcementMode string `json:"enforcement_mode"`
-	Source          string `json:"source"`
+	Resource          string          `json:"resource"`
+	LimitValue        int64           `json:"limit_value"`
+	UsedValue         int64           `json:"used_value"`
+	EnforcementMode   string          `json:"enforcement_mode"`
+	Source            string          `json:"source"`
+	ResetPeriod       *periodResource `json:"reset_period,omitempty"`
+	WarningThresholds []int           `json:"warning_thresholds"`
+}
+
+type periodResource struct {
+	Kind  string `json:"kind"`
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 // limitResourceOf projects a store.EffectiveQuotaLimit into the stable wire
 // shape. The wire field names are the stable contract; the persistence shape
 // can evolve without changing the response.
 func limitResourceOf(l store.EffectiveQuotaLimit) limitResource {
-	return limitResource{
-		Resource:        l.Resource.String(),
-		LimitValue:      l.LimitValue,
-		EnforcementMode: string(l.EnforcementMode),
-		Source:          string(l.Scope),
+	out := limitResource{
+		Resource:          l.Resource.String(),
+		LimitValue:        l.LimitValue,
+		UsedValue:         l.UsedValue,
+		EnforcementMode:   string(l.EnforcementMode),
+		Source:            string(l.Scope),
+		WarningThresholds: warningThresholds(l.WarningThresholds, l.LimitValue),
+	}
+	if l.ResetPeriodStart != nil && l.ResetPeriodEnd != nil {
+		out.ResetPeriod = periodOf(*l.ResetPeriodStart, *l.ResetPeriodEnd)
+	}
+	return out
+}
+
+func warningThresholds(configured []int, limit int64) []int {
+	if len(configured) > 0 {
+		return append([]int(nil), configured...)
+	}
+	if limit <= 0 {
+		return []int{}
+	}
+	return []int{80, 90, 100}
+}
+
+func periodOf(start, end time.Time) *periodResource {
+	return &periodResource{
+		Kind:  "billing_period",
+		Start: start.UTC().Format(time.RFC3339),
+		End:   end.UTC().Format(time.RFC3339),
 	}
 }
 

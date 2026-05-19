@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -109,14 +110,14 @@ func TestUpdateLimitsReturnsEffectiveLimits(t *testing.T) {
 	}
 	env := decodeUpdateLimits(t, rec)
 	want := []limitResource{
-		{Resource: "projects", LimitValue: 25, EnforcementMode: "hard", Source: "organization"},
-		{Resource: "services", LimitValue: 100, EnforcementMode: "hard", Source: "organization"},
+		{Resource: "projects", LimitValue: 25, EnforcementMode: "hard", Source: "organization", WarningThresholds: []int{80, 90, 100}},
+		{Resource: "services", LimitValue: 100, EnforcementMode: "hard", Source: "organization", WarningThresholds: []int{80, 90, 100}},
 	}
 	if len(env.Data.Limits) != len(want) {
 		t.Fatalf("limits = %+v, want %+v", env.Data.Limits, want)
 	}
 	for i, w := range want {
-		if env.Data.Limits[i] != w {
+		if !reflect.DeepEqual(env.Data.Limits[i], w) {
 			t.Errorf("limits[%d] = %+v, want %+v", i, env.Data.Limits[i], w)
 		}
 	}

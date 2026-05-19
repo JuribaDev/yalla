@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -196,6 +197,91 @@ func TestListUsageReturnsCurrentUsageAndLimits(t *testing.T) {
 	}
 	if second.Limit != nil {
 		t.Errorf("[1].limit = %+v, want nil for an unconstrained resource", second.Limit)
+	}
+}
+
+func TestListUsageReturnsBillingPeriodWarningsAndStableTrends(t *testing.T) {
+	t.Parallel()
+
+	const orgID = "org_acme"
+	start := mustParseTime(t, "2026-05-01T00:00:00Z")
+	end := mustParseTime(t, "2026-06-01T00:00:00Z")
+	mode := store.EnforcementModeHard
+	scope := store.QuotaScopePlan
+	limit := int64(10)
+	reader := fakeUsageReader{
+		usage: []store.OrganizationResourceUsage{
+			{
+				Resource:          store.QuotaResourceProjects,
+				UsedValue:         8,
+				LimitValue:        &limit,
+				EnforcementMode:   &mode,
+				Scope:             &scope,
+				PeriodStart:       &start,
+				PeriodEnd:         &end,
+				WarningThresholds: []int{80, 90, 100},
+			},
+		},
+	}
+
+	handler := listUsageHandlerFor(usageActorIdentity(orgID, "usr_owner"), nil, reader)
+	rec := getUsage(handler, orgID, "a-valid-session-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		Data          struct {
+			Period struct {
+				Kind  string `json:"kind"`
+				Start string `json:"start"`
+				End   string `json:"end"`
+			} `json:"period"`
+			Usage []struct {
+				Resource          string `json:"resource"`
+				UsedValue         int64  `json:"used_value"`
+				WarningThresholds []int  `json:"warning_thresholds"`
+				Limit             *struct {
+					LimitValue      int64  `json:"limit_value"`
+					EnforcementMode string `json:"enforcement_mode"`
+					Source          string `json:"source"`
+				} `json:"limit"`
+			} `json:"usage"`
+			TrendSummaries []struct {
+				Resource string `json:"resource"`
+			} `json:"trend_summaries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v; body=%s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" {
+		t.Fatalf("schema_version = %q, want yalla.output.v1", env.SchemaVersion)
+	}
+	if env.Data.Period.Kind != "billing_period" || env.Data.Period.Start != "2026-05-01T00:00:00Z" || env.Data.Period.End != "2026-06-01T00:00:00Z" {
+		t.Errorf("period = %+v, want billing period start/end", env.Data.Period)
+	}
+	if len(env.Data.Usage) != 1 {
+		t.Fatalf("usage len = %d, want 1", len(env.Data.Usage))
+	}
+	got := env.Data.Usage[0]
+	if got.Resource != "projects" || got.UsedValue != 8 || got.Limit == nil || got.Limit.LimitValue != 10 || got.Limit.Source != "plan" {
+		t.Fatalf("usage projection = %+v, want projects 8/10 from plan", got)
+	}
+	if want := []int{80, 90, 100}; !reflect.DeepEqual(got.WarningThresholds, want) {
+		t.Errorf("warning_thresholds = %v, want %v", got.WarningThresholds, want)
+	}
+	if env.Data.TrendSummaries == nil {
+		t.Fatal("trend_summaries is nil, want stable empty array until usage_events aggregation lands")
+	}
+	if len(env.Data.TrendSummaries) != 0 {
+		t.Fatalf("trend_summaries len = %d, want 0 before usage_events aggregation", len(env.Data.TrendSummaries))
+	}
+	body := rec.Body.String()
+	for _, forbidden := range []string{"plan_", "sub_", "sent_", "provider", "override reason", "emergency reason"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("usage response leaked internal subscription/provider/override detail %q in %s", forbidden, body)
+		}
 	}
 }
 
