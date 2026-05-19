@@ -39,6 +39,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeDokployConflict, 8},
 		{CodeDokployRateLimited, 8},
 		{CodeDokployUnavailable, 8},
+		{CodeDokployBadResponse, 8},
 		{CodeUpstreamBug, 8},
 		{CodeUnavailable, 8},
 		{CodeNoInput, 9},
@@ -132,6 +133,22 @@ func TestDokployUnavailableDescriptionNamesUpstreamOutage(t *testing.T) {
 	const want = "upstream Dokploy provisioning backend is temporarily unavailable"
 	if got != want {
 		t.Fatalf("E_DOKPLOY_UNAVAILABLE description = %q, want %q", got, want)
+	}
+}
+
+func TestDokployBadResponseDescriptionNamesUpstreamContractMismatch(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDokployBadResponse) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "upstream Dokploy provisioning backend returned an incompatible response"
+	if got != want {
+		t.Fatalf("E_DOKPLOY_BAD_RESPONSE description = %q, want %q", got, want)
 	}
 }
 

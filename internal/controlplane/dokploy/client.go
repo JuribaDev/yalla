@@ -267,7 +267,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 			return nil
 		}
 		if err := decodeBody(payload, dst); err != nil {
-			return apierr.DokployUnavailable(c.redact(
+			return apierr.DokployBadResponse(c.redact(
 				fmt.Errorf("decode dokploy response for %s %s: %w", method, path, err)))
 		}
 		return nil

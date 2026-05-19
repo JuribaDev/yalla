@@ -197,6 +197,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeDokployConflict, http.StatusBadGateway},
 		{yerr.CodeDokployRateLimited, http.StatusBadGateway},
 		{yerr.CodeDokployUnavailable, http.StatusBadGateway},
+		{yerr.CodeDokployBadResponse, http.StatusBadGateway},
 		{yerr.CodeUpstreamBug, http.StatusBadGateway},
 		{yerr.CodeNetwork, http.StatusBadGateway},
 		{yerr.CodeTimeout, http.StatusGatewayTimeout},

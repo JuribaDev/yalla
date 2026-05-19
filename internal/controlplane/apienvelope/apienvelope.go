@@ -97,7 +97,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_UNSUPPORTED                             -> 501 Not Implemented
 //	E_SERVER, E_DOKPLOY_AUTH, E_DOKPLOY_FORBIDDEN, E_DOKPLOY_NOT_FOUND,
 //	E_DOKPLOY_CONFLICT, E_DOKPLOY_RATE_LIMITED, E_DOKPLOY_UNAVAILABLE,
-//	E_UPSTREAM_BUG, E_NETWORK -> 502 Bad Gateway
+//	E_DOKPLOY_BAD_RESPONSE, E_UPSTREAM_BUG, E_NETWORK -> 502 Bad Gateway
 //	E_TIMEOUT                                 -> 504 Gateway Timeout
 //	E_UNAVAILABLE                             -> 503 Service Unavailable
 //	E_CANCELED                                -> 499 Client Closed Request
@@ -118,7 +118,7 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusTooManyRequests
 	case yerr.CodeUnsupported:
 		return http.StatusNotImplemented
-	case yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeUpstreamBug, yerr.CodeNetwork:
+	case yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeUpstreamBug, yerr.CodeNetwork:
 		return http.StatusBadGateway
 	case yerr.CodeTimeout:
 		return http.StatusGatewayTimeout

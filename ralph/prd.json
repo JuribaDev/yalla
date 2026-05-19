@@ -10998,8 +10998,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_DOKPLOY_BAD_RESPONSE."
+      "passes": true,
+      "notes": "Completed E_DOKPLOY_BAD_RESPONSE contract: shared error code, backend typed constructor/taxonomy, 502 envelope mapping, redaction tests, and Dokploy client malformed-2xx mapping."
     },
     {
       "id": "BE-0532",

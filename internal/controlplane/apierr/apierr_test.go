@@ -59,7 +59,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
-		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
 	for _, code := range required {
@@ -108,6 +108,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"dokploy conflict", DokployConflict(stderrors.New("x")), yerr.CodeDokployConflict, 502},
 		{"dokploy rate limited", DokployRateLimited(stderrors.New("x")), yerr.CodeDokployRateLimited, 502},
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
+		{"dokploy bad response", DokployBadResponse(stderrors.New("x")), yerr.CodeDokployBadResponse, 502},
 		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
@@ -374,6 +375,57 @@ func TestDokployConflictContract(t *testing.T) {
 	}
 	if strings.Contains(body, "dkp_conflict_secret_token_value") || strings.Contains(body, "Bearer") {
 		t.Errorf("dokploy-conflict envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployBadResponseContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_bad_response_secret_token_value"
+	cause := stderrors.New("dokploy malformed payload included token: " + leaked)
+	err := DokployBadResponse(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployBadResponse {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployBadResponse)
+	}
+	if err.Message != "the Dokploy provisioning backend returned an incompatible response" {
+		t.Fatalf("message = %q, want fixed generic upstream-bad-response message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_BAD_RESPONSE must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployBadResponse must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-bad-response", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-bad-response"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployBadResponse)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_bad_response_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-bad-response envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in dokploy-bad-response envelope: %s", output.Sentinel, body)
 	}
 }
 

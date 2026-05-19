@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Successful Dokploy HTTP responses with incompatible/malformed JSON from the typed client map to `apierr.DokployBadResponse()` / `E_DOKPLOY_BAD_RESPONSE` (HTTP 502), not `E_DOKPLOY_UNAVAILABLE`, because the upstream is reachable but violating Yalla's typed response contract. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted decode/upstream detail for server-side diagnostics.
 - Upstream Dokploy 429 rate limits from the typed client map to `apierr.DokployRateLimited()` / `E_DOKPLOY_RATE_LIMITED` (HTTP 502), not customer-facing `E_RATE_LIMITED`, because the throttle is on Yalla's private provisioning dependency rather than the caller's public API bucket. It is retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted upstream detail for server-side diagnostics.
 - Upstream Dokploy 409 conflicts from the typed client map to `apierr.DokployConflict()` / `E_DOKPLOY_CONFLICT` (HTTP 502), not customer-facing `E_CONFLICT`, because customers do not mutate private Dokploy resources directly. It is non-retryable, generic-message, dependency-tagged as Dokploy, and wraps only redacted upstream detail for server-side diagnostics.
 - Upstream Dokploy 404s from the typed client map to `apierr.DokployNotFound()` / `E_DOKPLOY_NOT_FOUND` (HTTP 502), not customer-facing `E_NOT_FOUND`, because customers do not address private Dokploy resources directly. It is non-retryable, generic-message, dependency-tagged as Dokploy, wraps only redacted upstream detail, and idempotent teardown intents (`RemoveProject`, `RemoveEnvironment`, `RemoveService`) should treat this code as success.
@@ -35996,4 +35997,14 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Upstream Dokploy 429 is a private dependency throttle and should map to `E_DOKPLOY_RATE_LIMITED` with HTTP 502, not public `E_RATE_LIMITED` 429.
   - Update package guidance when an error-contract story changes a typed client status mapping; stale AGENTS.md mapping notes can otherwise steer future work back to the old constructor.
+---
+## [2026-05-19 03:00 +03] - BE-0531
+- What was implemented: Added the stable `E_DOKPLOY_BAD_RESPONSE` contract across the shared error registry, backend apierr taxonomy, envelope HTTP mapping, and typed Dokploy client malformed-2xx decode handling. The constructor is fixed-message, non-retryable, Dokploy dependency-tagged, and wraps only redacted decode/upstream detail.
+- Files changed: `internal/errors/errors.go`, `internal/errors/errors_test.go`, `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`, `internal/controlplane/dokploy/client.go`, `internal/controlplane/dokploy/client_test.go`, `internal/controlplane/dokploy/AGENTS.md`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w ...`; `goimports -w ...` attempted but unavailable; `go test ./internal/errors ./internal/controlplane/apierr ./internal/controlplane/apienvelope ./internal/controlplane/dokploy`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run ./...`.
+- Results: All required checks and installed optional checks passed. `golangci-lint` reported 0 issues. `goimports`, `staticcheck`, and `govulncheck` were not installed on the interactive shell path, so `staticcheck` and `govulncheck` were not run directly.
+- Remaining risks or follow-ups: No Postgres schema changes were required for this error-contract-only story. The next unfinished story is `BE-0532` (`E_DB_UNAVAILABLE`).
+- **Learnings for future iterations:**
+  - A Dokploy response can be reachable but contract-invalid; keep that distinct from transient availability failures so operators see a schema/compatibility issue instead of a generic outage.
+  - The fake Dokploy `MalformedJSONFault` is the right fixture for typed-client decode-path contract tests.
 ---

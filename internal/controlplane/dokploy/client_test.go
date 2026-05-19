@@ -269,6 +269,30 @@ func TestClientConflict(t *testing.T) {
 	}
 }
 
+// TestClientBadResponse maps a successful Dokploy HTTP response with an
+// incompatible JSON body onto E_DOKPLOY_BAD_RESPONSE, not a generic outage.
+func TestClientBadResponse(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	c := newTestClient(t, fake)
+	fake.QueueFault(dokployfake.MalformedJSONFault())
+
+	_, err := c.EnsureOrganization(context.Background(), dokploy.EnsureOrganizationInput{Name: "acme"})
+	if code := codeOf(t, err); code != yerr.CodeDokployBadResponse {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployBadResponse)
+	}
+	if apierr.Retryable(err) {
+		t.Fatal("a malformed Dokploy response must not be retryable")
+	}
+	if dep, ok := apierr.DependencyOf(err); !ok || dep != apierr.DependencyDokploy {
+		t.Fatalf("DependencyOf = %s, %v; want dokploy", dep, ok)
+	}
+	for e := err; e != nil; e = stderrors.Unwrap(e) {
+		testutil.AssertRedacted(t, e.Error(), fake.Token())
+	}
+}
+
 // TestClientRetriesIdempotentRequests proves a GET that fails transiently is
 // retried until it succeeds, while a POST is never retried.
 func TestClientRetriesIdempotentRequests(t *testing.T) {

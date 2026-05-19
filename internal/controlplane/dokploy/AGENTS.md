@@ -33,9 +33,11 @@ client.
   retry can never duplicate a provisioning side effect. Retries fire only on
   catalogued **retryable** errors (`apierr.Retryable`).
 - Every failure maps onto the `apierr` taxonomy: transport/5xx ->
-  `DokployUnavailable` (retryable), 429 -> `DokployRateLimited` (retryable),
-  timeouts -> `Timeout(DependencyDokploy, …)`, 400 -> `Invalid`, 401 ->
-  `DokployAuth`, 403 -> `DokployForbidden`, 404 -> `DokployNotFound`, 409 ->
+  `DokployUnavailable` (retryable), 2xx bodies that cannot be decoded into the
+  typed response contract -> `DokployBadResponse` (non-retryable), 429 ->
+  `DokployRateLimited` (retryable), timeouts ->
+  `Timeout(DependencyDokploy, …)`, 400 -> `Invalid`, 401 -> `DokployAuth`,
+  403 -> `DokployForbidden`, 404 -> `DokployNotFound`, 409 ->
   `DokployConflict`. Upstream
   auth/permission/missing-resource/conflict errors are non-retryable Yalla
   operator issues, not customer credential or customer resource failures. The

@@ -16,6 +16,7 @@
 //   - Quota:                QuotaExceeded
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
 //     DokployConflict, DokployRateLimited, DokployUnavailable,
+//     DokployBadResponse,
 //     StoreUnavailable, QueueUnavailable, NetworkFailure, Timeout — each
 //     distinguishes which dependency failed via DependencyOf.
 //   - Internal:             Internal
@@ -158,6 +159,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDokployConflict:        {false, MessageGeneric, "the upstream Dokploy provisioning backend reported a state conflict"},
 	yerr.CodeDokployRateLimited:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is rate limiting Yalla requests"},
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
+	yerr.CodeDokployBadResponse:     {false, MessageGeneric, "the upstream Dokploy provisioning backend returned an incompatible response"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
 	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
@@ -615,6 +617,17 @@ func DokployRateLimited(cause error) *yerr.Error {
 func DokployUnavailable(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeDokployUnavailable, "the Dokploy provisioning backend is unavailable").
 		WithHint("this is a transient upstream failure; retry after a short backoff").
+		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
+}
+
+// DokployBadResponse builds an E_DOKPLOY_BAD_RESPONSE error (HTTP 502) for a
+// successful response from the upstream Dokploy provisioning backend that could
+// not be decoded into Yalla's typed contract. The public message is fixed and
+// generic: it must never expose upstream response bodies, schema fragments,
+// Dokploy tokens, or customer-facing resource identifiers.
+func DokployBadResponse(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDokployBadResponse, "the Dokploy provisioning backend returned an incompatible response").
+		WithHint("contact Yalla support; the upstream provisioning response contract needs operator attention").
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }
 
