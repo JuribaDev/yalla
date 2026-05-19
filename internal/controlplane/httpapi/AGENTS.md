@@ -200,6 +200,15 @@ to `AdminUsageAggregationScheduleService`, expose interval/replay/close-delay
 and late-event mode as stable top-level fields, and disable schedules instead
 of deleting runtime history.
 
+## Backoffice feature flags
+
+Backoffice feature flag routes use `policy.ActionFeatureFlagsManage`. Keep
+handlers thin: decode bodies through `validate.DecodeJSON`, derive
+actor/request/correlation data from the authenticated request, delegate to
+`AdminFeatureFlagService`, and render stable envelopes only through
+`apienvelope`. Evaluation responses may include the configured value, but audit
+metadata must not persist raw evaluated JSON values.
+
 ## Backoffice billing providers
 
 Backoffice billing provider routes use `policy.ActionBillingManage`. Keep

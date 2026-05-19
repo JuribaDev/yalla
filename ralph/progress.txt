@@ -1,4 +1,9 @@
 ## Codebase Patterns
+- Backoffice feature flags are global runtime configuration: persist them in
+  `admin_feature_flags`, mutate through `AdminFeatureFlagService` for actor-org
+  verification + audit + cache invalidation, evaluate by precedence service >
+  environment > project > organization > plan > global > default, and audit
+  admin-sensitive evaluations without storing raw evaluated JSON values.
 - Backoffice overage policy runtime config is versioned by effective time and
   resolved at usage aggregation time with precedence
   organization > plan > global; usage aggregation should prefer
@@ -202,7 +207,6 @@
   - Overage policy must be resolved where usage counters are frozen, because billing exports snapshot `usage_counters` rather than recalculating overage behavior later.
   - Scope-specific admin routes can share one handler factory while keeping route metadata explicit and documented per scope.
   - Organization-scoped admin routes still use `organizationIDResolver`, so tests must authenticate in the target org or intentionally assert cross-tenant denial.
----
 
 - Read-endpoint contract-test triple (BE-0095/BE-0101 pattern,
   internal/controlplane/httpapi/{limits_get_contract_test.go,
@@ -39004,4 +39008,39 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `active_domains` follows the same four-piece tracked-metric path as `active_services` and `active_databases`: runtime metric definition, closed quota resource migration/constant/map/test, current-state sample builder, and idempotent `usage_events` emission into existing counter/export projections.
   - Service-domain attribution should be built from both `store.ServiceDomain` and the parent `store.Service`; the domain row itself has only `organization_id` and `service_id`, so project/environment scope comes from the already-verified parent service. Mismatched domain/service tuples are unsafe and should be skipped/quarantined before emission.
+---
+## 2026-05-19 16:23 +03 - BE-0611
+- What was implemented: added production backoffice feature flag APIs with stable value variants, scoped targeting rules, deterministic rollout evaluation, admin-sensitive evaluation audit, safe runtime caching with invalidation on writes, OpenAPI route metadata, API startup wiring, and migration-backed persistence.
+- Files changed:
+  - `cmd/yalla-api/main.go`
+  - `internal/controlplane/httpapi/admin_feature_flags.go`
+  - `internal/controlplane/httpapi/admin_feature_flags_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/AGENTS.md`
+  - `internal/controlplane/store/admin_feature_flag_service.go`
+  - `internal/controlplane/store/admin_feature_flag_service_test.go`
+  - `internal/controlplane/store/feature_flag.go`
+  - `internal/controlplane/store/AGENTS.md`
+  - `internal/controlplane/store/migrate/migrations/0078_admin_feature_flags.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0078_admin_feature_flags.down.sql`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run:
+  - Formatting/import/module cleanup: `gofmt -w .`; `go mod tidy`; `goimports -w .` was not run because `goimports` is not installed.
+  - Focused checks: `go test ./internal/controlplane/store ./internal/controlplane/httpapi`; `go test ./internal/controlplane/store/migrate -run TestMigrations`.
+  - Required checks: `go test ./...`; `go test -race ./...`; `go vet ./...`.
+  - Focused persistence/backend checks: `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`.
+  - Optional tooling: `golangci-lint run ./...`; pre-commit strict verification also ran `govulncheck ./...`, `staticcheck ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results:
+  - All required, focused, and race checks passed.
+  - `golangci-lint run ./...` passed with `0 issues.`
+  - `govulncheck ./...` found no vulnerabilities during strict pre-commit verification.
+  - `staticcheck ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean` passed during strict pre-commit verification.
+  - `goimports` is not installed locally.
+- Remaining risks or follow-ups:
+  - No known code risk for this story. The untracked `ralph/codex-output/` directory was present before this iteration and was left untouched.
+- **Learnings for future iterations:**
+  - Feature flag targeting is a backoffice runtime-config surface, not a generic admin config blob: keep storage typed, route mutations through a store service, and make evaluation deterministic so agents can replay decisions.
+  - Admin-sensitive evaluations should audit the fact of evaluation plus stable flag identifiers, but never persist the raw evaluated JSON value in audit metadata.
 ---

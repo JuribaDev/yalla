@@ -350,6 +350,22 @@ Postgres persistence for control-plane source-of-truth state.
   quarantined, or ignored, but they must never be reported as billable unless a
   configured rule reaches the required confidence threshold.
 
+## Backoffice feature flags (`0078_admin_feature_flags`, `feature_flag.go`)
+
+- Feature flags are global runtime configuration with scoped targeting rules,
+  not tenant-owned rows. Runtime consumers should use
+  `FeatureFlagRepository.ListRuntimeEnabled` / `AdminFeatureFlagService` so
+  disabled flags are excluded and evaluation stays deterministic.
+- Targeting precedence is service > environment > project > organization >
+  plan > global > default. Rollout percentages are basis points and must be
+  computed deterministically from the flag key plus subject id or scoped
+  resource id.
+- Use `AdminFeatureFlagService` for flag mutations so the actor organization
+  check, repository upsert, audit append, and runtime-cache invalidation happen
+  as one audited service boundary. Admin-sensitive evaluations append audit
+  events; audit metadata must include only stable identifiers and never raw
+  evaluated JSON values.
+
 ## Usage counters (`0052_usage_counters`)
 
 - `usage_counters` are billing-period aggregates derived from append-only

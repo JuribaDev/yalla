@@ -226,6 +226,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminUsageAggregationScheduleManager AdminUsageAggregationScheduleManager
 	var adminBillingProviderManager AdminBillingProviderManager
 	var adminOveragePolicyManager AdminOveragePolicyManager
+	var adminFeatureFlagManager AdminFeatureFlagManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -289,6 +290,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminOveragePolicyManager); ok {
 			adminOveragePolicyManager = v
+		}
+		if v, ok := opt.(AdminFeatureFlagManager); ok {
+			adminFeatureFlagManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -800,6 +804,51 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The attribution dry-run report.",
 			},
 			handler: dryRunAdminAttributionRulesHandler(adminAttributionRuleManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/feature-flags/{flag_key}",
+				OperationID:        "getAdminFeatureFlag",
+				Summary:            "Get a feature flag",
+				Description:        "Returns one backoffice feature flag including its value variant, safe default, scoped targeting rules, rollout percentage, sensitivity, enabled state, and revision. Action feature_flags.manage is required.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionFeatureFlagsManage),
+				PathParams:         []openapi.PathParam{{Name: "flag_key", Description: "Stable feature flag key."}},
+				SuccessDescription: "The feature flag.",
+			},
+			handler: getAdminFeatureFlagHandler(adminFeatureFlagManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/feature-flags/{flag_key}",
+				OperationID:        "upsertAdminFeatureFlag",
+				Summary:            "Configure a feature flag",
+				Description:        "Creates or replaces one audited backoffice feature flag. Flags support boolean, string, number, and JSON values, scope-specific targeting for global, plan, organization, project, environment, and service contexts, deterministic rollout percentages, safe defaults, and admin-sensitive evaluation audit.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionFeatureFlagsManage),
+				PathParams:         []openapi.PathParam{{Name: "flag_key", Description: "Stable feature flag key."}},
+				SuccessDescription: "The feature flag was persisted and audited.",
+			},
+			handler: upsertAdminFeatureFlagHandler(adminFeatureFlagManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/feature-flags/{flag_key}/evaluate",
+				OperationID:        "evaluateAdminFeatureFlag",
+				Summary:            "Evaluate a feature flag",
+				Description:        "Evaluates a feature flag for a plan or Yalla hierarchy context using deterministic precedence service > environment > project > organization > plan > global > default and deterministic percentage rollout. Admin-sensitive flag evaluations append audit events.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionFeatureFlagsManage),
+				PathParams:         []openapi.PathParam{{Name: "flag_key", Description: "Stable feature flag key."}},
+				SuccessDescription: "The deterministic feature flag evaluation result.",
+			},
+			handler: evaluateAdminFeatureFlagHandler(adminFeatureFlagManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

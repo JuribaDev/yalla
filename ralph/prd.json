@@ -12518,7 +12518,7 @@
       ],
       "type": "backoffice-config",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
