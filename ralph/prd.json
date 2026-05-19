@@ -12252,8 +12252,8 @@
       ],
       "type": "tracked-metric",
       "priority": 2,
-      "passes": false,
-      "notes": "Tracked metric: active_databases."
+      "passes": true,
+      "notes": "Implemented active_databases as a non-billing hard current-state metric: runtime definition, quota_resource migration/constant, current-state database service sample builder, idempotent usage_events emitter, aggregation/customer usage visibility, tenant isolation, duplicate-window, missing-data, and redaction tests."
     },
     {
       "id": "BE-0598",

@@ -88,6 +88,35 @@ func BuildActiveServiceSample(service store.Service, windowStart, windowEnd time
 	}, true, nil
 }
 
+// BuildActiveDatabaseSample converts one database service source-of-truth row
+// into an active_databases sample. Non-database or non-live services are
+// skipped because they should not contribute to the active-database count.
+func BuildActiveDatabaseSample(service store.Service, windowStart, windowEnd time.Time) (AttributedCurrentStateSample, bool, error) {
+	if !windowEnd.After(windowStart) {
+		return AttributedCurrentStateSample{}, false, apierr.InvalidInput(apierr.FieldViolation{Field: "window_end", Reason: "must be after window_start"})
+	}
+	if service.Status != store.ServiceStatusActive || service.Kind != store.ServiceKindDatabase {
+		return AttributedCurrentStateSample{}, false, nil
+	}
+	metadata := map[string]string{
+		"service_status":  service.Status.String(),
+		"service_kind":    service.Kind,
+		"service_version": strconv.FormatInt(service.Version, 10),
+	}
+	return AttributedCurrentStateSample{
+		Name:           "active_databases",
+		Value:          1,
+		Unit:           "database",
+		WindowStart:    windowStart.UTC(),
+		WindowEnd:      windowEnd.UTC(),
+		OrganizationID: strings.TrimSpace(service.OrganizationID),
+		ProjectID:      strings.TrimSpace(service.ProjectID),
+		EnvironmentID:  strings.TrimSpace(service.EnvironmentID),
+		ServiceID:      strings.TrimSpace(service.ID),
+		Metadata:       metadata,
+	}, true, nil
+}
+
 // Emit appends idempotent usage events for current-state metrics.
 func (e *CurrentStateUsageEmitter) Emit(ctx context.Context, in CurrentStateUsageInput) (CurrentStateUsageResult, error) {
 	if e == nil || e.store == nil || e.usage == nil {
@@ -167,6 +196,8 @@ func currentStateMetricResource(key string) (store.QuotaResource, bool) {
 	switch key {
 	case "active_services":
 		return store.QuotaResourceActiveServices, true
+	case "active_databases":
+		return store.QuotaResourceActiveDatabases, true
 	default:
 		return "", false
 	}

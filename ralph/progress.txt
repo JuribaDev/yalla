@@ -38916,3 +38916,41 @@ change that widened Reason to caller-supplied data.
   - For source-of-truth row metrics, keep collection as a small builder from the store row and keep emission through the same repository path so tenant-scoped composite FKs enforce unsafe attribution.
   - Adding a metric resource still requires the SQL domain migration, store constant, quotaResources map, and TestQuotaResourceValid list in lockstep.
 ---
+## 2026-05-19 15:53:24 +03 - BE-0597
+- What was implemented
+  - Implemented `active_databases` as a non-billing hard current-state metric with runtime definition `unit=database`, `source=yalla_current_state`, and `billingGrade=false`.
+  - Added `QuotaResourceActiveDatabases` plus migration `0075_active_databases_metering_resource` so `usage_events`, `usage_counters`, and billing-export snapshots can persist and expose the metric through the existing generic usage pipeline.
+  - Added `BuildActiveDatabaseSample` to count only active database-kind services and skip active applications, deleted database services, incomplete attribution, and unsupported samples.
+  - Added tests for normal sample emission, duplicate-window idempotency, aggregation into customer-visible counters, missing data, tenant isolation, and metadata redaction.
+- Files changed
+  - `internal/controlplane/metering/current_state_usage.go`
+  - `internal/controlplane/metering/current_state_usage_test.go`
+  - `internal/controlplane/metering/metric_definition.go`
+  - `internal/controlplane/metering/metric_definition_test.go`
+  - `internal/controlplane/store/quota.go`
+  - `internal/controlplane/store/quota_internal_test.go`
+  - `internal/controlplane/store/migrate/migrations/0075_active_databases_metering_resource.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0075_active_databases_metering_resource.down.sql`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - Red check: `go test ./internal/controlplane/metering -run 'Test(ActiveDatabasesMetricDefinition|CurrentStateUsageEmitter.*ActiveDatabases|BuildActiveDatabase)'` failed before implementation with missing `store.QuotaResourceActiveDatabases` and `metering.BuildActiveDatabaseSample`.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` and `govulncheck ./...` were not run because those tools are not installed.
+- Results
+  - All run checks passed. `golangci-lint` reported `0 issues`.
+- Remaining risks or follow-ups
+  - No known code risk for this story. The next adjacent tracked-metric story is `BE-0598 active_domains`.
+- **Learnings for future iterations:**
+  - Current-state subtype metrics can reuse the `active_services` path: add a metric definition, a closed `quota_resource`, a sample builder that filters by `services.kind` and `services.status`, and emitter tests that prove usage-event idempotency plus aggregation visibility.
+  - Billing export visibility for these metrics comes from the existing `BillingExportRepository.snapshotItems` query over `usage_counters`; no metric-specific billing code is needed when aggregation writes the counter.
+---
