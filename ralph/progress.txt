@@ -39990,3 +39990,37 @@ change that widened Reason to caller-supplied data.
   - Static tests intentionally match exact substrings, so keep load-bearing phrases on one line when a test pins a phrase; multi-line splits (e.g., `(no\ncustomer credential mint)`) break substring matching.
   - The break-glass playbook references the actual API routes (`POST /v1/organizations/{org_id}/break-glass`, etc.) to satisfy static-test route pinning while also providing practical curl examples with environment-variable interpolation.
 ---
+
+## 2026-05-19 21:16 +03 - BE-0556
+- What was implemented
+  - Added `internal/release/backup_restore_rehearsal_artifact_static_test.go` to pin `docs/operations/backup-restore.md` as a documentation artifact.
+  - The static test verifies four load-bearing properties: rehearsal scope (RTO, RPO, quarterly rehearsal, throwaway database), exact commands (pg_restore, yalla-api --migrate-only, canary, restore-rehearsal.sh), required environment variables (YALLA_REHEARSAL_DATABASE_URL, YALLA_PROFILE, etc.), expected outputs (yalla.output.v1 / yalla.error.v1 JSON envelopes for /healthz/backup), failure recovery guidance (11-step restore procedure), and redaction (no rendered secrets).
+  - Updated `SECURITY.md` with a new verification-gates table row and a dedicated `## Backup Restore Rehearsal Artifact` section.
+  - Updated `.github/workflows/ci.yml` with a new `Backup restore rehearsal artifact static tests` step.
+  - Updated `scripts/verify.sh` with the matching test run.
+  - Updated `internal/release/AGENTS.md` with guidance for future runbook changes.
+- Files changed
+  - `internal/release/backup_restore_rehearsal_artifact_static_test.go` (new)
+  - `SECURITY.md`
+  - `.github/workflows/ci.yml`
+  - `scripts/verify.sh`
+  - `internal/release/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact -v`
+- Results
+  - All required and focused checks passed.
+  - The new static test passes and pins the runbook content and release-gate wiring.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - Documentation artifact stories follow the same static-release-gate pattern as playbook artifact stories: add the markdown artifact (or pin an existing one), a focused `internal/release/*_static_test.go`, CI wiring, `scripts/verify.sh` wiring, `SECURITY.md` gate/section, and `internal/release/AGENTS.md` guidance together.
+  - When matching substrings across markdown line breaks, be careful about newlines and markdown bold (`**word**`) breaking naive substring matches.
+  - The existing `docs/operations/backup-restore.md` was comprehensive enough to satisfy the acceptance criteria without content changes; only the pinning static test and wiring were needed.
+---

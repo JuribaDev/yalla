@@ -310,6 +310,12 @@ if ! go test ./internal/release/... -run TestRestoreRehearsalCommand; then
   required_failed=1
 fi
 
+# Required: backup restore rehearsal artifact static tests
+step "go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact"
+if ! go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact; then
+  required_failed=1
+fi
+
 # Required: config example artifact static tests
 step "go test ./internal/release/... -run TestConfigExamplesArtifact"
 if ! go test ./internal/release/... -run TestConfigExamplesArtifact; then

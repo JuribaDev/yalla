@@ -116,6 +116,7 @@ defined in `.github/workflows/ci.yml`:
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Backup restore rehearsal artifact | `go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Config example files artifact | `go test ./internal/release/... -run TestConfigExamplesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Deployment runbook artifact | `go test ./internal/release/... -run TestDeploymentRunbookArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Local development setup artifact | `go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -469,6 +470,32 @@ or rendered environment values.
 
 CI pins the command, runbook, and release gate with
 `go test ./internal/release/... -run TestRestoreRehearsalCommand`.
+
+## Backup Restore Rehearsal Artifact
+
+The backup and restore rehearsal runbook lives at
+`docs/operations/backup-restore.md`. It documents the customer-facing backup
+contract (frequency, retention, RTO, RPO, encryption), the operator pipeline
+handshake (`YALLA_BACKUP_STATUS_FILE`), the four stable wire shapes for
+`GET /healthz/backup`, the eleven-step on-call restore procedure, the quarterly
+staging rehearsal with pass criteria, and explicit out-of-scope notes.
+
+The runbook references `/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker` for version coupling, `pg_restore` with the
+canonical rehearsal flags, `yalla-api --migrate-only` for migration validation,
+and the configured canary suite for smoke-testing restored databases. It never
+checks in or prints database URLs, snapshot object locations, signing keys,
+secret-encryption keys, Dokploy endpoints, Dokploy tokens, API keys, cookies,
+backup bucket credentials, or rendered environment values.
+
+Operators verify `/healthz`, `/readyz`, and `/healthz/backup`; the API renders
+stable `yalla.output.v1` or `yalla.error.v1` envelopes for those probes.
+Structured JSON logs from `yalla-api` and `yalla-worker` remain diagnostics
+only and must not contain backup credentials, restore DSNs, snapshot locations,
+or rendered environment values.
+
+CI pins the runbook and release gate with
+`go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact`.
 
 ## Config Example Files Artifact
 

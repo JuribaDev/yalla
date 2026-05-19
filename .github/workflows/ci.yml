@@ -165,6 +165,9 @@ jobs:
       - name: Restore rehearsal command artifact static tests
         run: go test ./internal/release/... -run TestRestoreRehearsalCommand
 
+      - name: Backup restore rehearsal artifact static tests
+        run: go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact
+
       - name: Config example artifact static tests
         run: go test ./internal/release/... -run TestConfigExamplesArtifact
 

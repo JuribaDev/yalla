@@ -11473,8 +11473,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: backup restore rehearsal."
+      "passes": true,
+      "notes": "Added internal/release/backup_restore_rehearsal_artifact_static_test.go to pin docs/operations/backup-restore.md as a documentation artifact. Updated SECURITY.md with verification-gates row and dedicated artifact section. Updated .github/workflows/ci.yml, scripts/verify.sh, and internal/release/AGENTS.md to wire the new static test. All quality checks pass."
     },
     {
       "id": "BE-0557",

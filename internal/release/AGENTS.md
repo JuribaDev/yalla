@@ -274,6 +274,23 @@ canary to pass, and write only redacted reports. Any future restore-rehearsal
 change should update the script, `deploy/operations` runbook, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Backup restore rehearsal artifact (BE-0556)
+
+`backup_restore_rehearsal_artifact_static_test.go` pins the backup and restore
+rehearsal runbook at `docs/operations/backup-restore.md`: the artifact must
+reference `/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, preserve
+the Yalla API -> Postgres source of truth -> worker -> private Dokploy API
+boundary, document the customer-facing backup contract (frequency, retention,
+RTO, RPO, encryption), the operator pipeline handshake
+(`YALLA_BACKUP_STATUS_FILE`), the four stable wire shapes for
+`GET /healthz/backup`, the eleven-step on-call restore procedure, the quarterly
+staging rehearsal with pass criteria, exact required `YALLA_*` environment
+names as `<redacted:...>` placeholders, expected `yalla.output.v1` /
+`yalla.error.v1` envelope output shapes, structured log redaction, and the
+opt-in external Dokploy smoke test warning. Any future runbook change should
+update the markdown, SECURITY.md verification-gates row, CI step, and
+`scripts/verify.sh` in the same edit.
+
 ## Rollback checklist artifact (BE-0424)
 
 `rollback_checklist_artifact_static_test.go` pins the rollback checklist at
