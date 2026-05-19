@@ -110,6 +110,7 @@ defined in `.github/workflows/ci.yml`:
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Seed admin command artifact | `go test ./internal/release/... -run TestSeedAdminCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup command artifact | `go test ./internal/release/... -run TestBackupCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Restore rehearsal command artifact | `go test ./internal/release/... -run TestRestoreRehearsalCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -340,6 +341,39 @@ backup credentials or rendered environment values.
 
 CI pins the command, runbook, and release gate with
 `go test ./internal/release/... -run TestBackupCommand`.
+
+## Restore Rehearsal Command Artifact
+
+The production restore rehearsal command lives at
+`deploy/operations/restore-rehearsal.sh` with the runbook in
+`deploy/operations/README.md`. It references the deployed
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker` binaries for
+version coupling and service checks, but it restores only into the
+operator-provided throwaway `YALLA_REHEARSAL_DATABASE_URL`. The script rejects
+a rehearsal DSN that matches the primary control-plane DSN, runs
+`pg_restore --clean --if-exists --no-owner --no-acl --jobs`, applies the
+release's embedded migration ladder with `/usr/local/bin/yalla-api
+--migrate-only`, and runs the configured canary suite before publishing a
+report.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+snapshot object locations, signing keys, secret-encryption keys, Dokploy
+endpoints, Dokploy tokens, API keys, cookies, backup bucket credentials, or
+rendered environment values; `--dry-run` prints only command shape plus
+redacted `YALLA_*` variable names. The rehearsal report is written under
+`YALLA_RESTORE_REHEARSAL_REPORT_DIR` through `mktemp` and `mv`, carries only
+redacted snapshot and DSN fields, and is created only after restore,
+migrations, and canary pass.
+
+Operators verify `/healthz`, `/readyz`, and `/healthz/backup`; the API renders
+stable `yalla.output.v1` or `yalla.error.v1` envelopes for those probes.
+Structured JSON logs from `yalla-api` and `yalla-worker` remain diagnostics
+only and must not contain backup credentials, restore DSNs, snapshot locations,
+or rendered environment values.
+
+CI pins the command, runbook, and release gate with
+`go test ./internal/release/... -run TestRestoreRehearsalCommand`.
 
 ## TLS Termination and Proxy Header Trust
 

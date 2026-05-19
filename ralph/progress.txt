@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Restore rehearsal operations artifacts follow the same static-release-gate pattern as other operations commands: keep `deploy/operations/restore-rehearsal.sh`, `deploy/operations/README.md`, `docs/operations/backup-restore.md`, SECURITY.md, CI, `scripts/verify.sh`, and `internal/release/*_static_test.go` in lockstep; restore only into `YALLA_REHEARSAL_DATABASE_URL`, reject primary-DSN matches, run `pg_restore` plus `yalla-api --migrate-only`, require canary success, and write redacted reports atomically.
 - Backup operations artifacts follow the static-release-gate pattern:
   keep `deploy/operations/backup-database.sh`,
   `deploy/operations/README.md`, SECURITY.md, CI,
@@ -39080,3 +39081,14 @@ change that widened Reason to caller-supplied data.
   - Operations artifacts should be pinned by a focused `internal/release/*_static_test.go` before adding the shell artifact so missing script/docs/gates fail cleanly first.
   - Backup command dry-run plans must avoid printing even operational paths supplied through `YALLA_*` variables; show command shape and redacted variable names instead.
   - The backup command should not add backup behavior to `cmd/yalla-api` or `cmd/yalla-worker`; the Yalla process only reads the status timestamp through `/healthz/backup`.
+---
+## 2026-05-19 16:44:59 +03 - BE-0417
+- What was implemented: added the production restore rehearsal operations artifact. The command dry-runs by default, loads operator runtime config, restores a supplied snapshot only into `YALLA_REHEARSAL_DATABASE_URL`, rejects matching the primary control-plane DSN, runs `pg_restore --clean --if-exists --no-owner --no-acl --jobs`, applies embedded migrations through `/usr/local/bin/yalla-api --migrate-only`, requires the configured canary to pass, probes `/healthz`, `/readyz`, and `/healthz/backup`, and writes a redacted rehearsal report atomically. Added static release coverage and wired the command into operations docs, backup/restore runbook, SECURITY.md, CI, and local verification.
+- Files changed: `deploy/operations/restore-rehearsal.sh`; `deploy/operations/README.md`; `deploy/operations/AGENTS.md`; `docs/operations/backup-restore.md`; `internal/release/restore_rehearsal_command_static_test.go`; `internal/release/AGENTS.md`; `.github/workflows/ci.yml`; `scripts/verify.sh`; `SECURITY.md`; `ralph/prd.json`; `ralph/progress.txt`.
+- Verification run: `go test ./internal/release/... -run TestRestoreRehearsalCommand` failed first as the RED check before implementation; `bash -n deploy/operations/restore-rehearsal.sh deploy/operations/backup-database.sh deploy/operations/migrate-database.sh deploy/operations/seed-admin.sh`; dry-run redaction check with secret-shaped env values; `gofmt -w .`; `go mod tidy`; `go test ./...`; `go vet ./...`; `go test ./internal/release/... -run TestRestoreRehearsalCommand`; `go test -race ./...`; `golangci-lint run ./...`.
+- Results: all run checks passed. `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment; `golangci-lint` was installed and passed with 0 issues.
+- Remaining risks or follow-ups: the command expects the operator canary script named by `YALLA_CANARY_BIN` to exist in the deployed environment; this story versions the rehearsal orchestration, not the canary implementation or throwaway database provisioning.
+- **Learnings for future iterations:**
+  - Restore rehearsal scripts should source the operator env file before checking the canary executable so an env-file `YALLA_CANARY_BIN` override is honored.
+  - Rehearsal reports are operational evidence, so write them only after restore, migrations, and canary pass, and keep snapshot locations plus DSNs redacted even in report files.
+---

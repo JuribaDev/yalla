@@ -263,19 +263,21 @@ YALLA_PROFILE=staging ./scripts/backup-trigger.sh
 
 # 2. Restore into a throwaway instance.
 YALLA_PROFILE=staging \
-  YALLA_DATABASE_URL=<throwaway-dsn> \
-  ./scripts/restore-rehearsal.sh <snapshot-path>
+  YALLA_REHEARSAL_DATABASE_URL=<throwaway-dsn> \
+  deploy/operations/restore-rehearsal.sh --apply --snapshot <snapshot-path>
 
 # 3. Run the canary suite against the restored DSN.
 ./scripts/canary.sh <throwaway-dsn>
 
 # 4. Tear down the throwaway database.
-./scripts/restore-rehearsal.sh --teardown <throwaway-dsn>
+dropdb --if-exists <throwaway-db-name>
 ```
 
-The scripts in `./scripts/` are owned by Backend Operations and live in
-their tooling repo; they are not part of the Yalla Control Plane binary.
-The pointer here is the authoritative one — keep both repos in sync.
+The restore rehearsal command is versioned in this repository under
+`deploy/operations/restore-rehearsal.sh`. It restores only into a throwaway
+`YALLA_REHEARSAL_DATABASE_URL`, runs `/usr/local/bin/yalla-api --migrate-only`
+against the restored database, executes the configured canary suite, and writes
+a redacted report only after those steps pass.
 
 ## What is NOT in scope
 

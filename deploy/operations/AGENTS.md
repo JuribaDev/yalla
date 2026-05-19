@@ -18,3 +18,8 @@ capable, and safe to inspect in CI.
   shell artifact to run `pg_dump`, keep rendered DSNs and backup credentials in
   the env file, update `YALLA_BACKUP_STATUS_FILE` atomically only after
   success, and verify `/healthz`, `/readyz`, and `/healthz/backup`.
+- Restore rehearsal operations must restore only into
+  `YALLA_REHEARSAL_DATABASE_URL`, reject that DSN when it equals the primary
+  `YALLA_DATABASE_URL`, run `pg_restore` plus `/usr/local/bin/yalla-api
+  --migrate-only`, require the configured canary to pass, and publish only a
+  redacted report through `mktemp` + `mv`.

@@ -176,6 +176,18 @@ operator env file, render only redacted dry-run output, and update
 change should update the script, `deploy/operations` runbook, SECURITY.md
 verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
 
+## Restore rehearsal command artifact (BE-0417)
+
+`restore_rehearsal_command_static_test.go` pins the checked-in restore
+rehearsal command under `deploy/operations/`: the script must reference
+`/usr/local/bin/yalla-api` and `/usr/local/bin/yalla-worker`, restore only into
+`YALLA_REHEARSAL_DATABASE_URL`, reject that DSN when it matches the primary
+control-plane DSN, run `pg_restore` with the canonical rehearsal flags, apply
+embedded migrations via `yalla-api --migrate-only`, require the configured
+canary to pass, and write only redacted reports. Any future restore-rehearsal
+change should update the script, `deploy/operations` runbook, SECURITY.md
+verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+
 ## TLS and proxy header trust (BE-0356)
 
 `http_server_hardening_static_test.go` pins the operator-facing

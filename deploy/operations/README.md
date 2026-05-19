@@ -86,6 +86,56 @@ URLs, tokens, API keys, cookies, Dokploy credentials, signing keys, secret
 keys, backup bucket credentials, or rendered environment variable values. The
 dry-run plan prints only redacted `YALLA_*` variable names and command shape.
 
+## Restore Rehearsal
+
+Run a quarterly restore rehearsal against a throwaway staging database:
+
+```bash
+deploy/operations/restore-rehearsal.sh --dry-run --snapshot /secure/backups/staging.dump
+sudo deploy/operations/restore-rehearsal.sh --apply --snapshot /secure/backups/staging.dump
+```
+
+The command loads `/etc/yalla/control-plane.env` by default. Operators provide
+`YALLA_REHEARSAL_DATABASE_URL`, which must point at a fresh throwaway database
+and must not match the primary `YALLA_DATABASE_URL`. The script verifies the
+versioned backend binaries at `/usr/local/bin/yalla-api` and
+`/usr/local/bin/yalla-worker`, then restores the snapshot with:
+
+```bash
+pg_restore --clean --if-exists --no-owner --no-acl --jobs 4
+```
+
+After restore it runs the deployed API binary's embedded migrator against the
+throwaway DSN:
+
+```bash
+/usr/local/bin/yalla-api --migrate-only
+```
+
+The canary suite named by `YALLA_CANARY_BIN` (default `scripts/canary.sh`) must
+pass before the rehearsal report is written. The script writes only redacted
+snapshot and DSN values to `YALLA_RESTORE_REHEARSAL_REPORT_DIR` using `mktemp`
+and `mv`, so a partial report is never published as a successful rehearsal.
+
+Before applying, the script verifies both services are active and probes the
+public health surfaces:
+
+```bash
+sudo systemctl is-active yalla-api
+sudo systemctl is-active yalla-worker
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS http://127.0.0.1:8080/healthz/backup
+```
+
+The API process returns stable `yalla.output.v1` / `yalla.error.v1` envelopes
+for HTTP health, readiness, and backup probes. Restore rehearsal diagnostics are
+structured JSON-adjacent operator messages only and must not contain database
+URLs, snapshot object locations, tokens, API keys, cookies, Dokploy
+credentials, signing keys, secret keys, backup bucket credentials, or rendered
+environment variable values. The dry-run plan prints only redacted `YALLA_*`
+variable names and command shape.
+
 ## Seed Admin
 
 Seed the initial operator user and organization membership through the API
@@ -147,3 +197,28 @@ After `--apply`, operators verify the API through `/healthz`, `/readyz`, and
 
 CI pins the command, runbook, and release gate with
 `go test ./internal/release/... -run TestBackupCommand`.
+
+## Restore Rehearsal Command Artifact
+
+The production restore rehearsal command lives at
+`deploy/operations/restore-rehearsal.sh` with this runbook. It references the
+same deployed backend binaries as the service units (`/usr/local/bin/yalla-api`
+and `/usr/local/bin/yalla-worker`) but restores only into the operator-supplied
+throwaway `YALLA_REHEARSAL_DATABASE_URL`. The script rejects a rehearsal DSN
+that matches the primary `YALLA_DATABASE_URL`, invokes `pg_restore --clean
+--if-exists --no-owner --no-acl --jobs`, runs
+`/usr/local/bin/yalla-api --migrate-only` against the throwaway database, and
+then runs the canary suite before writing a redacted report.
+
+The command loads runtime configuration from `/etc/yalla/control-plane.env`
+or `YALLA_CONTROL_PLANE_ENV_FILE`. It never checks in or prints database URLs,
+snapshot object locations, signing keys, secret-encryption keys, Dokploy
+endpoints, Dokploy tokens, API keys, cookies, backup bucket credentials, or
+rendered environment values; `--dry-run` prints only command shape plus
+redacted `YALLA_*` variable names. Operators verify `/healthz`, `/readyz`, and
+`/healthz/backup`; the API renders stable `yalla.output.v1` or
+`yalla.error.v1` envelopes for those probes. Structured JSON logs from
+`yalla-api` and `yalla-worker` remain diagnostics only.
+
+CI pins the command, runbook, and release gate with
+`go test ./internal/release/... -run TestRestoreRehearsalCommand`.
