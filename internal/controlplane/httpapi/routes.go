@@ -11,6 +11,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/openapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
@@ -201,6 +202,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var dokployRefs DokployRefReader
 	var adminDokployReconciler AdminDokployReconciler
 	var adminDokployImporter AdminDokployImporter
+	httpMetrics := telemetry.DefaultHTTPMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -226,6 +228,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(AdminDokployImporter); ok {
 			adminDokployImporter = v
 		}
+		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
+			httpMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -243,6 +248,20 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				// Liveness: the process is running and can serve HTTP. It does
 				// not depend on downstream dependencies — that is /readyz.
 				apienvelope.WriteData(w, http.StatusOK, requestID(r), healthzPayload{Status: "ok"})
+			},
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/metrics",
+				OperationID:        "getMetrics",
+				Summary:            "Read HTTP request metrics",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics for this API process. Series are grouped by method, matched route pattern, status code, and status class; request_id, correlation_id, organization_id, principal_id, and target describe only the most recent request in a series so operators can join the aggregate to structured request logs without turning high-cardinality identifiers into metric labels. Secrets in request targets are redacted before they are stored.",
+				Tags:               []string{tagOperations},
+				SuccessDescription: "The current in-process HTTP request metric snapshot.",
+			},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				apienvelope.WriteData(w, http.StatusOK, requestID(r), httpMetrics.Snapshot())
 			},
 		},
 		{

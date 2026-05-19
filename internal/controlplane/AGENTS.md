@@ -101,6 +101,11 @@ do not mix customer API handlers into CLI packages.
   `telemetry.SetPrincipalID(ctx, …)` once they resolve those values so they
   reach the per-request log record. Service binaries bind `service` onto the
   logger with `logger.With(slog.String("service", …))` and log JSON to stdout.
+- `telemetry.RequestMetrics(metrics)` runs inside request logging so it can see
+  request/correlation IDs plus the safe org/principal fields that auth
+  resolved. It records low-cardinality HTTP series only by method, normalized
+  route path, status code, and status class; request IDs and org/principal IDs
+  are latest-sample log-join hints, not dashboard labels.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

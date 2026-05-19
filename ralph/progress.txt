@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- HTTP request metrics live in `internal/controlplane/telemetry` and are wired by `httpapi.NewHandler` inside request logging: group metric series only by method, normalized route, status code, and status class; keep request/correlation/org/principal identifiers as latest-sample log-join hints instead of dashboard labels.
 - Billing-grade Traefik metric stories should add four pieces together: a runtime `metering.MetricDefinition`, a new `quota_resource` migration + `store.QuotaResource` constant when the key is invoiceable, an idempotent emitter that writes only fully attributed samples into `usage_events`, and a customer usage projection from current-period `usage_counters`.
 - Entitlement-backed hard quota rejections should carry both human guidance and stable machine details: `resource`, `entitlement_key`, `current`, `reserved`, `requested`, `limit`, and subscription `reset_period_start`/`reset_period_end` when the limit came from a current subscription period. Keep the detailed counts from the same locked quota decision that creates or rejects the reservation.
 - Build/deployment metering is a bridge from Yalla source-of-truth timelines into append-only `usage_events`: deployment counts come from terminal `deployment_events` (never Dokploy current state), successful/rolled-back deployments use `deployments`, failed deployments use `failed_deployments`, cancelled deployments do not emit deployment-count usage, and `build_minutes` sums completed `job_attempts` durations with a terminal `provisioning_jobs.started_at/finished_at` fallback. Idempotency keys are per deployment outcome (`deployment:<id>:<status>`) and per job duration (`build_minutes:<job_id>`).
@@ -35807,7 +35808,7 @@ change that widened Reason to caller-supplied data.
   - `golangci-lint run ./...`
 - Results
   - All commands above passed after implementation.
-  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment, so they were not run.
+  - `goimports` and `staticcheck` were not available from the interactive shell, so they were not run manually. `govulncheck` later ran successfully as part of the repository pre-commit verification.
 - Remaining risks or follow-ups
   - Later BE-0296/BE-0297 stories still list additional dedicated contract/policy coverage for the admin break-glass surface, so this iteration stayed scoped to the endpoint implementation story.
 - **Learnings for future iterations:**
@@ -37116,4 +37117,46 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `http_request_bytes` was already collected by the Traefik source adapter; billing-grade enablement still required the standard four-piece vertical: `MetricDefinition`, quota_resource migration + store constant, usage-event emitter mapping, and tests.
   - The customer usage projection reads current-period `usage_counters` for any valid `QuotaResource`, so adding a valid invoiceable resource lets aggregation surface it without a per-metric usage reader branch.
+---
+## 2026-05-19 07:18 +03 - BE-0364
+- What was implemented
+  - Added in-process HTTP request metrics collection in `internal/controlplane/telemetry` with low-cardinality series grouped by method, normalized route, status code, and status class.
+  - Wired the metrics middleware into `httpapi.NewHandler` inside request logging so metrics can include request/correlation IDs and safe org/principal log-join hints.
+  - Added `GET /metrics` as a route-table/OpenAPI-backed operator endpoint returning a `yalla.output.v1` JSON envelope with the current metrics snapshot.
+  - Added operations documentation for using the metrics during incidents and updated nearby AGENTS guidance for the reusable middleware pattern.
+  - Marked BE-0364 `passes: true` in `ralph/prd.json` after verification.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/metrics_test.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `docs/operations/http-request-metrics.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/telemetry -run TestRequestMetrics -count=1`
+  - `go test ./internal/controlplane/httpapi -run TestMetricsEndpointReturnsEnvelopeSnapshot -count=1`
+  - `go test ./internal/controlplane/telemetry ./internal/controlplane/httpapi -count=1`
+  - `go test ./internal/controlplane/httpapi -run 'TestEveryRegisteredRouteIsDocumented|TestEveryAuthenticatedRouteHasMappedAction|TestCORSPublicRoutesEmitNoApprovalHeaders|TestCSRF' -count=1`
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All listed verification commands passed.
+  - `goimports` and `staticcheck` were not available from the interactive shell, so they were not run manually. `govulncheck` later ran successfully as part of the repository pre-commit verification.
+- Remaining risks or follow-ups
+  - The `/metrics` snapshot is in-process only; multi-instance aggregation still belongs to deployment/monitoring infrastructure.
+  - The endpoint is a JSON operational snapshot, not a Prometheus scrape format. A future exporter can adapt the same collector without changing the low-cardinality contract.
+- **Learnings for future iterations:**
+  - `net/http` sets `Request.Pattern` to strings like `GET /healthz`; normalize away the method before using it as a route metric label.
+  - Keep request IDs and tenant/principal identifiers out of metric grouping dimensions. They are useful as latest-sample join hints to request logs, but unsafe as high-cardinality dashboard labels.
 ---
