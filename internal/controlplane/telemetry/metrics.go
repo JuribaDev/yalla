@@ -61,6 +61,11 @@ var DefaultDeadLetterAlertMetrics = NewDeadLetterAlertMetrics()
 // their own collector.
 var DefaultReconciliationDriftAlertMetrics = NewReconciliationDriftAlertMetrics()
 
+// DefaultSecretRedactionCanaryMetrics is the process-wide collector for
+// redaction canary observations emitted by tests, smoke probes, or operational
+// verification hooks.
+var DefaultSecretRedactionCanaryMetrics = NewSecretRedactionCanaryMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -784,6 +789,64 @@ type reconciliationDriftAlertMetricSeries struct {
 	ReconciliationDriftAlertMetric
 }
 
+// SecretRedactionCanaryObservation is one redaction canary probe result.
+// Surface, Vector, Outcome, and Reason are bounded aggregate dimensions;
+// identifiers are latest-sample hints only. The probe secret itself must never
+// be supplied to this type.
+type SecretRedactionCanaryObservation struct {
+	Surface        string
+	Vector         string
+	Outcome        string
+	Reason         string
+	OrganizationID string
+	PrincipalID    string
+	ResourceKind   string
+	ResourceID     string
+	JobID          string
+}
+
+// SecretRedactionCanaryMetric is one aggregate redaction canary series.
+type SecretRedactionCanaryMetric struct {
+	Surface        string `json:"surface"`
+	Vector         string `json:"vector"`
+	Outcome        string `json:"outcome"`
+	Reason         string `json:"reason"`
+	Count          int64  `json:"count"`
+	RequestID      string `json:"request_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	PrincipalID    string `json:"principal_id,omitempty"`
+	ResourceKind   string `json:"resource_kind,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+}
+
+// SecretRedactionCanaryMetricsSnapshot is the JSON-serializable operational
+// view exposed to operators, tests, and the /metrics endpoint.
+type SecretRedactionCanaryMetricsSnapshot struct {
+	TotalObservations int64                         `json:"total_observations"`
+	Series            []SecretRedactionCanaryMetric `json:"series"`
+}
+
+// SecretRedactionCanaryMetrics stores low-cardinality canary probe counters.
+// It is safe for concurrent use by API, worker, and test goroutines.
+type SecretRedactionCanaryMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[secretRedactionCanaryMetricKey]*secretRedactionCanaryMetricSeries
+}
+
+type secretRedactionCanaryMetricKey struct {
+	surface string
+	vector  string
+	outcome string
+	reason  string
+}
+
+type secretRedactionCanaryMetricSeries struct {
+	SecretRedactionCanaryMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -841,6 +904,11 @@ func NewDeadLetterAlertMetrics() *DeadLetterAlertMetrics {
 // alert collector.
 func NewReconciliationDriftAlertMetrics() *ReconciliationDriftAlertMetrics {
 	return &ReconciliationDriftAlertMetrics{series: make(map[reconciliationDriftAlertMetricKey]*reconciliationDriftAlertMetricSeries)}
+}
+
+// NewSecretRedactionCanaryMetrics returns an empty redaction canary collector.
+func NewSecretRedactionCanaryMetrics() *SecretRedactionCanaryMetrics {
+	return &SecretRedactionCanaryMetrics{series: make(map[secretRedactionCanaryMetricKey]*secretRedactionCanaryMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -1197,6 +1265,38 @@ func (m *ReconciliationDriftAlertMetrics) Snapshot() ReconciliationDriftAlertMet
 			return a.Severity < b.Severity
 		}
 		return a.Status < b.Status
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all redaction canary metrics
+// currently held by the collector.
+func (m *SecretRedactionCanaryMetrics) Snapshot() SecretRedactionCanaryMetricsSnapshot {
+	if m == nil {
+		return SecretRedactionCanaryMetricsSnapshot{Series: []SecretRedactionCanaryMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := SecretRedactionCanaryMetricsSnapshot{
+		TotalObservations: m.total,
+		Series:            make([]SecretRedactionCanaryMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.SecretRedactionCanaryMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Surface != b.Surface {
+			return a.Surface < b.Surface
+		}
+		if a.Vector != b.Vector {
+			return a.Vector < b.Vector
+		}
+		if a.Outcome != b.Outcome {
+			return a.Outcome < b.Outcome
+		}
+		return a.Reason < b.Reason
 	})
 	return out
 }
@@ -1842,6 +1942,67 @@ func (m *ReconciliationDriftAlertMetrics) RecordReconciliationDriftAlert(ctx con
 	series.FailureCount = int(clampMetricCount(int64(event.FailureCount)))
 }
 
+// RecordSecretRedactionCanary aggregates one redaction canary observation.
+func (m *SecretRedactionCanaryMetrics) RecordSecretRedactionCanary(ctx context.Context, event SecretRedactionCanaryObservation) {
+	if m == nil {
+		return
+	}
+	surface := metricSLOToken(event.Surface, "unknown")
+	vector := metricSLOToken(event.Vector, "unknown")
+	outcome := metricCanaryOutcome(event.Outcome)
+	reason := metricSLOToken(event.Reason, "unknown")
+
+	corr := FromContext(ctx)
+	orgID, principalID, resourceKind, resourceID, jobID := "", "", "", "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID, resourceKind, resourceID, jobID, _ = f.logSnapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+	if strings.TrimSpace(event.PrincipalID) != "" {
+		principalID = strings.TrimSpace(event.PrincipalID)
+	}
+	if strings.TrimSpace(event.ResourceKind) != "" {
+		resourceKind = strings.TrimSpace(event.ResourceKind)
+	}
+	if strings.TrimSpace(event.ResourceID) != "" {
+		resourceID = strings.TrimSpace(event.ResourceID)
+	}
+	if strings.TrimSpace(event.JobID) != "" {
+		jobID = strings.TrimSpace(event.JobID)
+	}
+
+	key := secretRedactionCanaryMetricKey{
+		surface: surface,
+		vector:  vector,
+		outcome: outcome,
+		reason:  reason,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &secretRedactionCanaryMetricSeries{SecretRedactionCanaryMetric: SecretRedactionCanaryMetric{
+			Surface: surface,
+			Vector:  vector,
+			Outcome: outcome,
+			Reason:  reason,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.RequestID = safeMetricID(corr.RequestID)
+	series.CorrelationID = safeMetricID(corr.CorrelationID)
+	series.OrganizationID = safeMetricID(orgID)
+	series.PrincipalID = safeMetricID(principalID)
+	series.ResourceKind = safeMetricID(resourceKind)
+	series.ResourceID = safeMetricID(resourceID)
+	series.JobID = safeMetricID(jobID)
+}
+
 func metricMethod(method string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
@@ -2013,6 +2174,17 @@ func metricSLOStatus(status string) string {
 	switch strings.TrimSpace(status) {
 	case "firing", "resolved", "suppressed":
 		return strings.TrimSpace(status)
+	case "":
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+func metricCanaryOutcome(outcome string) string {
+	switch strings.TrimSpace(outcome) {
+	case "passed", "failed":
+		return strings.TrimSpace(outcome)
 	case "":
 		return "unknown"
 	default:

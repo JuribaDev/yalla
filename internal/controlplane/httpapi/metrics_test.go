@@ -26,6 +26,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	sloMetrics := telemetry.NewSLOBurnRateMetrics()
 	deadLetterMetrics := telemetry.NewDeadLetterAlertMetrics()
 	driftAlertMetrics := telemetry.NewReconciliationDriftAlertMetrics()
+	secretRedactionCanaryMetrics := telemetry.NewSecretRedactionCanaryMetrics()
 	readiness := runtime.NewReadiness("database", "migrations", "queue")
 	readiness.MarkReady("migrations")
 	readiness.MarkReady("queue")
@@ -71,6 +72,19 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		JobID:          "job_metrics_drift",
 		ActionCount:    1,
 	})
+	secretRedactionCanaryMetrics.RecordSecretRedactionCanary(telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_canary_metrics",
+		CorrelationID: "corr_canary_metrics",
+	}), telemetry.SecretRedactionCanaryObservation{
+		Surface:        "request_logs",
+		Vector:         "authorization_header",
+		Outcome:        "passed",
+		Reason:         "sentinel_absent",
+		OrganizationID: "org_metrics_canary",
+		ResourceKind:   "service",
+		ResourceID:     "svc_metrics_canary",
+		JobID:          "job_metrics_canary",
+	})
 	dokployMetrics.RecordDokployDependencyCall(context.Background(), telemetry.DokployDependencyEvent{
 		Method:     http.MethodGet,
 		Path:       "/api/projects/proj_metrics_probe",
@@ -113,7 +127,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 		runtime.BuildInfo{Version: "test"}, readiness, nil, nil,
 		fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, metrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics,
 		traceMetrics, slowQueryMetrics, readinessMetrics, sloMetrics, deadLetterMetrics,
-		driftAlertMetrics,
+		driftAlertMetrics, secretRedactionCanaryMetrics,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -154,6 +168,7 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 			SLOBurnRates        telemetry.SLOBurnRateMetricsSnapshot              `json:"slo_burn_rates"`
 			DeadLetterAlerts    telemetry.DeadLetterAlertMetricsSnapshot          `json:"dead_letter_alerts"`
 			DriftAlerts         telemetry.ReconciliationDriftAlertMetricsSnapshot `json:"reconciliation_drift_alerts"`
+			Canaries            telemetry.SecretRedactionCanaryMetricsSnapshot    `json:"secret_redaction_canaries"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -221,6 +236,12 @@ func TestMetricsEndpointReturnsEnvelopeSnapshot(t *testing.T) {
 	}
 	if len(env.Data.DriftAlerts.Series) != 1 || env.Data.DriftAlerts.Series[0].DriftKind != "dangerous" || env.Data.DriftAlerts.Series[0].OrganizationID != "org_metrics_drift" || env.Data.DriftAlerts.Series[0].JobID != "job_metrics_drift" {
 		t.Fatalf("reconciliation drift alert series = %+v, want dangerous drift with safe org/job hints", env.Data.DriftAlerts.Series)
+	}
+	if env.Data.Canaries.TotalObservations != 1 {
+		t.Fatalf("secret redaction canary total_observations = %d, want 1", env.Data.Canaries.TotalObservations)
+	}
+	if len(env.Data.Canaries.Series) != 1 || env.Data.Canaries.Series[0].Surface != "request_logs" || env.Data.Canaries.Series[0].OrganizationID != "org_metrics_canary" || env.Data.Canaries.Series[0].JobID != "job_metrics_canary" {
+		t.Fatalf("secret redaction canary series = %+v, want request_logs with safe org/job hints", env.Data.Canaries.Series)
 	}
 	foundReadyzFailure := false
 	for _, series := range env.Data.Readiness.Series {

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Secret-redaction canary metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.SecretRedactionCanaryMetrics` groups by `(surface, vector, outcome, reason)`, stores request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, is emitted through `telemetry.ObserveSecretRedactionCanary` without accepting the raw canary secret, and `/metrics` exposes the snapshot under `data.secret_redaction_canaries`.
 - Reconciliation drift alert metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.ReconciliationDriftAlertMetrics` groups by `(drift_kind, action_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `reconcile.Reconciler` after completed ticks as firing per planned drift action or resolved `none/none/no_drift` for clean plans, and `/metrics` exposes the snapshot under `data.reconciliation_drift_alerts`.
 - Dead-letter alert metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness/SLO metrics: `telemetry.DeadLetterAlertMetrics` groups by `(job_type, reason, severity, status)`, stores request/correlation/org/project/environment/service/principal/resource/job IDs only as latest-sample incident hints, is emitted by `worker.StoreClaimer` only after a `dead_letter` transition commits, and `/metrics` exposes the snapshot under `data.dead_letter_alerts`.
 - SLO burn-rate metrics follow the same low-cardinality telemetry collector pattern as HTTP/job/Dokploy/quota/readiness metrics: `telemetry.SLOBurnRateMetrics` groups by `(objective, window, severity, status, signal)`, stores burn-rate/error-budget numbers plus request/correlation/org/principal/resource/job IDs only as latest-sample incident hints, and `/metrics` exposes the snapshot under `data.slo_burn_rates`.
@@ -38226,4 +38227,42 @@ change that widened Reason to caller-supplied data.
   - Dead-letter alerts should remain a focused operational signal separate from generic worker queue counters; queue metrics show all outcomes, while `dead_letter_alerts` is the paging surface.
   - Emit dead-letter alerts after the database transition succeeds, not when the runner returns an error, so alerts reflect durable queue state.
   - Worker dead-letter logs should include safe job/request/org/project/environment/service identifiers but never the raw runner error summary.
+---
+## 2026-05-19 12:25 +03 - BE-0377
+- What was implemented
+  - Added `telemetry.SecretRedactionCanaryMetrics` with low-cardinality `(surface, vector, outcome, reason)` series and safe latest-sample request/correlation/org/principal/resource/job hints.
+  - Added `telemetry.ObserveSecretRedactionCanary` to record metrics and emit structured `secret_redaction_canary` logs without accepting the raw probe secret.
+  - Exposed the snapshot at `/metrics` under `data.secret_redaction_canaries` and documented operator incident usage.
+  - Added focused telemetry tests for passing and failing canary observations, bounded cardinality, unsafe ID dropping, and log redaction; updated `/metrics` envelope coverage.
+- Files changed
+  - `internal/controlplane/telemetry/metrics.go`
+  - `internal/controlplane/telemetry/secret_redaction_canary.go`
+  - `internal/controlplane/telemetry/secret_redaction_canary_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/httpapi/metrics_test.go`
+  - `docs/operations/secret-redaction-canaries.md`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; not installed
+  - `go mod tidy`
+  - `go test ./internal/controlplane/telemetry ./internal/controlplane/httpapi`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; not installed
+  - `govulncheck ./...` attempted; not installed
+- Results
+  - Required checks passed.
+  - Optional `golangci-lint` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups
+  - Canary emission is now a stable telemetry/logging helper and metrics surface; future deployment smoke tests should call it around concrete redaction probes.
+- **Learnings for future iterations:**
+  - Redaction canary signals should never carry the raw probe secret; make the helper API accept only bounded dimensions and safe correlation hints.
+  - Keep canary failures operationally useful by grouping on the redaction surface and vector while storing IDs only as latest-sample hints.
 ---

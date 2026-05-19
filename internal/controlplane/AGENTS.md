@@ -174,6 +174,15 @@ do not mix customer API handlers into CLI packages.
   on dangerous drift, ticket persistent safe/unmanaged drift, then join the
   latest request/correlation/job/org/service hints to structured logs and the
   support-only drift findings view.
+- Secret-redaction canary metrics follow the same low-cardinality collector
+  pattern: `telemetry.SecretRedactionCanaryMetrics` groups only by
+  `(surface, vector, outcome, reason)`. Emit probes through
+  `telemetry.ObserveSecretRedactionCanary`, which records the metric and writes
+  a structured `secret_redaction_canary` log without accepting the raw canary
+  secret. `/metrics` exposes the snapshot under
+  `data.secret_redaction_canaries`; operators should page on
+  `outcome="failed"` and join the latest request/correlation/resource/job
+  hints to logs or audit rows.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux
