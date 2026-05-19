@@ -639,6 +639,15 @@ readiness degradation metrics, policy decision metrics, audit event metrics,
 dead-letter alerts, and opt-in external live-Dokploy smoke tests that must
 never target production.
 
+Incident evidence must use expected output shapes rather than full command
+transcripts: package-level `ok` / `PASS` test summaries, stable
+`yalla.output.v1` / `yalla.error.v1` envelope examples with `request_id`,
+`api_schema_version`, and `migration_version`, and key-presence summaries for
+structured logs and `dead_letter_alerts`. It must never paste rendered command
+output that could include customer identifiers, local paths, request bodies,
+response bodies, database URLs, tokens, cookies, or rendered environment
+values.
+
 CI pins the incident response runbook with
 `go test ./internal/release/... -run TestIncidentResponseRunbookArtifact`.
 

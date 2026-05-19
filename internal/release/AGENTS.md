@@ -393,9 +393,14 @@ document the Yalla API -> Postgres source of truth -> worker -> private
 Dokploy API boundary, keep runtime secrets in operator-managed configuration,
 describe `/healthz`, `/readyz`, `/version`, stable JSON envelopes, structured
 log redaction, support break-glass access, incident-specific triage paths, and
-explicit verification including the opt-in live-Dokploy smoke test warning. Any
-future incident-response runbook change should update the runbook, SECURITY.md
-verification-gates row, CI step, and `scripts/verify.sh` in the same edit.
+explicit verification including the opt-in live-Dokploy smoke test warning.
+BE-0553 also pins expected incident evidence shapes: package-level `ok` /
+`PASS` summaries, stable success/error envelope examples with `request_id`,
+`api_schema_version`, and `migration_version`, structured-log key presence, and
+`dead_letter_alerts` by metric section name instead of full rendered
+transcripts. Any future incident-response runbook change should update the
+runbook, SECURITY.md verification-gates row, CI step, and `scripts/verify.sh`
+in the same edit.
 
 ## On-call dashboard artifact (BE-0421)
 

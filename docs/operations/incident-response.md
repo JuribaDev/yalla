@@ -186,6 +186,51 @@ quota concurrency, fake Dokploy, and worker leases. Document any unavailable
 optional tool explicitly in the incident record and in `ralph/progress.txt`
 when the story runner is being used.
 
+## Expected outputs
+
+Incident evidence should identify the command, target environment, timestamp,
+incident ID, and whether the output matched the expected shape.
+Never copy full rendered command output into the incident record. Command
+output can carry local paths, operator environment details, customer
+identifiers, or secret-shaped values.
+
+Go test gates should finish with package-level `ok` lines and no failing test
+records:
+
+```text
+ok  github.com/juribadev/yalla/internal/controlplane/httpapi
+ok  github.com/juribadev/yalla/internal/release
+PASS
+```
+
+Health and readiness probes return stable JSON envelopes. Successful probes use
+`yalla.output.v1` and include a request ID:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"checks":{"database":true,"migrations":true,"queue":true}}}
+```
+
+Unhealthy readiness uses the stable error envelope and must not include raw
+database URLs, Dokploy tokens, cookies, request bodies, response bodies, or
+rendered environment values:
+
+```json
+{"schema_version":"yalla.error.v1","ok":false,"request_id":"req_example","error":{"code":"E_SERVER","message":"service unavailable"}}
+```
+
+`/version` evidence should include release identity plus compatibility metadata:
+
+```json
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_example","data":{"version":"v0.0.0","commit":"<redacted:git-sha>","date":"2026-05-19T00:00:00Z","api_schema_version":"yalla.api.v1","migration_version":"<redacted:migration-version>"}}
+```
+
+Structured log evidence may be summarized as key presence only. Acceptable
+incident evidence says `service=yalla-api`, `service=yalla-worker`,
+`request_id`, `correlation_id`, `status_class`, route or job metadata, and
+stable `error_code` were present where applicable. Worker alert evidence should
+name the metric section, such as `dead_letter_alerts`, without pasting job
+payloads or secret-shaped metadata.
+
 ## Post-Incident Review
 
 The post-incident review is the durable learning and accountability record.

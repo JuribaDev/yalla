@@ -132,6 +132,32 @@ func TestIncidentResponseRunbookArtifactDocumentsVerification(t *testing.T) {
 	}
 }
 
+func TestIncidentResponseRunbookArtifactDocumentsExpectedOutputs(t *testing.T) {
+	root := projectRoot(t)
+	runbook := readTextFile(t, filepath.Join(root, incidentResponseRunbookPath))
+
+	for _, want := range []string{
+		"## Expected outputs",
+		"PASS",
+		"ok  github.com/juribadev/yalla",
+		"service=yalla-api",
+		"service=yalla-worker",
+		"schema_version\":\"yalla.output.v1",
+		"schema_version\":\"yalla.error.v1",
+		"\"ok\":true",
+		"\"request_id\":\"req_",
+		"\"checks\"",
+		"\"api_schema_version\"",
+		"\"migration_version\"",
+		"dead_letter_alerts",
+		"Never copy full rendered command output into the incident record",
+	} {
+		if !strings.Contains(runbook, want) {
+			t.Fatalf("%s missing expected-output guidance %q", incidentResponseRunbookPath, want)
+		}
+	}
+}
+
 func TestIncidentResponseRunbookArtifactVerificationIsWiredIntoReleaseGates(t *testing.T) {
 	root := projectRoot(t)
 	for _, tc := range []struct {

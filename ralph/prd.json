@@ -11416,8 +11416,8 @@
       ],
       "type": "documentation",
       "priority": 3,
-      "passes": false,
-      "notes": "Documentation topic: incident response."
+      "passes": true,
+      "notes": "Completed the incident response documentation story by extending docs/operations/incident-response.md with expected output shapes for tests, health/readiness/version envelopes, structured logs, and dead-letter alerts; pinned the acceptance criteria with the incident response runbook static artifact test plus SECURITY.md and internal/release guidance."
     },
     {
       "id": "BE-0554",
