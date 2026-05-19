@@ -216,6 +216,19 @@ Postgres persistence for control-plane source-of-truth state.
   (`hard`/`soft`/`metered`/`disabled`) is the second shared domain. Adding a
   dimension is a new migration running `ALTER DOMAIN`.
 
+## Backoffice runtime config (`0062_admin_config_versioning`, `admin_config.go`)
+
+- `admin_config_sets` and `admin_config_versions` are global operator-owned
+  runtime configuration, not tenant data. Do not add `organization_id` to these
+  tables unless the product explicitly introduces tenant-local backoffice config.
+- Runtime readers must use `AdminConfigRepository.ListActivePublished`: it
+  returns only published versions whose `effective_at` is active, one current
+  version per config set. Drafts and future-effective versions are never runtime
+  inputs.
+- Config version changes should create new rows or archive existing rows. Do
+  not mutate a published payload in place. `admin_config_sets.revision` is the
+  cache invalidation token and should be bumped by every version mutation.
+
 ## Usage counters (`0052_usage_counters`)
 
 - `usage_counters` are billing-period aggregates derived from append-only

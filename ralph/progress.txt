@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice runtime configuration uses global `admin_config_sets` plus `admin_config_versions`, not tenant tables: create editable drafts, publish immutable effective-at versions, archive instead of deleting, and make runtime readers select only `status='published'` rows whose `effective_at` has passed. Bump the set `revision` on version mutations so future cache layers have a monotonic invalidation token.
 - Worker queue metrics follow the HTTP metrics collector shape: aggregate series by low-cardinality dimensions only (`event`, `job_type`, `status`, `status_class`), keep job/request/correlation/org/project/environment/service identifiers as latest-sample log-join hints, and emit worker events only after successful claim/outcome commits so metrics reflect durable queue state.
 - Billing-grade container metric stories follow the same four-piece tracked-metric vertical as Traefik/build metering: add a runtime `metering.MetricDefinition`, extend the closed `quota_resource` domain plus `store.QuotaResource`, quarantine samples before billing unless attribution resolves a full org/project/environment/service scope, and emit idempotent `usage_events` whose current-period aggregation is visible through the organization usage projection.
 - HTTP request metrics live in `internal/controlplane/telemetry` and are wired by `httpapi.NewHandler` inside request logging: group metric series only by method, normalized route, status code, and status class; keep request/correlation/org/principal identifiers as latest-sample log-join hints instead of dashboard labels.
@@ -37398,4 +37399,47 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Deployment usage now has both halves of the tracked metric contract: the existing source-of-truth emitter writes `deployments` usage_events from terminal deployment_events, and the runtime metric registry advertises the public `deployment/yalla_events/hard_or_metered` definition.
   - Use `MetricEnforcementHardOrMetered` when a billing-grade metric can be hard-limited by entitlement policy or billed as overage without changing the usage-event key.
+---
+## 2026-05-19 08:19 +03 - BE-0599
+- What was implemented
+  - Added database-backed backoffice runtime configuration versioning with global `admin_config_sets` and `admin_config_versions`.
+  - Added store repository support for config set creation, draft creation, publish, future-effective runtime reads, rollback, archive, and revision-based cache invalidation.
+  - Added schema and repository tests covering draft creation, publish, future-effective publish, rollback, archive, validation, not-found behavior, and monotonic revision invalidation.
+  - Marked `BE-0599` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/store/admin_config.go`
+  - `internal/controlplane/store/admin_config_repository_test.go`
+  - `internal/controlplane/store/admin_config_schema_test.go`
+  - `internal/controlplane/store/migrate/migrations/0062_admin_config_versioning.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0062_admin_config_versioning.down.sql`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` attempted; `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/store -run 'TestAdminConfig'`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestJobWorkerLease ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; `staticcheck` is not installed.
+  - `govulncheck ./...` attempted; `govulncheck` is not installed.
+- Results
+  - Required formatting, tests, race detector, vet, focused backend suites, and `golangci-lint` passed.
+  - Optional `goimports`, `staticcheck`, and `govulncheck` could not be run because the binaries are not installed.
+- Remaining risks or follow-ups
+  - BE-0600+ should layer dry-run validation and admin HTTP APIs on top of this repository; this story intentionally added the versioned persistence/runtime-read foundation only.
+- **Learnings for future iterations:**
+  - Backoffice config tables are global operator configuration, not tenant-scoped customer data.
+  - Published config payloads should be treated as immutable runtime candidates; later changes should create new versions or archive old versions.
+  - Runtime consumers should use a published/effective-at read path and a monotonic config-set revision token for cache invalidation.
 ---
