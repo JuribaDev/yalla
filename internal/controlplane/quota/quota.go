@@ -20,6 +20,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 // DefaultReservationTTL is how long a reservation stays active before it is
@@ -93,6 +94,7 @@ type Checker struct {
 	repo         *store.QuotaRepository
 	plans        PlanResolver
 	entitlements *entitlements.Resolver
+	metrics      *telemetry.QuotaUsageMetrics
 	ttl          time.Duration
 	now          func() time.Time
 }
@@ -122,6 +124,13 @@ func WithClock(now func() time.Time) Option {
 // quota_policies so older deployments keep their existing behaviour.
 func WithEntitlementResolver(resolver *entitlements.Resolver) Option {
 	return func(c *Checker) { c.entitlements = resolver }
+}
+
+// WithMetrics sends bounded quota decision observations to metrics. Passing nil
+// disables quota metrics for this checker; production wiring should use
+// telemetry.DefaultQuotaUsageMetrics.
+func WithMetrics(metrics *telemetry.QuotaUsageMetrics) Option {
+	return func(c *Checker) { c.metrics = metrics }
 }
 
 // NewChecker wires a Checker from its dependencies. It returns a typed error if
@@ -182,13 +191,33 @@ func (c *Checker) Reserve(ctx context.Context, tx *store.Tx, organizationID, res
 // dedicated release path, not a negative ReserveAmount.
 func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationID, resource string, amount int64) error {
 	if tx == nil {
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:       resource,
+			Outcome:        telemetry.QuotaUsageOutcomeError,
+			Reason:         "internal_error",
+			Requested:      amount,
+			OrganizationID: strings.TrimSpace(organizationID),
+		})
 		return apierr.Internal(errors.New("quota: ReserveAmount called with a nil transaction"))
 	}
 	if amount <= 0 {
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:       resource,
+			Outcome:        telemetry.QuotaUsageOutcomeError,
+			Reason:         "internal_error",
+			Requested:      amount,
+			OrganizationID: strings.TrimSpace(organizationID),
+		})
 		return apierr.Internal(fmt.Errorf("quota: ReserveAmount called with non-positive amount %d", amount))
 	}
 	orgID := strings.TrimSpace(organizationID)
 	if orgID == "" {
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:  resource,
+			Outcome:   telemetry.QuotaUsageOutcomeError,
+			Reason:    "invalid_organization",
+			Requested: amount,
+		})
 		return apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "organization_id",
 			Reason: "must not be empty",
@@ -196,6 +225,13 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 	}
 	res := store.QuotaResource(strings.TrimSpace(resource))
 	if !res.Valid() {
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:       string(res),
+			Outcome:        telemetry.QuotaUsageOutcomeError,
+			Reason:         "invalid_resource",
+			Requested:      amount,
+			OrganizationID: orgID,
+		})
 		return apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "resource",
 			Reason: "is not a recognised quota dimension",
@@ -206,34 +242,79 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 
 	limit, found, err := c.effectiveLimit(ctx, tx, orgID, res)
 	if err != nil {
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:       res.String(),
+			Outcome:        telemetry.QuotaUsageOutcomeError,
+			Reason:         "limit_lookup_failed",
+			Requested:      requested,
+			OrganizationID: orgID,
+		})
 		return err
 	}
 	if !found {
 		// No policy configured for this dimension at either scope: the
 		// resource is unconstrained, so there is nothing to reserve or reject.
+		c.recordMetric(ctx, telemetry.QuotaUsageEvent{
+			Resource:       res.String(),
+			Outcome:        telemetry.QuotaUsageOutcomeAllowed,
+			Reason:         "unconstrained",
+			Requested:      requested,
+			OrganizationID: orgID,
+		})
 		return nil
+	}
+
+	event := telemetry.QuotaUsageEvent{
+		Resource:        res.String(),
+		EnforcementMode: string(limit.EnforcementMode),
+		Requested:       requested,
+		Limit:           limit.LimitValue,
+		OrganizationID:  orgID,
 	}
 
 	switch limit.EnforcementMode {
 	case store.EnforcementModeDisabled:
+		event.Outcome = telemetry.QuotaUsageOutcomeAllowed
+		event.Reason = "disabled"
+		c.recordMetric(ctx, event)
 		return nil
 	case store.EnforcementModeHard:
 		// Lock the usage counter row so a concurrent reserve for the same
 		// tenant and resource serialises behind this one.
 		current, err := c.repo.LockUsage(ctx, tx, orgID, res)
 		if err != nil {
+			event.Outcome = telemetry.QuotaUsageOutcomeError
+			event.Reason = "usage_lock_failed"
+			c.recordMetric(ctx, event)
 			return err
 		}
 		reserved, err := c.repo.SumActiveReservations(ctx, tx, orgID, res, c.now())
 		if err != nil {
+			event.Outcome = telemetry.QuotaUsageOutcomeError
+			event.Reason = "reservation_sum_failed"
+			event.Current = current
+			c.recordMetric(ctx, event)
 			return err
 		}
+		event.Current = current
+		event.Reserved = reserved
 		if current+reserved+requested > limit.LimitValue {
+			event.Outcome = telemetry.QuotaUsageOutcomeRejected
+			event.Reason = "limit_exceeded"
+			c.recordMetric(ctx, event)
 			return quotaExceeded(limit, current, reserved, requested)
 		}
 	case store.EnforcementModeSoft, store.EnforcementModeMetered:
 		// Recorded for metering and visibility, but never rejected.
+		if limit.EnforcementMode == store.EnforcementModeSoft {
+			event.Reason = "soft_limit"
+		} else {
+			event.Reason = "metered_limit"
+		}
 	default:
+		event.Outcome = telemetry.QuotaUsageOutcomeError
+		event.Reason = "internal_error"
+		c.recordMetric(ctx, event)
 		return apierr.Internal(fmt.Errorf("quota: unknown enforcement mode %q", limit.EnforcementMode))
 	}
 
@@ -244,9 +325,24 @@ func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationI
 		Status:         store.ReservationStatusActive,
 		ExpiresAt:      c.now().Add(c.ttl),
 	}); err != nil {
+		event.Outcome = telemetry.QuotaUsageOutcomeError
+		event.Reason = "reservation_insert_failed"
+		c.recordMetric(ctx, event)
 		return err
 	}
+	event.Outcome = telemetry.QuotaUsageOutcomeAllowed
+	if event.Reason == "" {
+		event.Reason = "reserved"
+	}
+	c.recordMetric(ctx, event)
 	return nil
+}
+
+func (c *Checker) recordMetric(ctx context.Context, event telemetry.QuotaUsageEvent) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.RecordQuotaUsageDecision(ctx, event)
 }
 
 func (c *Checker) effectiveLimit(ctx context.Context, tx *store.Tx, orgID string, res store.QuotaResource) (store.QuotaLimit, bool, error) {

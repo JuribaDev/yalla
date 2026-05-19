@@ -23,6 +23,11 @@ var DefaultJobQueueMetrics = NewJobQueueMetrics()
 // embedders inject their own collector.
 var DefaultDokployDependencyMetrics = NewDokployDependencyMetrics()
 
+// DefaultQuotaUsageMetrics is the process-wide quota decision metrics
+// collector used by the quota checker unless tests or embedders inject their
+// own collector.
+var DefaultQuotaUsageMetrics = NewQuotaUsageMetrics()
+
 // HTTPMetrics stores low-cardinality HTTP request counters and latency totals.
 // It is safe for concurrent use by net/http handlers.
 type HTTPMetrics struct {
@@ -222,6 +227,83 @@ type dokployDependencyMetricSeries struct {
 	DokployDependencyMetric
 }
 
+// QuotaUsageOutcome is the bounded outcome dimension for quota decisions.
+// Keep this closed and low-cardinality; detailed counts and identifiers live
+// on each metric as latest-sample hints.
+type QuotaUsageOutcome string
+
+const (
+	// QuotaUsageOutcomeAllowed records a quota decision that allowed the unit
+	// of work to proceed.
+	QuotaUsageOutcomeAllowed QuotaUsageOutcome = "allowed"
+	// QuotaUsageOutcomeRejected records a hard quota decision that rejected the
+	// attempted allocation.
+	QuotaUsageOutcomeRejected QuotaUsageOutcome = "rejected"
+	// QuotaUsageOutcomeError records validation, dependency, or unexpected
+	// errors reached while evaluating quota.
+	QuotaUsageOutcomeError QuotaUsageOutcome = "error"
+)
+
+// QuotaUsageEvent is one quota checker observation. Resource, EnforcementMode,
+// Outcome, and Reason are aggregate dimensions; request, organization,
+// principal, and job identifiers are latest-sample hints for incident joins.
+type QuotaUsageEvent struct {
+	Resource        string
+	EnforcementMode string
+	Outcome         QuotaUsageOutcome
+	Reason          string
+	Current         int64
+	Reserved        int64
+	Requested       int64
+	Limit           int64
+	OrganizationID  string
+	JobID           string
+}
+
+// QuotaUsageMetric is one aggregate quota-decision series.
+type QuotaUsageMetric struct {
+	Resource        string            `json:"resource"`
+	EnforcementMode string            `json:"enforcement_mode"`
+	Outcome         QuotaUsageOutcome `json:"outcome"`
+	Reason          string            `json:"reason"`
+	Count           int64             `json:"count"`
+	Current         int64             `json:"current,omitempty"`
+	Reserved        int64             `json:"reserved,omitempty"`
+	Requested       int64             `json:"requested,omitempty"`
+	Limit           int64             `json:"limit,omitempty"`
+	RequestID       string            `json:"request_id,omitempty"`
+	CorrelationID   string            `json:"correlation_id,omitempty"`
+	OrganizationID  string            `json:"organization_id,omitempty"`
+	PrincipalID     string            `json:"principal_id,omitempty"`
+	JobID           string            `json:"job_id,omitempty"`
+}
+
+// QuotaUsageMetricsSnapshot is the JSON-serializable operational view exposed
+// to operators, tests, and metrics endpoints.
+type QuotaUsageMetricsSnapshot struct {
+	TotalDecisions int64              `json:"total_decisions"`
+	Series         []QuotaUsageMetric `json:"series"`
+}
+
+// QuotaUsageMetrics stores low-cardinality quota decision counters. It is safe
+// for concurrent use by API and worker goroutines.
+type QuotaUsageMetrics struct {
+	mu     sync.Mutex
+	total  int64
+	series map[quotaUsageMetricKey]*quotaUsageMetricSeries
+}
+
+type quotaUsageMetricKey struct {
+	resource        string
+	enforcementMode string
+	outcome         QuotaUsageOutcome
+	reason          string
+}
+
+type quotaUsageMetricSeries struct {
+	QuotaUsageMetric
+}
+
 // NewHTTPMetrics returns an empty HTTP request metrics collector.
 func NewHTTPMetrics() *HTTPMetrics {
 	return &HTTPMetrics{requests: make(map[httpMetricKey]*httpMetricSeries)}
@@ -236,6 +318,11 @@ func NewJobQueueMetrics() *JobQueueMetrics {
 // metrics collector.
 func NewDokployDependencyMetrics() *DokployDependencyMetrics {
 	return &DokployDependencyMetrics{series: make(map[dokployDependencyMetricKey]*dokployDependencyMetricSeries)}
+}
+
+// NewQuotaUsageMetrics returns an empty quota decision metrics collector.
+func NewQuotaUsageMetrics() *QuotaUsageMetrics {
+	return &QuotaUsageMetrics{series: make(map[quotaUsageMetricKey]*quotaUsageMetricSeries)}
 }
 
 // Snapshot returns a deterministic copy of all request metrics currently held
@@ -330,6 +417,38 @@ func (m *DokployDependencyMetrics) Snapshot() DokployDependencyMetricsSnapshot {
 			return a.StatusCode < b.StatusCode
 		}
 		return a.ErrorCode < b.ErrorCode
+	})
+	return out
+}
+
+// Snapshot returns a deterministic copy of all quota decision metrics currently
+// held by the collector.
+func (m *QuotaUsageMetrics) Snapshot() QuotaUsageMetricsSnapshot {
+	if m == nil {
+		return QuotaUsageMetricsSnapshot{Series: []QuotaUsageMetric{}}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := QuotaUsageMetricsSnapshot{
+		TotalDecisions: m.total,
+		Series:         make([]QuotaUsageMetric, 0, len(m.series)),
+	}
+	for _, series := range m.series {
+		out.Series = append(out.Series, series.QuotaUsageMetric)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		a, b := out.Series[i], out.Series[j]
+		if a.Resource != b.Resource {
+			return a.Resource < b.Resource
+		}
+		if a.EnforcementMode != b.EnforcementMode {
+			return a.EnforcementMode < b.EnforcementMode
+		}
+		if a.Outcome != b.Outcome {
+			return a.Outcome < b.Outcome
+		}
+		return a.Reason < b.Reason
 	})
 	return out
 }
@@ -452,6 +571,57 @@ func (m *DokployDependencyMetrics) RecordDokployDependencyCall(ctx context.Conte
 	series.PrincipalID = principalID
 	series.JobID = strings.TrimSpace(event.JobID)
 	series.Attempt = event.Attempt
+}
+
+// RecordQuotaUsageDecision aggregates one quota checker observation.
+func (m *QuotaUsageMetrics) RecordQuotaUsageDecision(ctx context.Context, event QuotaUsageEvent) {
+	if m == nil {
+		return
+	}
+	resource := metricQuotaResource(event.Resource)
+	mode := metricQuotaEnforcementMode(event.EnforcementMode)
+	outcome := metricQuotaOutcome(event.Outcome)
+	reason := metricQuotaReason(event.Reason)
+
+	corr := FromContext(ctx)
+	orgID, principalID := "", ""
+	if f := fieldsFromContext(ctx); f != nil {
+		orgID, principalID = f.snapshot()
+	}
+	if strings.TrimSpace(event.OrganizationID) != "" {
+		orgID = strings.TrimSpace(event.OrganizationID)
+	}
+
+	key := quotaUsageMetricKey{
+		resource:        resource,
+		enforcementMode: mode,
+		outcome:         outcome,
+		reason:          reason,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.total++
+	series := m.series[key]
+	if series == nil {
+		series = &quotaUsageMetricSeries{QuotaUsageMetric: QuotaUsageMetric{
+			Resource:        resource,
+			EnforcementMode: mode,
+			Outcome:         outcome,
+			Reason:          reason,
+		}}
+		m.series[key] = series
+	}
+	series.Count++
+	series.Current = clampMetricCount(event.Current)
+	series.Reserved = clampMetricCount(event.Reserved)
+	series.Requested = clampMetricCount(event.Requested)
+	series.Limit = clampMetricCount(event.Limit)
+	series.RequestID = corr.RequestID
+	series.CorrelationID = corr.CorrelationID
+	series.OrganizationID = orgID
+	series.PrincipalID = principalID
+	series.JobID = strings.TrimSpace(event.JobID)
 }
 
 func (m *HTTPMetrics) record(r *http.Request, status, bytes int, latency time.Duration) {
@@ -602,6 +772,61 @@ func metricJobStatusClass(status string) string {
 	default:
 		return "other"
 	}
+}
+
+func metricQuotaResource(resource string) string {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return "unknown"
+	}
+	for _, r := range resource {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return "unknown"
+	}
+	return resource
+}
+
+func metricQuotaEnforcementMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "hard", "soft", "metered", "disabled":
+		return strings.TrimSpace(mode)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func metricQuotaOutcome(outcome QuotaUsageOutcome) QuotaUsageOutcome {
+	switch outcome {
+	case QuotaUsageOutcomeAllowed, QuotaUsageOutcomeRejected, QuotaUsageOutcomeError:
+		return outcome
+	default:
+		return QuotaUsageOutcomeError
+	}
+}
+
+func metricQuotaReason(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case "reserved", "unconstrained", "disabled", "soft_limit", "metered_limit",
+		"limit_exceeded", "invalid_organization", "invalid_resource",
+		"limit_lookup_failed", "usage_lock_failed", "reservation_sum_failed",
+		"reservation_insert_failed", "internal_error":
+		return strings.TrimSpace(reason)
+	case "":
+		return "unknown"
+	default:
+		return "other"
+	}
+}
+
+func clampMetricCount(n int64) int64 {
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // RequestMetrics records one aggregate metric after every request. It should

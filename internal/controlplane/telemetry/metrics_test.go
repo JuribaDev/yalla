@@ -249,3 +249,106 @@ func findDokployDependencyMetric(metrics []DokployDependencyMetric, method, endp
 	}
 	return nil
 }
+
+func TestQuotaUsageMetricsRecordsLowCardinalityDecisions(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewQuotaUsageMetrics()
+	ctx := WithCorrelation(contextWithFields(t), Correlation{
+		RequestID:     "req_quota_metrics",
+		CorrelationID: "corr_quota_metrics",
+	})
+	SetOrgID(ctx, "org_context")
+	SetPrincipalID(ctx, "usr_quota_metrics")
+
+	metrics.RecordQuotaUsageDecision(ctx, QuotaUsageEvent{
+		Resource:        "projects",
+		EnforcementMode: "hard",
+		Outcome:         QuotaUsageOutcomeAllowed,
+		Reason:          "reserved",
+		Current:         1,
+		Reserved:        2,
+		Requested:       1,
+		Limit:           5,
+		OrganizationID:  "org_quota_safe",
+		JobID:           "job_quota_safe",
+	})
+	metrics.RecordQuotaUsageDecision(ctx, QuotaUsageEvent{
+		Resource:        "projects",
+		EnforcementMode: "hard",
+		Outcome:         QuotaUsageOutcomeRejected,
+		Reason:          "limit_exceeded",
+		Current:         1,
+		Reserved:        4,
+		Requested:       1,
+		Limit:           5,
+		OrganizationID:  "org_quota_safe",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalDecisions != 2 {
+		t.Fatalf("total_decisions = %d, want 2", snapshot.TotalDecisions)
+	}
+	if len(snapshot.Series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	allowed := findQuotaUsageMetric(snapshot.Series, "projects", "hard", QuotaUsageOutcomeAllowed, "reserved")
+	if allowed == nil {
+		t.Fatalf("missing allowed metric: %+v", snapshot.Series)
+	}
+	if allowed.Count != 1 || allowed.Current != 1 || allowed.Reserved != 2 || allowed.Requested != 1 || allowed.Limit != 5 {
+		t.Errorf("allowed metric = %+v, want latest quota counts", *allowed)
+	}
+	if allowed.RequestID != "req_quota_metrics" || allowed.CorrelationID != "corr_quota_metrics" {
+		t.Errorf("allowed metric = %+v, want request/correlation hints", *allowed)
+	}
+	if allowed.OrganizationID != "org_quota_safe" || allowed.PrincipalID != "usr_quota_metrics" || allowed.JobID != "job_quota_safe" {
+		t.Errorf("allowed metric = %+v, want safe latest-sample hints", *allowed)
+	}
+
+	rejected := findQuotaUsageMetric(snapshot.Series, "projects", "hard", QuotaUsageOutcomeRejected, "limit_exceeded")
+	if rejected == nil {
+		t.Fatalf("missing rejected metric: %+v", snapshot.Series)
+	}
+	if rejected.Count != 1 || rejected.Reserved != 4 {
+		t.Errorf("rejected metric = %+v, want rejection counts", *rejected)
+	}
+}
+
+func TestQuotaUsageMetricsBoundsCardinality(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewQuotaUsageMetrics()
+	metrics.RecordQuotaUsageDecision(context.Background(), QuotaUsageEvent{
+		Resource:        "projects\nAuthorization: Bearer yka_secret",
+		EnforcementMode: "strange-mode",
+		Outcome:         "surprising",
+		Reason:          "user supplied reason with token=secret",
+		Current:         -1,
+		Reserved:        -2,
+		Requested:       -3,
+		Limit:           -4,
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalDecisions != 1 || len(snapshot.Series) != 1 {
+		t.Fatalf("snapshot = %+v, want one bounded series", snapshot)
+	}
+	got := snapshot.Series[0]
+	if got.Resource != "unknown" || got.EnforcementMode != "other" || got.Outcome != QuotaUsageOutcomeError || got.Reason != "other" {
+		t.Fatalf("metric = %+v, want bounded resource/mode/outcome/reason", got)
+	}
+	if got.Current != 0 || got.Reserved != 0 || got.Requested != 0 || got.Limit != 0 {
+		t.Fatalf("metric = %+v, want negative counts clamped to zero", got)
+	}
+}
+
+func findQuotaUsageMetric(metrics []QuotaUsageMetric, resource, mode string, outcome QuotaUsageOutcome, reason string) *QuotaUsageMetric {
+	for i := range metrics {
+		if metrics[i].Resource == resource && metrics[i].EnforcementMode == mode && metrics[i].Outcome == outcome && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
+}

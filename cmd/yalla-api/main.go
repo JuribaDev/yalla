@@ -24,6 +24,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 var (
@@ -109,6 +110,7 @@ func main() {
 		store.NewQuotaRepository(),
 		quota.PlanResolverFunc(subscriptionRepo.PlanLookup),
 		quota.WithEntitlementResolver(entitlementResolver),
+		quota.WithMetrics(telemetry.DefaultQuotaUsageMetrics),
 	)
 	if err != nil {
 		logger.Error("failed to initialize the quota checker", "error", err.Error())

@@ -106,6 +106,13 @@ do not mix customer API handlers into CLI packages.
   resolved. It records low-cardinality HTTP series only by method, normalized
   route path, status code, and status class; request IDs and org/principal IDs
   are latest-sample log-join hints, not dashboard labels.
+- `telemetry.QuotaUsageMetrics` follows the same low-cardinality collector
+  pattern for quota decisions: group only by `resource`, `enforcement_mode`,
+  `outcome`, and bounded `reason`; keep request/correlation/org/principal/job
+  IDs plus quota counts as latest-sample incident hints. The quota checker
+  should emit validation and infrastructure-error decisions without requiring a
+  usable store transaction, and `/metrics` exposes the process snapshot under
+  `data.quota_usage`.
 - Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
   source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
   `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux

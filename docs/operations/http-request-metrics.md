@@ -1,9 +1,10 @@
 # HTTP Request Metrics
 
-Yalla exposes in-process HTTP request metrics at `GET /metrics`. The endpoint
-uses the standard `yalla.output.v1` envelope and is intended for operators,
-agents, and incident tooling that need a quick view of API behavior without
-reading application logs first.
+Yalla exposes in-process operational metrics at `GET /metrics`. The endpoint
+uses the standard `yalla.output.v1` envelope and includes HTTP request metrics,
+private Dokploy dependency metrics, and quota usage metrics. It is intended for
+operators, agents, and incident tooling that need a quick view of API behavior
+without reading application logs first.
 
 The metric series are intentionally low cardinality:
 

@@ -7882,7 +7882,7 @@
       ],
       "type": "observability",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Observability topic: quota usage metrics."
     },
     {

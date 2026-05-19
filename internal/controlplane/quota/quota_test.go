@@ -13,6 +13,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/quota"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
@@ -104,6 +105,50 @@ func TestCheckerReserveValidationFailure(t *testing.T) {
 	}
 }
 
+func TestCheckerReserveEmitsValidationFailureMetric(t *testing.T) {
+	t.Parallel()
+	metrics := telemetry.NewQuotaUsageMetrics()
+	checker := mustChecker(t, quota.WithMetrics(metrics))
+	ctx := telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_quota_validation",
+		CorrelationID: "corr_quota_validation",
+	})
+
+	err := checker.Reserve(ctx, &store.Tx{}, "org_metric_validation", "not-a-dimension")
+	if err == nil {
+		t.Fatal("Reserve error = nil, want validation failure")
+	}
+
+	snapshot := metrics.Snapshot()
+	got := findQuotaUsageMetric(snapshot.Series, "unknown", "unknown", telemetry.QuotaUsageOutcomeError, "invalid_resource")
+	if got == nil {
+		t.Fatalf("missing invalid-resource metric: %+v", snapshot.Series)
+	}
+	if got.OrganizationID != "org_metric_validation" || got.RequestID != "req_quota_validation" || got.CorrelationID != "corr_quota_validation" {
+		t.Fatalf("metric = %+v, want organization and request/correlation hints", *got)
+	}
+}
+
+func TestCheckerReserveEmitsNilTransactionMetric(t *testing.T) {
+	t.Parallel()
+	metrics := telemetry.NewQuotaUsageMetrics()
+	checker := mustChecker(t, quota.WithMetrics(metrics))
+
+	err := checker.Reserve(context.Background(), nil, "org_metric_nil_tx", "projects")
+	if err == nil {
+		t.Fatal("Reserve(nil tx) error = nil, want internal failure")
+	}
+
+	snapshot := metrics.Snapshot()
+	got := findQuotaUsageMetric(snapshot.Series, "projects", "unknown", telemetry.QuotaUsageOutcomeError, "internal_error")
+	if got == nil {
+		t.Fatalf("missing internal-error metric: %+v", snapshot.Series)
+	}
+	if got.OrganizationID != "org_metric_nil_tx" {
+		t.Fatalf("metric organization_id = %q, want org_metric_nil_tx", got.OrganizationID)
+	}
+}
+
 func TestExceededDetailRoundTrips(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +189,46 @@ func TestCheckerReserveRecordsReservationWithHeadroom(t *testing.T) {
 	}
 	if got := activeReservationCount(t, db, orgID, "projects"); got != 1 {
 		t.Errorf("active reservations = %d, want 1", got)
+	}
+}
+
+func TestCheckerReserveEmitsAllowedAndRejectedMetrics(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQuotaStore(t, db)
+	metrics := telemetry.NewQuotaUsageMetrics()
+	checker := mustChecker(t, quota.WithMetrics(metrics))
+	ctx := telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_quota_db",
+		CorrelationID: "corr_quota_db",
+	})
+
+	orgID := seedQuotaOrg(t, db)
+	seedOrgQuotaPolicy(t, db, orgID, "projects", 1, "hard")
+
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return checker.Reserve(ctx, tx, orgID, "projects")
+	}); err != nil {
+		t.Fatalf("first Reserve: %v", err)
+	}
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return checker.Reserve(ctx, tx, orgID, "projects")
+	})
+	if err == nil {
+		t.Fatal("second Reserve error = nil, want quota rejection")
+	}
+
+	snapshot := metrics.Snapshot()
+	allowed := findQuotaUsageMetric(snapshot.Series, "projects", "hard", telemetry.QuotaUsageOutcomeAllowed, "reserved")
+	if allowed == nil {
+		t.Fatalf("missing allowed metric: %+v", snapshot.Series)
+	}
+	rejected := findQuotaUsageMetric(snapshot.Series, "projects", "hard", telemetry.QuotaUsageOutcomeRejected, "limit_exceeded")
+	if rejected == nil {
+		t.Fatalf("missing rejected metric: %+v", snapshot.Series)
+	}
+	if rejected.OrganizationID != orgID || rejected.RequestID != "req_quota_db" || rejected.Limit != 1 || rejected.Reserved != 1 {
+		t.Fatalf("rejected metric = %+v, want org/request/count hints", *rejected)
 	}
 }
 
@@ -575,13 +660,22 @@ func TestCheckerReserveUsesEntitlementResolverWhenConfigured(t *testing.T) {
 
 // mustChecker builds a Checker over a fresh QuotaRepository and the static
 // default plan resolver, failing the test on a construction error.
-func mustChecker(t *testing.T) *quota.Checker {
+func mustChecker(t *testing.T, opts ...quota.Option) *quota.Checker {
 	t.Helper()
-	checker, err := quota.NewChecker(store.NewQuotaRepository(), quota.StaticPlanResolver(quota.DefaultPlan))
+	checker, err := quota.NewChecker(store.NewQuotaRepository(), quota.StaticPlanResolver(quota.DefaultPlan), opts...)
 	if err != nil {
 		t.Fatalf("NewChecker: %v", err)
 	}
 	return checker
+}
+
+func findQuotaUsageMetric(metrics []telemetry.QuotaUsageMetric, resource, mode string, outcome telemetry.QuotaUsageOutcome, reason string) *telemetry.QuotaUsageMetric {
+	for i := range metrics {
+		if metrics[i].Resource == resource && metrics[i].EnforcementMode == mode && metrics[i].Outcome == outcome && metrics[i].Reason == reason {
+			return &metrics[i]
+		}
+	}
+	return nil
 }
 
 // newQuotaStore builds a Store over the test database's pool.
