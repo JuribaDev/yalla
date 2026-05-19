@@ -113,6 +113,16 @@ func TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess(t *testi
 		IdempotencyKey: "billing-export-rps-peak",
 		OccurredAt:     periodStart.Add(3 * time.Hour),
 	})
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceActiveDomains,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       2,
+		Unit:           "domain",
+		Source:         "yalla_current_state",
+		IdempotencyKey: "billing-export-active-domains",
+		OccurredAt:     periodStart.Add(4 * time.Hour),
+	})
 	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
 		OrganizationID:     org.ID,
 		PeriodStart:        periodStart,
@@ -135,35 +145,41 @@ func TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess(t *testi
 	if prepared.OrganizationID != org.ID || prepared.SubscriptionID != sub.ID || prepared.Provider != "stripe_main" {
 		t.Fatalf("prepared scope = %+v, want org/sub/provider", prepared)
 	}
-	if len(prepared.Items) != 3 {
-		t.Fatalf("prepared items = %d, want 3: %+v", len(prepared.Items), prepared.Items)
+	if len(prepared.Items) != 4 {
+		t.Fatalf("prepared items = %d, want 4: %+v", len(prepared.Items), prepared.Items)
 	}
-	if prepared.Items[0].Key != string(store.QuotaResourceBuildMinutes) || prepared.Items[0].Quantity != 7.5 {
-		t.Fatalf("first item = %+v, want build_minutes 7.5", prepared.Items[0])
+	if prepared.Items[0].Key != string(store.QuotaResourceActiveDomains) || prepared.Items[0].Unit != "domain" || prepared.Items[0].Quantity != 2 {
+		t.Fatalf("first item = %+v, want active_domains 2 domain", prepared.Items[0])
 	}
-	if prepared.Items[1].Key != string(store.QuotaResourceHTTPRequests) || prepared.Items[1].Quantity != 42 {
-		t.Fatalf("second item = %+v, want http_requests 42", prepared.Items[1])
+	if prepared.Items[0].EntitlementKey != nil || prepared.Items[0].OveragePolicyMode != nil || prepared.Items[0].OverageDecision != nil {
+		t.Fatalf("first item overage fields = %+v, want nil for non-billing metric without entitlement", prepared.Items[0])
 	}
-	if prepared.Items[2].Key != string(store.QuotaResourceHTTPRPSPeak1m) || prepared.Items[2].Unit != "requests_per_second" || prepared.Items[2].Quantity != 8.5 {
-		t.Fatalf("third item = %+v, want http_rps_peak_1m 8.5 requests_per_second", prepared.Items[2])
+	if prepared.Items[1].Key != string(store.QuotaResourceBuildMinutes) || prepared.Items[1].Quantity != 7.5 {
+		t.Fatalf("second item = %+v, want build_minutes 7.5", prepared.Items[1])
 	}
-	if prepared.Items[2].EntitlementKey != nil || prepared.Items[2].OveragePolicyMode != nil || prepared.Items[2].OverageDecision != nil {
-		t.Fatalf("third item overage fields = %+v, want nil for soft non-billing metric without entitlement", prepared.Items[2])
+	if prepared.Items[2].Key != string(store.QuotaResourceHTTPRequests) || prepared.Items[2].Quantity != 42 {
+		t.Fatalf("third item = %+v, want http_requests 42", prepared.Items[2])
 	}
-	if prepared.Items[1].EntitlementKey == nil || *prepared.Items[1].EntitlementKey != string(store.QuotaResourceHTTPRequests) {
-		t.Fatalf("second item entitlement_key = %v, want http_requests", prepared.Items[1].EntitlementKey)
+	if prepared.Items[3].Key != string(store.QuotaResourceHTTPRPSPeak1m) || prepared.Items[3].Unit != "requests_per_second" || prepared.Items[3].Quantity != 8.5 {
+		t.Fatalf("fourth item = %+v, want http_rps_peak_1m 8.5 requests_per_second", prepared.Items[3])
 	}
-	if prepared.Items[1].OveragePolicyMode == nil || *prepared.Items[1].OveragePolicyMode != "warn" {
-		t.Fatalf("second item overage_policy_mode = %v, want warn", prepared.Items[1].OveragePolicyMode)
+	if prepared.Items[3].EntitlementKey != nil || prepared.Items[3].OveragePolicyMode != nil || prepared.Items[3].OverageDecision != nil {
+		t.Fatalf("fourth item overage fields = %+v, want nil for soft non-billing metric without entitlement", prepared.Items[3])
 	}
-	if prepared.Items[1].OverageDecision == nil || *prepared.Items[1].OverageDecision != "warned" {
-		t.Fatalf("second item overage_decision = %v, want warned", prepared.Items[1].OverageDecision)
+	if prepared.Items[2].EntitlementKey == nil || *prepared.Items[2].EntitlementKey != string(store.QuotaResourceHTTPRequests) {
+		t.Fatalf("third item entitlement_key = %v, want http_requests", prepared.Items[2].EntitlementKey)
 	}
-	if prepared.Items[1].IncludedQuantity == nil || *prepared.Items[1].IncludedQuantity != 40 {
-		t.Fatalf("second item included_quantity = %v, want 40", prepared.Items[1].IncludedQuantity)
+	if prepared.Items[2].OveragePolicyMode == nil || *prepared.Items[2].OveragePolicyMode != "warn" {
+		t.Fatalf("third item overage_policy_mode = %v, want warn", prepared.Items[2].OveragePolicyMode)
 	}
-	if prepared.Items[1].OverageQuantity == nil || *prepared.Items[1].OverageQuantity != 2 {
-		t.Fatalf("second item overage_quantity = %v, want 2", prepared.Items[1].OverageQuantity)
+	if prepared.Items[2].OverageDecision == nil || *prepared.Items[2].OverageDecision != "warned" {
+		t.Fatalf("third item overage_decision = %v, want warned", prepared.Items[2].OverageDecision)
+	}
+	if prepared.Items[2].IncludedQuantity == nil || *prepared.Items[2].IncludedQuantity != 40 {
+		t.Fatalf("third item included_quantity = %v, want 40", prepared.Items[2].IncludedQuantity)
+	}
+	if prepared.Items[2].OverageQuantity == nil || *prepared.Items[2].OverageQuantity != 2 {
+		t.Fatalf("third item overage_quantity = %v, want 2", prepared.Items[2].OverageQuantity)
 	}
 
 	succeeded := markBillingExportSucceededOrFail(ctx, t, s, exports, store.MarkBillingExportSucceededInput{

@@ -192,6 +192,43 @@ func TestQuotaRepositoryListOrganizationUsageTenantScoped(t *testing.T) {
 	}
 }
 
+func TestQuotaRepositoryListOrganizationUsageIncludesActiveDomainsCounters(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewQuotaRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "ActiveDomainsUsage")
+	now := time.Now().UTC()
+	periodStart := now.Add(-24 * time.Hour)
+	periodEnd := now.Add(24 * time.Hour)
+	if _, err := db.Exec(ctx,
+		`INSERT INTO usage_counters
+		    (id, organization_id, key, unit, period_start, period_end, quantity, source, aggregation_version, last_aggregated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9)`,
+		"uc_active_domains_usage", org.ID, string(store.QuotaResourceActiveDomains), "domain", periodStart, periodEnd, 3.0, "yalla_current_state", now,
+	); err != nil {
+		t.Fatalf("seed active_domains usage counter: %v", err)
+	}
+
+	var got []store.OrganizationResourceUsage
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		got, err = repo.ListOrganizationUsage(ctx, q, org.ID, "starter")
+		return err
+	}); err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want one active_domains counter; got = %+v", len(got), got)
+	}
+	if got[0].Resource != store.QuotaResourceActiveDomains || got[0].UsedValue != 3 || got[0].LimitValue != nil {
+		t.Fatalf("usage[0] = %+v, want active_domains used=3 with no limit", got[0])
+	}
+}
+
 // TestUsageReaderListOrganizationUsage proves the UsageReader adapter wires
 // the repository through Store.Read and the configured PlanLookup —
 // passing nil falls back to DefaultPlan, so the lookup observes the same

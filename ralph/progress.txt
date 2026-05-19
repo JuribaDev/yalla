@@ -38954,3 +38954,36 @@ change that widened Reason to caller-supplied data.
   - Current-state subtype metrics can reuse the `active_services` path: add a metric definition, a closed `quota_resource`, a sample builder that filters by `services.kind` and `services.status`, and emitter tests that prove usage-event idempotency plus aggregation visibility.
   - Billing export visibility for these metrics comes from the existing `BillingExportRepository.snapshotItems` query over `usage_counters`; no metric-specific billing code is needed when aggregation writes the counter.
 ---
+## 2026-05-19 16:01 +03 - BE-0598
+- What was implemented: added `active_domains` as a non-billing hard current-state tracked metric. The metric now has a runtime definition (`unit=domain`, `source=yalla_current_state`, `billingGrade=false`), a closed `quota_resource` migration/constant, current-state sample construction for service-domain rows with their active parent service scope, idempotent usage-event emission, aggregation into usage counters, customer usage projection coverage, and provider-neutral billing export snapshot coverage.
+- Files changed:
+  - `internal/controlplane/metering/current_state_usage.go`
+  - `internal/controlplane/metering/current_state_usage_test.go`
+  - `internal/controlplane/metering/metric_definition.go`
+  - `internal/controlplane/metering/metric_definition_test.go`
+  - `internal/controlplane/store/quota.go`
+  - `internal/controlplane/store/quota_internal_test.go`
+  - `internal/controlplane/store/usage_test.go`
+  - `internal/controlplane/store/billing_export_repository_test.go`
+  - `internal/controlplane/store/migrate/migrations/0076_active_domains_metering_resource.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0076_active_domains_metering_resource.down.sql`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run:
+  - Red check before implementation: `go test ./internal/controlplane/metering ./internal/controlplane/store -run 'TestActiveDomainsMetricDefinition|TestQuotaResourceValid|TestCurrentStateUsageEmitterWritesActiveDomains|TestCurrentStateUsageEmitterSkipsMissingActiveDomains|TestCurrentStateUsageEmitterKeepsActiveDomains|TestBuildActiveDomainSample'` failed on missing `QuotaResourceActiveDomains` and `BuildActiveDomainSample`.
+  - Focused green check: `go test ./internal/controlplane/metering ./internal/controlplane/store -run 'TestActiveDomainsMetricDefinition|TestQuotaResourceValid|TestCurrentStateUsageEmitterWritesActiveDomains|TestCurrentStateUsageEmitterSkipsMissingActiveDomains|TestCurrentStateUsageEmitterKeepsActiveDomains|TestBuildActiveDomainSample|TestQuotaRepositoryListOrganizationUsageIncludesActiveDomainsCounters|TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess'`.
+  - Required checks: `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`.
+  - Focused persistence/backend checks: `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`.
+  - Optional tooling: `golangci-lint run ./...`; `goimports -w .`; `staticcheck ./...`; `govulncheck ./...`.
+- Results:
+  - All required and focused Go checks passed.
+  - `golangci-lint run ./...` passed with `0 issues.`
+  - `govulncheck ./...` found no vulnerabilities during the strict pre-commit verification.
+  - `staticcheck ./...` ran during the strict pre-commit verification.
+  - `goimports` is not installed locally.
+- Remaining risks or follow-ups:
+  - None for this story. The untracked `ralph/codex-output/` directory was present before this iteration and was left untouched.
+- **Learnings for future iterations:**
+  - `active_domains` follows the same four-piece tracked-metric path as `active_services` and `active_databases`: runtime metric definition, closed quota resource migration/constant/map/test, current-state sample builder, and idempotent `usage_events` emission into existing counter/export projections.
+  - Service-domain attribution should be built from both `store.ServiceDomain` and the parent `store.Service`; the domain row itself has only `organization_id` and `service_id`, so project/environment scope comes from the already-verified parent service. Mismatched domain/service tuples are unsafe and should be skipped/quarantined before emission.
+---

@@ -117,6 +117,42 @@ func BuildActiveDatabaseSample(service store.Service, windowStart, windowEnd tim
 	}, true, nil
 }
 
+// BuildActiveDomainSample converts one service_domain row and its parent
+// service source-of-truth row into an active_domains sample. Domains attached
+// to non-live services or to a mismatched service row are skipped because they
+// are unsafe to attribute.
+func BuildActiveDomainSample(domain store.ServiceDomain, service store.Service, windowStart, windowEnd time.Time) (AttributedCurrentStateSample, bool, error) {
+	if !windowEnd.After(windowStart) {
+		return AttributedCurrentStateSample{}, false, apierr.InvalidInput(apierr.FieldViolation{Field: "window_end", Reason: "must be after window_start"})
+	}
+	if service.Status != store.ServiceStatusActive {
+		return AttributedCurrentStateSample{}, false, nil
+	}
+	if strings.TrimSpace(domain.OrganizationID) == "" ||
+		strings.TrimSpace(domain.ServiceID) == "" ||
+		strings.TrimSpace(domain.OrganizationID) != strings.TrimSpace(service.OrganizationID) ||
+		strings.TrimSpace(domain.ServiceID) != strings.TrimSpace(service.ID) {
+		return AttributedCurrentStateSample{}, false, nil
+	}
+	metadata := map[string]string{
+		"domain_version":  strconv.FormatInt(domain.Version, 10),
+		"service_status":  service.Status.String(),
+		"service_version": strconv.FormatInt(service.Version, 10),
+	}
+	return AttributedCurrentStateSample{
+		Name:           "active_domains",
+		Value:          1,
+		Unit:           "domain",
+		WindowStart:    windowStart.UTC(),
+		WindowEnd:      windowEnd.UTC(),
+		OrganizationID: strings.TrimSpace(service.OrganizationID),
+		ProjectID:      strings.TrimSpace(service.ProjectID),
+		EnvironmentID:  strings.TrimSpace(service.EnvironmentID),
+		ServiceID:      strings.TrimSpace(service.ID),
+		Metadata:       metadata,
+	}, true, nil
+}
+
 // Emit appends idempotent usage events for current-state metrics.
 func (e *CurrentStateUsageEmitter) Emit(ctx context.Context, in CurrentStateUsageInput) (CurrentStateUsageResult, error) {
 	if e == nil || e.store == nil || e.usage == nil {
@@ -198,6 +234,8 @@ func currentStateMetricResource(key string) (store.QuotaResource, bool) {
 		return store.QuotaResourceActiveServices, true
 	case "active_databases":
 		return store.QuotaResourceActiveDatabases, true
+	case "active_domains":
+		return store.QuotaResourceActiveDomains, true
 	default:
 		return "", false
 	}

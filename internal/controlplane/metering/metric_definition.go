@@ -134,6 +134,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementHard,
 		BillingGrade: false,
 	},
+	"active_domains": {
+		Key:          "active_domains",
+		Unit:         "domain",
+		Source:       CurrentStateUsageSource,
+		Enforcement:  MetricEnforcementHard,
+		BillingGrade: false,
+	},
 }
 
 // LookupMetricDefinition returns the accepted metric contract for key.

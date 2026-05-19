@@ -12271,8 +12271,8 @@
       ],
       "type": "tracked-metric",
       "priority": 2,
-      "passes": false,
-      "notes": "Tracked metric: active_domains."
+      "passes": true,
+      "notes": "Implemented active_domains as a non-billing hard current-state metric: runtime definition, quota_resource migration/constant, active service-domain sample builder with unsafe attribution skipped, idempotent usage_events emitter mapping, aggregation/customer usage visibility, internal billing export visibility, tenant isolation, duplicate-window, missing-data, and redaction tests."
     },
     {
       "id": "BE-0599",
