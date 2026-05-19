@@ -33,6 +33,34 @@ var builtinRoleCaps = map[Role]capSet{
 	RoleViewer:    newCapSet(CapSelf, CapRead),
 	RoleCI:        newCapSet(CapSelf, CapRead, CapDeploy),
 	RoleSupport:   newCapSet(CapSelf, CapRead, CapSupport),
+	RolePricingAdmin: newCapSet(
+		CapSelf,
+		CapPricingManage,
+	),
+	RoleMeteringAdmin: newCapSet(
+		CapSelf,
+		CapMeteringManage,
+	),
+	RoleBillingAdmin: newCapSet(
+		CapSelf,
+		CapBillingManage,
+	),
+	RoleFeatureFlagAdmin: newCapSet(
+		CapSelf,
+		CapFeatureFlagsManage,
+	),
+	RoleConfigPublisher: newCapSet(
+		CapSelf,
+		CapConfigPublish,
+	),
+	RoleBackofficeAdmin: newCapSet(
+		CapSelf,
+		CapPricingManage,
+		CapMeteringManage,
+		CapBillingManage,
+		CapFeatureFlagsManage,
+		CapConfigPublish,
+	),
 }
 
 // BuiltinRoles returns the built-in role names in a stable, sorted order. It
@@ -127,14 +155,13 @@ var defaultActionCatalog = map[Action]Capability{
 	// Irreversible owner-only organization actions.
 	ActionOrganizationDelete: CapOwner,
 
-	// Internal break-glass / support tooling.
-	ActionAdminRead:           CapSupport,
-	ActionAdminImport:         CapSupport,
-	ActionAdminReconcile:      CapSupport,
-	ActionAdminConfigValidate: CapSupport,
-	ActionAdminPlansManage:    CapSupport,
-	ActionAdminMeteringManage: CapSupport,
-	ActionAdminBreakGlass:     CapSupport,
+	// Backoffice administration.
+	ActionPricingManage:      CapPricingManage,
+	ActionMeteringManage:     CapMeteringManage,
+	ActionBillingManage:      CapBillingManage,
+	ActionFeatureFlagsManage: CapFeatureFlagsManage,
+	ActionSupportManage:      CapSupport,
+	ActionConfigPublish:      CapConfigPublish,
 }
 
 // CustomRoleResolver resolves a non-built-in role name to its capability set.

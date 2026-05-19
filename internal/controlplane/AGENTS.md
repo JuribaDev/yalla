@@ -188,6 +188,13 @@ do not mix customer API handlers into CLI packages.
   `policy.WithPrincipal` / `policy.PrincipalFromContext` — never thread it
   through signatures. The `store.Authorizer` port is satisfied by this engine;
   store keeps only the narrow port and never imports `policy`.
+- Backoffice authorization is split by operational domain rather than sharing
+  support access: use `policy.ActionPricingManage`, `ActionMeteringManage`,
+  `ActionBillingManage`, `ActionFeatureFlagsManage`, `ActionSupportManage`,
+  and `ActionConfigPublish`. Draft/edit routes use the domain manage action;
+  production-impacting publish/rollback/archive routes use
+  `ActionConfigPublish`; support break-glass/import/reconcile tooling stays on
+  `ActionSupportManage`.
 - Request authentication is `auth.Authenticator`; the HTTP wrappers are
   `httpapi.RequireAuth` / `httpapi.RequireInternalWorker`. `RequireAuth`
   authenticates the bearer credential, attaches the principal to the context

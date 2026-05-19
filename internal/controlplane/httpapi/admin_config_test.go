@@ -59,7 +59,7 @@ func TestDryRunAdminConfigReturnsStableReport(t *testing.T) {
 		ValidatedAt: time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC),
 	}}
 	h := adminConfigHandlerFor(fakeAuthenticator{identity: auth.Identity{
-		Principal: adminDriftPrincipal(orgID, policy.RoleSupport),
+		Principal: adminDriftPrincipal(orgID, policy.RoleConfigPublisher),
 		Method:    auth.MethodAPIKey,
 	}}, runner)
 
@@ -129,7 +129,7 @@ func TestDryRunAdminConfigRejectsInvalidBody(t *testing.T) {
 
 	orgID := string(domain.MustNewID(domain.KindOrganization))
 	h := adminConfigHandlerFor(fakeAuthenticator{identity: auth.Identity{
-		Principal: adminDriftPrincipal(orgID, policy.RoleSupport),
+		Principal: adminDriftPrincipal(orgID, policy.RoleConfigPublisher),
 		Method:    auth.MethodAPIKey,
 	}}, &fakeAdminConfigDryRunner{})
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/config/dry-run", strings.NewReader(`{"domain":"pricing","payload":{"unknown":true}`))
@@ -146,7 +146,7 @@ func TestDryRunAdminConfigPropagatesNotFound(t *testing.T) {
 	orgID := string(domain.MustNewID(domain.KindOrganization))
 	runner := &fakeAdminConfigDryRunner{err: apierr.NotFound("organization", orgID)}
 	h := adminConfigHandlerFor(fakeAuthenticator{identity: auth.Identity{
-		Principal: adminDriftPrincipal(orgID, policy.RoleSupport),
+		Principal: adminDriftPrincipal(orgID, policy.RoleConfigPublisher),
 		Method:    auth.MethodAPIKey,
 	}}, runner)
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/config/dry-run", strings.NewReader(`{"domain":"pricing","payload":{},"simulate_organization_ids":["`+orgID+`"]}`))

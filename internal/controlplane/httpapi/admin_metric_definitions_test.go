@@ -71,7 +71,7 @@ func TestAdminMetricDefinitionsUpsertAndGet(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminMetricDefinitionManager{}
-	h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), manager)
+	h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), manager)
 	req := adminMetricDefinitionRequest(http.MethodPut, "/v1/admin/metering/definitions/http_rps_peak_1m", `{"unit":"request_per_second","source":"traefik","aggregation_function":"max","aggregation_window_seconds":60,"billing_grade":true,"retention_days":400,"enforcement_link":"http_rps_peak_1m","enabled":true}`)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -100,7 +100,7 @@ func TestAdminMetricDefinitionsUpsertAndGet(t *testing.T) {
 func TestAdminMetricDefinitionsDisable(t *testing.T) {
 	t.Parallel()
 
-	h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), &fakeAdminMetricDefinitionManager{})
+	h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), &fakeAdminMetricDefinitionManager{})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminMetricDefinitionRequest(http.MethodDelete, "/v1/admin/metering/definitions/http_rps_peak_1m", ``))
 
@@ -113,7 +113,7 @@ func TestAdminMetricDefinitionsDisable(t *testing.T) {
 	}
 }
 
-func TestAdminMetricDefinitionsRequireAuthenticationAndSupport(t *testing.T) {
+func TestAdminMetricDefinitionsRequireAuthenticationAndMeteringRole(t *testing.T) {
 	t.Parallel()
 
 	h := adminMetricDefinitionHandlerFor(fakeAuthenticator{}, &fakeAdminMetricDefinitionManager{})
@@ -147,7 +147,7 @@ func TestAdminMetricDefinitionsRejectInvalidAndPropagateFailures(t *testing.T) {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), &fakeAdminMetricDefinitionManager{err: row.err})
+			h := adminMetricDefinitionHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), &fakeAdminMetricDefinitionManager{err: row.err})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, adminMetricDefinitionRequest(row.method, row.path, row.body))
 			assertErrorCode(t, rec, row.status, row.code)

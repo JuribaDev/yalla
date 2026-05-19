@@ -68,7 +68,7 @@ func TestAdminMeteringSourcesUpsertRedactsCredential(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminMeteringSourceManager{source: adminMeteringSourceFixture("prometheus-main")}
-	h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), manager)
+	h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), manager)
 	req := adminMeteringSourceRequest(http.MethodPut, "/v1/admin/metering/sources/prometheus-main", `{"source_type":"prometheus","endpoint_url":"https://metrics.internal.example","auth_scheme":"bearer","auth_reference":"vault/prometheus/main","credential_value":"super-secret-token","scrape_interval_seconds":60,"query_interval_seconds":300,"timeout_seconds":10,"labels":{"cluster":"prod"},"enabled":true}`)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -95,7 +95,7 @@ func TestAdminMeteringSourcesUpsertRedactsCredential(t *testing.T) {
 func TestAdminMeteringSourcesTestConnection(t *testing.T) {
 	t.Parallel()
 
-	h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), &fakeAdminMeteringSourceManager{})
+	h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), &fakeAdminMeteringSourceManager{})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminMeteringSourceRequest(http.MethodPost, "/v1/admin/metering/sources/prometheus-main/test", `{}`))
 
@@ -119,7 +119,7 @@ func TestAdminMeteringSourcesTestConnection(t *testing.T) {
 	}
 }
 
-func TestAdminMeteringSourcesRequireAuthenticationAndSupport(t *testing.T) {
+func TestAdminMeteringSourcesRequireAuthenticationAndMeteringRole(t *testing.T) {
 	t.Parallel()
 
 	h := adminMeteringSourceHandlerFor(fakeAuthenticator{}, &fakeAdminMeteringSourceManager{})
@@ -153,7 +153,7 @@ func TestAdminMeteringSourcesRejectInvalidAndPropagateFailures(t *testing.T) {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), &fakeAdminMeteringSourceManager{err: row.err})
+			h := adminMeteringSourceHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), &fakeAdminMeteringSourceManager{err: row.err})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, adminMeteringSourceRequest(row.method, row.path, row.body))
 			assertErrorCode(t, rec, row.status, row.code)

@@ -83,7 +83,7 @@ func TestAdminAttributionRulesUpsertGetAndDryRun(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminAttributionRuleManager{}
-	h := adminAttributionRuleHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), manager)
+	h := adminAttributionRuleHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), manager)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminAttributionRuleRequest(http.MethodPut, "/v1/admin/metering/attribution/rules/label-service-id", `{"source":"traefik","priority":10,"match_kind":"traefik_service_label","label_key":"yalla_service_id","min_confidence":"high","quarantine_unmatched":true,"quarantine_ambiguous":true,"enabled":true}`))
 
@@ -160,7 +160,7 @@ func TestAdminAttributionRulesAuthValidationAndNotFound(t *testing.T) {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			h := adminAttributionRuleHandlerFor(adminMeteringSourceAuth(t, policy.RoleSupport), &fakeAdminAttributionRuleManager{err: row.err})
+			h := adminAttributionRuleHandlerFor(adminMeteringSourceAuth(t, policy.RoleMeteringAdmin), &fakeAdminAttributionRuleManager{err: row.err})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, adminAttributionRuleRequest(row.method, row.path, row.body))
 			assertErrorCode(t, rec, row.status, row.code)

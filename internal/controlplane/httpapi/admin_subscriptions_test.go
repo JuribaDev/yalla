@@ -61,7 +61,7 @@ func TestAdminSubscriptionsSetReturnsEnvelopeAndRedactsMetadata(t *testing.T) {
 
 	orgID := "org_admin_subscription_target"
 	manager := &fakeAdminSubscriptionManager{}
-	h := adminSubscriptionHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+	h := adminSubscriptionHandlerFor(adminPlanAuthForOrg(orgID, policy.RolePricingAdmin), manager)
 	body := `{"plan_id":"plan_business_monthly_v2","status":"trialing","current_period_start":"2026-05-01T00:00:00Z","current_period_end":"2026-06-01T00:00:00Z","trial_ends_at":"2026-05-15T00:00:00Z","metadata":{"ticket":"INC-42","api_token":"secret-token-value"}}`
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/organizations/"+orgID+"/subscription", body))
@@ -97,7 +97,7 @@ func TestAdminSubscriptionsUpsertEntitlementReturnsEnvelope(t *testing.T) {
 
 	orgID := "org_admin_subscription_target"
 	manager := &fakeAdminSubscriptionManager{}
-	h := adminSubscriptionHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+	h := adminSubscriptionHandlerFor(adminPlanAuthForOrg(orgID, policy.RolePricingAdmin), manager)
 	body := `{"subscription_id":"sub_business_current","source":"subscription_override","limit_value":25,"enforcement_mode":"hard","reason":"temporary launch allowance","effective_from":"2026-05-01T00:00:00Z"}`
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/organizations/"+orgID+"/subscription/entitlements/projects", body))
@@ -113,7 +113,7 @@ func TestAdminSubscriptionsUpsertEntitlementReturnsEnvelope(t *testing.T) {
 	}
 }
 
-func TestAdminSubscriptionsRequireAuthenticationAndSupportRole(t *testing.T) {
+func TestAdminSubscriptionsRequireAuthenticationAndPricingRole(t *testing.T) {
 	t.Parallel()
 
 	body := `{"plan_id":"plan_business_monthly_v2","status":"active","current_period_start":"2026-05-01T00:00:00Z","current_period_end":"2026-06-01T00:00:00Z"}`
@@ -124,9 +124,9 @@ func TestAdminSubscriptionsRequireAuthenticationAndSupportRole(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/v1/admin/organizations/org_target/subscription", strings.NewReader(body)))
 		assertErrorCode(t, rec, http.StatusUnauthorized, yerr.CodeAuthenticationRequired)
 	})
-	t.Run("non-support", func(t *testing.T) {
+	t.Run("non-pricing", func(t *testing.T) {
 		t.Parallel()
-		h := adminSubscriptionHandlerFor(adminPlanAuth(t, policy.RoleAdmin), &fakeAdminSubscriptionManager{})
+		h := adminSubscriptionHandlerFor(adminPlanAuthForOrg("org_target", policy.RoleAdmin), &fakeAdminSubscriptionManager{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/organizations/org_target/subscription", body))
 		assertErrorCode(t, rec, http.StatusForbidden, yerr.CodeForbidden)
@@ -138,14 +138,14 @@ func TestAdminSubscriptionsValidationAndNotFound(t *testing.T) {
 
 	t.Run("invalid assignment", func(t *testing.T) {
 		t.Parallel()
-		h := adminSubscriptionHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminSubscriptionManager{})
+		h := adminSubscriptionHandlerFor(adminPlanAuthForOrg("org_target", policy.RolePricingAdmin), &fakeAdminSubscriptionManager{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/organizations/org_target/subscription", `{"plan_id":"","status":"expired","current_period_start":"2026-06-01T00:00:00Z","current_period_end":"2026-05-01T00:00:00Z"}`))
 		assertErrorCode(t, rec, http.StatusBadRequest, yerr.CodeValidation)
 	})
 	t.Run("manager not found", func(t *testing.T) {
 		t.Parallel()
-		h := adminSubscriptionHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminSubscriptionManager{err: apierr.NotFound("organization", "org_missing")})
+		h := adminSubscriptionHandlerFor(adminPlanAuthForOrg("org_missing", policy.RolePricingAdmin), &fakeAdminSubscriptionManager{err: apierr.NotFound("organization", "org_missing")})
 		rec := httptest.NewRecorder()
 		body := `{"plan_id":"plan_business_monthly_v2","status":"active","current_period_start":"2026-05-01T00:00:00Z","current_period_end":"2026-06-01T00:00:00Z"}`
 		h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/organizations/org_missing/subscription", body))

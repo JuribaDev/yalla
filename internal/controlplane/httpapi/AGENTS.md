@@ -165,26 +165,27 @@ shape and a new middleware that does not will fail the build.
 ## Backoffice plan entitlements
 
 Backoffice plan-entitlement routes share `AdminPlanManager` with plan
-lifecycle routes and use `policy.ActionAdminPlansManage`. Upserts configure
-the typed entitlement fields plus metadata (`unit`, `warning_threshold`,
-`upgrade_hint`, `overage_behavior`) and render the metadata back as stable
-top-level response fields. Rename and delete endpoints must require a nonblank
-`impact_validation_id` before delegating, because entitlement keys are runtime
-quota/billing compatibility contracts.
+lifecycle routes. Draft/edit/upsert/delete subscription and pricing-plan
+configuration uses `policy.ActionPricingManage`; production-impacting publish,
+archive, and rollback routes use `policy.ActionConfigPublish`. Upserts
+configure the typed entitlement fields plus metadata (`unit`,
+`warning_threshold`, `upgrade_hint`, `overage_behavior`) and render the
+metadata back as stable top-level response fields. Rename and delete endpoints
+must require a nonblank `impact_validation_id` before delegating, because
+entitlement keys are runtime quota/billing compatibility contracts.
 
 ## Backoffice subscriptions
 
-Backoffice subscription routes use `AdminSubscriptionManager` and the same
-support-only `policy.ActionAdminPlansManage` gate until finer pricing roles
-land. Keep handlers thin: validate the subscription or override payload, redact
-secret-shaped metadata keys before delegation, pass the `{org_id}` path scope
-through `organizationIDResolver`, and render only through `apienvelope`.
+Backoffice subscription routes use `AdminSubscriptionManager` and
+`policy.ActionPricingManage`. Keep handlers thin: validate the subscription or
+override payload, redact secret-shaped metadata keys before delegation, pass
+the `{org_id}` path scope through `organizationIDResolver`, and render only
+through `apienvelope`.
 
 ## Backoffice metering
 
 Backoffice metering source and metric-definition routes use
-`policy.ActionAdminMeteringManage` and support-only access until finer
-backoffice roles land. Keep handlers thin: decode JSON with `validate.DecodeJSON`,
+`policy.ActionMeteringManage`. Keep handlers thin: decode JSON with `validate.DecodeJSON`,
 derive actor/request/correlation data from the authenticated request, delegate
 to the store service, and render stable envelopes only through `apienvelope`.
 Metric-definition unit changes for billing-grade metrics must expose the

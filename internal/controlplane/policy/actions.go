@@ -95,14 +95,23 @@ const (
 	ActionPreviewCreate Action = "preview.create"
 	ActionPreviewDelete Action = "preview.delete"
 
-	// Internal break-glass / support actions.
-	ActionAdminRead           Action = "admin.read"
-	ActionAdminImport         Action = "admin.import"
-	ActionAdminReconcile      Action = "admin.reconcile"
-	ActionAdminConfigValidate Action = "admin.config.validate"
-	ActionAdminPlansManage    Action = "admin.plans.manage"
-	ActionAdminMeteringManage Action = "admin.metering.manage"
-	ActionAdminBreakGlass     Action = "admin.break_glass"
+	// Backoffice administration actions.
+	ActionPricingManage      Action = "pricing.manage"
+	ActionMeteringManage     Action = "metering.manage"
+	ActionBillingManage      Action = "billing.manage"
+	ActionFeatureFlagsManage Action = "feature_flags.manage"
+	ActionSupportManage      Action = "support.manage"
+	ActionConfigPublish      Action = "config.publish"
+
+	// Compatibility aliases for older internal call sites and tests. The
+	// string values above are the current public action contract.
+	ActionAdminRead           Action = ActionSupportManage
+	ActionAdminImport         Action = ActionSupportManage
+	ActionAdminReconcile      Action = ActionSupportManage
+	ActionAdminConfigValidate Action = ActionConfigPublish
+	ActionAdminPlansManage    Action = ActionPricingManage
+	ActionAdminMeteringManage Action = ActionMeteringManage
+	ActionAdminBreakGlass     Action = ActionSupportManage
 )
 
 // allActions is the authoritative enumeration of every catalogued action. It
@@ -168,13 +177,12 @@ var allActions = []Action{
 	ActionPreviewRead,
 	ActionPreviewCreate,
 	ActionPreviewDelete,
-	ActionAdminRead,
-	ActionAdminImport,
-	ActionAdminReconcile,
-	ActionAdminConfigValidate,
-	ActionAdminPlansManage,
-	ActionAdminMeteringManage,
-	ActionAdminBreakGlass,
+	ActionPricingManage,
+	ActionMeteringManage,
+	ActionBillingManage,
+	ActionFeatureFlagsManage,
+	ActionSupportManage,
+	ActionConfigPublish,
 }
 
 // Actions returns every catalogued action in a stable, sorted order. It lets

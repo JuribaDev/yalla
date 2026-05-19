@@ -245,7 +245,7 @@ func TestDecideCrossTenant(t *testing.T) {
 	// but never write.
 	support := principalIn(orgA, RoleSupport)
 	assertDecision(t, e.Decide(support, "project.read", resourceIn(orgB)), true, ReasonAllowedBySupport)
-	assertDecision(t, e.Decide(support, "admin.break_glass", resourceIn(orgB)), true, ReasonAllowedBySupport)
+	assertDecision(t, e.Decide(support, ActionSupportManage, resourceIn(orgB)), true, ReasonAllowedBySupport)
 	assertDecision(t, e.Decide(support, "project.create", resourceIn(orgB)), false, ReasonDeniedCrossTenant)
 
 	// Self actions are organization-independent.
@@ -357,20 +357,31 @@ func TestContextCarrier(t *testing.T) {
 func TestCatalogAndRolesAreWellFormed(t *testing.T) {
 	t.Parallel()
 	known := map[Capability]struct{}{
-		CapSelf: {}, CapRead: {}, CapDeploy: {}, CapWrite: {}, CapAdmin: {}, CapOwner: {}, CapSupport: {},
+		CapSelf:               {},
+		CapRead:               {},
+		CapDeploy:             {},
+		CapWrite:              {},
+		CapAdmin:              {},
+		CapOwner:              {},
+		CapSupport:            {},
+		CapPricingManage:      {},
+		CapMeteringManage:     {},
+		CapBillingManage:      {},
+		CapFeatureFlagsManage: {},
+		CapConfigPublish:      {},
 	}
 	for action, required := range defaultActionCatalog {
 		if _, ok := known[required]; !ok {
 			t.Fatalf("action %q maps to unknown capability %q", action, required)
 		}
 	}
-	if len(defaultActionCatalog) != 64 {
-		t.Fatalf("catalog has %d actions, want 64", len(defaultActionCatalog))
+	if len(defaultActionCatalog) != 63 {
+		t.Fatalf("catalog has %d actions, want 63", len(defaultActionCatalog))
 	}
 
 	roles := BuiltinRoles()
-	if len(roles) != 6 {
-		t.Fatalf("BuiltinRoles returned %d, want 6", len(roles))
+	if len(roles) != 12 {
+		t.Fatalf("BuiltinRoles returned %d, want 12", len(roles))
 	}
 	for i := 1; i < len(roles); i++ {
 		if roles[i-1] >= roles[i] {

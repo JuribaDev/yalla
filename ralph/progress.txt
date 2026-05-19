@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Backoffice policy is split by operational domain: `pricing.manage`, `metering.manage`, `billing.manage`, `feature_flags.manage`, `support.manage`, and `config.publish`. Draft/edit routes use the domain manage action; production-impacting publish/archive/rollback routes use `config.publish`; support break-glass/import/reconcile/read routes use `support.manage`. Keep the release support-access static guard pinned to `ActionSupportManage -> CapSupport`.
 - Audit event metrics follow the existing low-cardinality telemetry collector pattern: `telemetry.AuditEventMetrics` groups by `(action, resource_kind, decision, outcome, reason, error_code)`, stores request/correlation/org/resource/actor/job IDs only as latest-sample incident hints, is emitted from `store.AuditRepository.Append` for both recorded and failed append attempts, and `/metrics` exposes the snapshot under `data.audit_events`.
 - Backoffice runtime config consumers should use `backoffice.RuntimeConfigCache` over `AdminConfigRepository.ListActivePublishedRuntime`: snapshots are immutable, carry `config_set_id`/`version_id`/`version`/`revision` identifiers, continue serving the last known good config after reload failures, and emit one stale alert per generation once the configured staleness threshold is exceeded.
 - Backoffice attribution rules are dedicated global runtime metering contracts: `admin_attribution_rules` stores enabled rules ordered by `(priority, rule_key)`, mutations go through `AdminAttributionRuleService` for actor-org verification plus audit in one `Store.Write`, and dry-run evaluation is side-effect free with unsafe samples rendered as attributed/quarantined/ignored but never billable unless a rule meets its configured confidence threshold.
@@ -37857,4 +37858,18 @@ change that widened Reason to caller-supplied data.
   - The audit repository is the right instrumentation boundary for audit append metrics because direct store services and the higher-level auditor both append through `AuditRepository.Append`.
   - Keep audit metric dimensions bounded and put tenant/resource/request/job identifiers only on the latest sample; this matches the HTTP, job queue, Dokploy dependency, and quota metrics pattern.
   - `/metrics` route-option injection accepts collector pointers, so tests can inject isolated collectors without touching process-wide defaults.
+---
+
+## 2026-05-19 10:49 +03 - BE-0613
+- Implemented split backoffice permissions and roles: `pricing.manage`, `metering.manage`, `billing.manage`, `feature_flags.manage`, `support.manage`, and `config.publish` now have dedicated policy capabilities and backoffice roles.
+- Updated admin route/OpenAPI metadata so pricing draft/edit/subscription endpoints use `pricing.manage`, metering endpoints use `metering.manage`, support tooling uses `support.manage`, and production-impacting config/plan publish/archive/rollback paths use `config.publish`.
+- Added policy matrix coverage for backoffice roles, support, owners, regular tenant roles, and grant-only service accounts; updated HTTP contract tests and the release support-access static guard for the new `support.manage` contract.
+- Files changed: `internal/controlplane/policy/*`, `internal/controlplane/httpapi/*`, `internal/release/support_access_review_static_test.go`, `internal/controlplane/AGENTS.md`, `internal/controlplane/httpapi/AGENTS.md`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `goimports -w .` (not installed); `go mod tidy`; `go test ./internal/controlplane/...`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestOpenAPI ./...`; `go test -run TestAdminEndpoint ./...`; `golangci-lint run ./...`; `staticcheck ./...` (not installed); `govulncheck ./...` (not installed).
+- Results: all installed required and optional checks passed; `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups: billing provider and feature-flag APIs are still future stories; their actions are catalogued now but not yet wired to endpoints.
+- **Learnings for future iterations:**
+  - Existing `ActionAdmin*` constants are compatibility aliases only; use the new domain action constants for route metadata and new tests.
+  - Backoffice routes with `{org_id}` no longer get support cross-tenant behavior unless they use `support.manage`; pricing/metering/config roles must authorize against their own organization scope or an org-scoped grant.
+  - The release support-access static analyzer is part of the authorization contract and must be updated whenever the support action string changes.
 ---

@@ -86,7 +86,7 @@ func TestAdminPlansCreateReturnsDraftPlanEnvelope(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminPlanManager{plan: adminPlanFixture("plan_business_monthly_v2", store.PlanStatusDraft)}
-	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleBackofficeAdmin), manager)
 	req := adminPlanRequest(http.MethodPost, "/v1/admin/plans", `{"slug":"business","name":"Business Next","billing_period":"monthly","display_order":30}`)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -124,7 +124,7 @@ func TestAdminPlansEditPublishArchiveAndRollbackDelegateToManager(t *testing.T) 
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			manager := &fakeAdminPlanManager{plan: adminPlanFixture("plan_business_monthly_v3", store.PlanStatusActive)}
-			h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+			h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleBackofficeAdmin), manager)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, adminPlanRequest(row.method, row.path, row.body))
 			if rec.Code != row.status {
@@ -150,7 +150,7 @@ func TestAdminPlansRequireAuthentication(t *testing.T) {
 	assertErrorCode(t, rec, http.StatusUnauthorized, yerr.CodeAuthenticationRequired)
 }
 
-func TestAdminPlansDenyNonSupportPrincipal(t *testing.T) {
+func TestAdminPlansDenyNonBackofficePrincipal(t *testing.T) {
 	t.Parallel()
 
 	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleAdmin), &fakeAdminPlanManager{})
@@ -163,7 +163,7 @@ func TestAdminPlansDenyNonSupportPrincipal(t *testing.T) {
 func TestAdminPlansRejectInvalidCreateBody(t *testing.T) {
 	t.Parallel()
 
-	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminPlanManager{})
+	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleBackofficeAdmin), &fakeAdminPlanManager{})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPost, "/v1/admin/plans", `{"slug":"bad slug","name":"","billing_period":"weekly"}`))
 
@@ -186,7 +186,7 @@ func TestAdminPlansPropagateNotFoundAndConflict(t *testing.T) {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminPlanManager{err: row.err})
+			h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleBackofficeAdmin), &fakeAdminPlanManager{err: row.err})
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, adminPlanRequest(http.MethodPost, "/v1/admin/plans/plan_missing/publish", `{}`))
 			assertErrorCode(t, rec, row.status, row.code)
@@ -197,6 +197,10 @@ func TestAdminPlansPropagateNotFoundAndConflict(t *testing.T) {
 func adminPlanAuth(t *testing.T, role policy.Role) fakeAuthenticator {
 	t.Helper()
 	orgID := string(domain.MustNewID(domain.KindOrganization))
+	return adminPlanAuthForOrg(orgID, role)
+}
+
+func adminPlanAuthForOrg(orgID string, role policy.Role) fakeAuthenticator {
 	return fakeAuthenticator{identity: auth.Identity{
 		Principal: adminDriftPrincipal(orgID, role),
 		Method:    auth.MethodAPIKey,

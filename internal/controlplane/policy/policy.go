@@ -58,6 +58,22 @@ const (
 	// plus the support capability that gates admin break-glass actions. It
 	// deliberately holds no write capability.
 	RoleSupport Role = "support"
+	// RolePricingAdmin manages pricing-plan and subscription configuration
+	// drafts but cannot publish production-impacting versions by itself.
+	RolePricingAdmin Role = "pricing_admin"
+	// RoleMeteringAdmin manages metering source, attribution, and metric
+	// definition configuration.
+	RoleMeteringAdmin Role = "metering_admin"
+	// RoleBillingAdmin manages billing provider and export configuration.
+	RoleBillingAdmin Role = "billing_admin"
+	// RoleFeatureFlagAdmin manages backoffice feature flag configuration.
+	RoleFeatureFlagAdmin Role = "feature_flag_admin"
+	// RoleConfigPublisher can publish production-impacting backoffice
+	// configuration after drafting/validation has completed.
+	RoleConfigPublisher Role = "config_publisher"
+	// RoleBackofficeAdmin holds the full backoffice configuration surface but
+	// does not receive the support break-glass capability.
+	RoleBackofficeAdmin Role = "backoffice_admin"
 )
 
 // Capability classifies what an action does. Roles grant capabilities rather
@@ -91,6 +107,20 @@ const (
 	// CapSupport marks the internal break-glass capability: admin import,
 	// reconcile, break-glass access, and cross-tenant support reads.
 	CapSupport Capability = "support"
+	// CapPricingManage marks pricing-plan, entitlement, and subscription
+	// configuration draft actions.
+	CapPricingManage Capability = "pricing.manage"
+	// CapMeteringManage marks metering-source, metric-definition, attribution,
+	// and usage aggregation configuration actions.
+	CapMeteringManage Capability = "metering.manage"
+	// CapBillingManage marks billing provider and billing export configuration
+	// actions.
+	CapBillingManage Capability = "billing.manage"
+	// CapFeatureFlagsManage marks feature flag configuration actions.
+	CapFeatureFlagsManage Capability = "feature_flags.manage"
+	// CapConfigPublish marks production-impacting backoffice publish,
+	// rollback, and archive actions.
+	CapConfigPublish Capability = "config.publish"
 )
 
 // Action is a stable, dotted action identifier (for example "project.create").

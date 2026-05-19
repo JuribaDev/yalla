@@ -68,7 +68,7 @@ import (
 //  5. The policy catalog is the authoritative action-to-capability
 //     and role-to-capability matrix. Two regressions on the catalog
 //     would silently break support access review: (a) demoting or
-//     re-mapping `ActionAdminBreakGlass` away from `CapSupport`
+//     re-mapping `ActionSupportManage` away from `CapSupport`
 //     would either lock support staff out (re-map to `CapOwner`) or
 //     grant the cross-tenant exception to roles that should never
 //     hold it (re-map to `CapRead`); (b) admitting `CapSupport` to
@@ -209,7 +209,7 @@ var forbiddenCredMintIdentifiers = map[string]struct{}{
 // capability binding the catalog MUST hold steady. A drift here
 // either locks support out (re-mapped to CapOwner) or widens
 // cross-tenant access (re-mapped to CapRead).
-const supportBreakGlassActionIdent = "ActionAdminBreakGlass"
+const supportBreakGlassActionIdent = "ActionSupportManage"
 
 // supportBreakGlassCapabilityIdent is the capability the action
 // binding MUST stay tied to. The engine's cross-tenant exception
@@ -219,7 +219,7 @@ const supportBreakGlassActionIdent = "ActionAdminBreakGlass"
 const supportBreakGlassCapabilityIdent = "CapSupport"
 
 // supportActionCatalogVarName is the package-level catalog the
-// matcher walks for the `ActionAdminBreakGlass -> CapSupport`
+// matcher walks for the `ActionSupportManage -> CapSupport`
 // pair. Pinned by name so a future split or rename forces an
 // explicit update.
 const supportActionCatalogVarName = "defaultActionCatalog"
@@ -312,7 +312,7 @@ func TestSupportAccessReviewNoCredentialMint(t *testing.T) {
 }
 
 // TestSupportAccessReviewPolicyCatalogBinding proves the policy
-// catalog binds `ActionAdminBreakGlass` to `CapSupport` AND that
+// catalog binds `ActionSupportManage` to `CapSupport` AND that
 // only `RoleSupport` holds `CapSupport`. Either drift silently
 // breaks the cross-tenant authorization story.
 func TestSupportAccessReviewPolicyCatalogBinding(t *testing.T) {
@@ -685,7 +685,7 @@ var builtinRoleCaps = map[Role]capSet{
 	RoleSupport:   newCapSet(CapSelf, CapRead, CapSupport),
 }
 var defaultActionCatalog = map[Action]Capability{
-	ActionAdminBreakGlass: CapSupport,
+	ActionSupportManage: CapSupport,
 }
 `,
 				wantHits: 0,
@@ -697,13 +697,13 @@ var builtinRoleCaps = map[Role]capSet{
 	RoleSupport: newCapSet(CapSelf, CapRead, CapSupport),
 }
 var defaultActionCatalog = map[Action]Capability{
-	ActionAdminBreakGlass: CapRead,
+	ActionSupportManage: CapRead,
 }
 `,
 				wantHits: 1,
 			},
 			{
-				name: "missing ActionAdminBreakGlass binding is rejected",
+				name: "missing ActionSupportManage binding is rejected",
 				source: `package policy
 var builtinRoleCaps = map[Role]capSet{
 	RoleSupport: newCapSet(CapSelf, CapRead, CapSupport),
@@ -723,7 +723,7 @@ var builtinRoleCaps = map[Role]capSet{
 	RoleSupport: newCapSet(CapSelf, CapRead, CapSupport),
 }
 var defaultActionCatalog = map[Action]Capability{
-	ActionAdminBreakGlass: CapSupport,
+	ActionSupportManage: CapSupport,
 }
 `,
 				wantHits: 1,
@@ -735,7 +735,7 @@ var builtinRoleCaps = map[Role]capSet{
 	RoleSupport: newCapSet(CapSelf, CapRead),
 }
 var defaultActionCatalog = map[Action]Capability{
-	ActionAdminBreakGlass: CapSupport,
+	ActionSupportManage: CapSupport,
 }
 `,
 				wantHits: 1,
@@ -951,7 +951,7 @@ func findSupportCredMintRegressions(fset *token.FileSet, file *ast.File) []strin
 // reports two orthogonal regressions:
 //
 //  1. `defaultActionCatalog` does NOT contain a
-//     `ActionAdminBreakGlass: CapSupport` pair. A drift here
+//     `ActionSupportManage: CapSupport` pair. A drift here
 //     either locks support out (re-map to CapOwner) or widens
 //     cross-tenant access (re-map to CapRead).
 //  2. `builtinRoleCaps` admits `CapSupport` to any role other
@@ -965,7 +965,7 @@ func findSupportPolicyCatalogRegressions(fset *token.FileSet, file *ast.File) []
 			"See internal/release/support_access_review_static_test.go (BE-0358) and SECURITY.md \"Support Access Review\" for the threat model.")
 	}
 
-	// Pass 1: ActionAdminBreakGlass -> CapSupport binding.
+	// Pass 1: ActionSupportManage -> CapSupport binding.
 	actionLit := supportFindMapLiteral(file, supportActionCatalogVarName)
 	if actionLit == nil {
 		emit(fset.Position(file.Pos()), "is missing the "+supportActionCatalogVarName+" map literal")

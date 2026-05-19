@@ -82,22 +82,22 @@ func TestActionConceptsCovered(t *testing.T) {
 	t.Parallel()
 
 	concepts := map[string]Action{
-		"read":            ActionProjectRead,
-		"create":          ActionProjectCreate,
-		"update":          ActionProjectUpdate,
-		"delete":          ActionProjectDelete,
-		"deploy":          ActionDeploymentCreate,
-		"restart":         ActionServiceRestart,
-		"rollback":        ActionDeploymentRollback,
-		"logs.read":       ActionLogsRead,
-		"metrics.read":    ActionMetricsRead,
-		"env.read":        ActionEnvRead,
-		"env.write":       ActionEnvWrite,
-		"limits.read":     ActionLimitsRead,
-		"limits.write":    ActionLimitsWrite,
-		"members.manage":  ActionMembersManage,
-		"keys.manage":     ActionKeysManage,
-		"admin.reconcile": ActionAdminReconcile,
+		"read":           ActionProjectRead,
+		"create":         ActionProjectCreate,
+		"update":         ActionProjectUpdate,
+		"delete":         ActionProjectDelete,
+		"deploy":         ActionDeploymentCreate,
+		"restart":        ActionServiceRestart,
+		"rollback":       ActionDeploymentRollback,
+		"logs.read":      ActionLogsRead,
+		"metrics.read":   ActionMetricsRead,
+		"env.read":       ActionEnvRead,
+		"env.write":      ActionEnvWrite,
+		"limits.read":    ActionLimitsRead,
+		"limits.write":   ActionLimitsWrite,
+		"members.manage": ActionMembersManage,
+		"keys.manage":    ActionKeysManage,
+		"support.manage": ActionSupportManage,
 	}
 	for concept, action := range concepts {
 		if !Catalogued(action) {
@@ -118,7 +118,12 @@ func TestActionStringValuesAreStable(t *testing.T) {
 		ActionProjectGrantsRead:      "project.grants.read",
 		ActionEnvironmentGrantsWrite: "environment.grants.write",
 		ActionEnvRead:                "env.read",
-		ActionAdminBreakGlass:        "admin.break_glass",
+		ActionSupportManage:          "support.manage",
+		ActionPricingManage:          "pricing.manage",
+		ActionMeteringManage:         "metering.manage",
+		ActionBillingManage:          "billing.manage",
+		ActionFeatureFlagsManage:     "feature_flags.manage",
+		ActionConfigPublish:          "config.publish",
 	}
 	for action, str := range want {
 		if string(action) != str {

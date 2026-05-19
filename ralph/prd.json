@@ -12556,8 +12556,8 @@
       ],
       "type": "backoffice-security",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented split backoffice policy actions, domain-specific backoffice roles, route/OpenAPI action metadata updates, policy matrix coverage, and support access static guard updates."
     },
     {
       "id": "BE-0614",

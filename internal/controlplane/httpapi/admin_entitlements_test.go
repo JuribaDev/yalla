@@ -77,7 +77,7 @@ func TestAdminEntitlementsUpsertReturnsEnvelope(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminEntitlementManager{}
-	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RolePricingAdmin), manager)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/plans/plan_business_monthly_v2/entitlements/projects", `{"limit_value":25,"enforcement_mode":"hard","unit":"project","warning_threshold":80,"upgrade_hint":"Upgrade","overage_behavior":"block"}`))
 
@@ -97,7 +97,7 @@ func TestAdminEntitlementsRenameAndDeleteRequireImpactValidation(t *testing.T) {
 	t.Parallel()
 
 	manager := &fakeAdminEntitlementManager{}
-	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), manager)
+	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RolePricingAdmin), manager)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPost, "/v1/admin/plans/plan_business_monthly_v2/entitlements/projects/rename", `{"new_entitlement_key":"service_projects"}`))
@@ -127,7 +127,7 @@ func TestAdminEntitlementsRequireSupportAndPropagateErrors(t *testing.T) {
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/plans/plan_business_monthly_v2/entitlements/projects", `{"enforcement_mode":"hard"}`))
 	assertErrorCode(t, rec, http.StatusForbidden, yerr.CodeForbidden)
 
-	h = adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminEntitlementManager{err: apierr.NotFound("plan", "plan_missing")})
+	h = adminPlanHandlerFor(adminPlanAuth(t, policy.RolePricingAdmin), &fakeAdminEntitlementManager{err: apierr.NotFound("plan", "plan_missing")})
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/plans/plan_missing/entitlements/projects", `{"enforcement_mode":"hard"}`))
 	assertErrorCode(t, rec, http.StatusNotFound, yerr.CodeNotFound)
@@ -136,7 +136,7 @@ func TestAdminEntitlementsRequireSupportAndPropagateErrors(t *testing.T) {
 func TestAdminEntitlementsRejectInvalidInput(t *testing.T) {
 	t.Parallel()
 
-	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RoleSupport), &fakeAdminEntitlementManager{})
+	h := adminPlanHandlerFor(adminPlanAuth(t, policy.RolePricingAdmin), &fakeAdminEntitlementManager{})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, adminPlanRequest(http.MethodPut, "/v1/admin/plans/plan_business_monthly_v2/entitlements/-bad", `{"limit_value":-1,"enforcement_mode":"unknown","unit":"`+strings.Repeat("x", 40)+`","warning_threshold":101,"overage_behavior":"explode"}`))
 	assertErrorCode(t, rec, http.StatusBadRequest, yerr.CodeValidation)
