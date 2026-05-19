@@ -77,6 +77,7 @@ func TestTraefikAdapterCollectsWindowedPrometheusMetrics(t *testing.T) {
 
 	assertSample(t, byKey, "http_requests|yalla-svc_123|200|", 19, "request")
 	assertSample(t, byKey, "http_requests|yalla-svc_123|500|", 2, "request")
+	assertSample(t, byKey, "http_5xx_count|yalla-svc_123||", 2, "response")
 	assertSample(t, byKey, "http_rps_peak_1m|yalla-svc_123||", 0.8, "requests_per_second")
 	assertSample(t, byKey, "http_request_bytes|yalla-svc_123||", 600, "byte")
 	assertSample(t, byKey, "http_response_bytes|yalla-svc_123||", 1200, "byte")

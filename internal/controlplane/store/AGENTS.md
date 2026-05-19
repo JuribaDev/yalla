@@ -11,6 +11,13 @@ Postgres persistence for control-plane source-of-truth state.
   bind parameters, table names, driver errors, DSNs, or secret-looking values to
   the log or `telemetry.SlowQueryMetrics`.
 
+## Quota resources
+
+- When adding a `quota_resource` domain value, keep the SQL migration,
+  `store.QuotaResource` constant, `quotaResources` membership map, and
+  `TestQuotaResourceValid`'s explicit list in lockstep. That test is the
+  fast guard before migration-backed schema tests run.
+
 ## Migrations (`store/migrate`)
 
 - Schema changes are **versioned SQL files**, never ad-hoc DDL. They live in

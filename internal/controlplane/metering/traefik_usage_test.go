@@ -149,6 +149,99 @@ func TestTraefikUsageEmitterWritesHTTPRPSPeak1mUsageEventsIdempotently(t *testin
 	assertUsageEventCount(t, db, seed.OrganizationID, 1)
 }
 
+func TestTraefikUsageEmitterWritesHTTP5xxCountUsageEventsIdempotently(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newMeteringStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	seed := seedMeteringHierarchy(t, db, f)
+	emitter, err := metering.NewTraefikUsageEmitter(s)
+	if err != nil {
+		t.Fatalf("NewTraefikUsageEmitter: %v", err)
+	}
+	start := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	sample := metering.AttributedTraefikSample{
+		TraefikMetricSample: metering.TraefikMetricSample{
+			Name:              "http_5xx_count",
+			Service:           "customer-yalla-" + seed.ServiceID,
+			Value:             3,
+			Unit:              "response",
+			WindowStart:       start,
+			WindowEnd:         start.Add(time.Minute),
+			QueryVersion:      "traefik-prom-v1",
+			RawSampleChecksum: "fivehundredabcdef123456",
+			Labels:            map[string]string{"cookie": "session=should-not-leak"},
+		},
+		OrganizationID:    seed.OrganizationID,
+		ProjectID:         seed.ProjectID,
+		EnvironmentID:     seed.EnvironmentID,
+		ServiceID:         seed.ServiceID,
+		AttributionSource: metering.TraefikAttributionSourceLabel,
+		Confidence:        metering.TraefikAttributionConfidenceHigh,
+		Metadata:          map[string]string{"api_key": "must-redact", "route": "/checkout"},
+	}
+
+	first, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_5xx_count",
+	})
+	if err != nil {
+		t.Fatalf("first Emit: %v", err)
+	}
+	second, err := emitter.Emit(ctx, metering.TraefikUsageInput{
+		Samples:   []metering.AttributedTraefikSample{sample},
+		RequestID: "req_http_5xx_count",
+	})
+	if err != nil {
+		t.Fatalf("second Emit: %v", err)
+	}
+	if len(first.Events) != 1 || len(second.Events) != 1 {
+		t.Fatalf("events len first/second = %d/%d, want 1/1", len(first.Events), len(second.Events))
+	}
+	event := first.Events[0]
+	if event.ID != second.Events[0].ID {
+		t.Fatalf("duplicate window wrote a new event id %q, want existing %q", second.Events[0].ID, event.ID)
+	}
+	if event.Resource != store.QuotaResourceHTTP5xxCount || event.Unit != "response" || event.Source != metering.TraefikUsageSource || event.Quantity != 3 {
+		t.Fatalf("usage event = %+v, want http_5xx_count response traefik quantity=3", event)
+	}
+	if event.OrganizationID != seed.OrganizationID || event.ProjectID != seed.ProjectID || event.EnvironmentID != seed.EnvironmentID || event.ServiceID != seed.ServiceID {
+		t.Fatalf("usage event scope = %+v, want full attributed service scope", event)
+	}
+	if event.RequestID != "req_http_5xx_count" {
+		t.Fatalf("RequestID = %q, want req_http_5xx_count", event.RequestID)
+	}
+	if event.Metadata["api_key"] != "[REDACTED]" {
+		t.Fatalf("api_key metadata = %q, want redacted", event.Metadata["api_key"])
+	}
+	assertUsageEventCount(t, db, seed.OrganizationID, 1)
+
+	counters := store.NewUsageCounterRepository()
+	var aggregation store.UsageCounterAggregationResult
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var aggregateErr error
+		aggregation, aggregateErr = counters.AggregateUsageEvents(ctx, tx, store.AggregateUsageCountersInput{
+			OrganizationID:     seed.OrganizationID,
+			PeriodStart:        time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			PeriodEnd:          time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			AggregatedAt:       start.Add(2 * time.Minute),
+			AggregationVersion: 1,
+		})
+		return aggregateErr
+	}); err != nil {
+		t.Fatalf("AggregateUsageEvents: %v", err)
+	}
+	if len(aggregation.Counters) != 1 {
+		t.Fatalf("aggregated counters len = %d, want 1; got %+v", len(aggregation.Counters), aggregation.Counters)
+	}
+	counter := aggregation.Counters[0]
+	if counter.Key != string(store.QuotaResourceHTTP5xxCount) || counter.Unit != "response" || counter.Source != metering.TraefikUsageSource || counter.Quantity != 3 {
+		t.Fatalf("usage counter = %+v, want http_5xx_count response traefik quantity=3", counter)
+	}
+}
+
 func TestTraefikUsageEmitterWritesHTTPResponseBytesUsageEventsIdempotently(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)

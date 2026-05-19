@@ -184,6 +184,7 @@ func (a *TraefikAdapter) Collect(ctx context.Context, in TraefikCollectInput) (T
 	}
 	addBandwidthSamples(samples, start, end, a.queryVersion)
 	addRPSPeakSamples(samples, requestSeries, start, end, a.queryVersion)
+	addHTTP5xxCountSamples(samples, start, end, a.queryVersion)
 
 	checksum := checksumPrometheusResults(raw)
 	result.RawSampleChecksum = checksum
@@ -379,6 +380,42 @@ func addRPSPeakSamples(samples map[string]TraefikMetricSample, requestSeries []p
 		}
 		samples[sample.aggregateKey()] = sample
 	}
+}
+
+func addHTTP5xxCountSamples(samples map[string]TraefikMetricSample, start, end time.Time, version string) {
+	counts := map[string]float64{}
+	for _, sample := range samples {
+		if sample.Name != "http_requests" || sample.Status == "" || sample.Bucket != "" {
+			continue
+		}
+		if !isHTTP5xxStatus(sample.Status) {
+			continue
+		}
+		counts[sample.Service] += sample.Value
+	}
+	for service, value := range counts {
+		if value <= 0 {
+			continue
+		}
+		sample := TraefikMetricSample{
+			Name:         "http_5xx_count",
+			Service:      service,
+			Value:        value,
+			Unit:         "response",
+			WindowStart:  start,
+			WindowEnd:    end,
+			QueryVersion: version,
+			Labels:       map[string]string{"service": service},
+		}
+		samples[sample.aggregateKey()] = sample
+	}
+}
+
+func isHTTP5xxStatus(status string) bool {
+	if len(status) != 3 || status[0] != '5' {
+		return false
+	}
+	return status[1] >= '0' && status[1] <= '9' && status[2] >= '0' && status[2] <= '9'
 }
 
 type counterRate struct {

@@ -43,6 +43,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Enforcement:  MetricEnforcementSoft,
 		BillingGrade: false,
 	},
+	"http_5xx_count": {
+		Key:          "http_5xx_count",
+		Unit:         "response",
+		Source:       "traefik",
+		Enforcement:  MetricEnforcementObservability,
+		BillingGrade: false,
+	},
 	"http_response_bytes": {
 		Key:          "http_response_bytes",
 		Unit:         "byte",

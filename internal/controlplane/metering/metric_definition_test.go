@@ -26,6 +26,18 @@ func TestHTTPRPSPeak1mMetricDefinition(t *testing.T) {
 	}
 }
 
+func TestHTTP5xxCountMetricDefinition(t *testing.T) {
+	t.Parallel()
+
+	def, ok := LookupMetricDefinition("http_5xx_count")
+	if !ok {
+		t.Fatal("LookupMetricDefinition(http_5xx_count) missing")
+	}
+	if def.Key != "http_5xx_count" || def.Unit != "response" || def.Source != "traefik" || def.Enforcement != MetricEnforcementObservability || def.BillingGrade {
+		t.Fatalf("http_5xx_count definition = %+v, want response/traefik/observability/non-billing-grade", def)
+	}
+}
+
 func TestHTTPResponseBytesMetricDefinition(t *testing.T) {
 	t.Parallel()
 

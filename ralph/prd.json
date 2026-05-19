@@ -12081,7 +12081,7 @@
       ],
       "type": "tracked-metric",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Tracked metric: http_5xx_count."
     },
     {

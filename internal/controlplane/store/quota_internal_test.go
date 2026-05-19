@@ -20,7 +20,7 @@ func TestQuotaResourceValid(t *testing.T) {
 		QuotaResourceConcurrentDeployments, QuotaResourceMonthlyDeployments,
 		QuotaResourceDeployments, QuotaResourceFailedDeployments, QuotaResourceBuildMinutes,
 		QuotaResourceHTTPRequests, QuotaResourceHTTPResponseBytes, QuotaResourceHTTPRequestBytes,
-		QuotaResourceHTTPBandwidthTotal, QuotaResourceHTTPRPSPeak1m,
+		QuotaResourceHTTPBandwidthTotal, QuotaResourceHTTPRPSPeak1m, QuotaResourceHTTP5xxCount,
 		QuotaResourceContainerCPUMillicoreSeconds, QuotaResourceContainerMemoryMBHours, QuotaResourceStorageGBMonth,
 		QuotaResourceBackupStorageGBMonth,
 	}
