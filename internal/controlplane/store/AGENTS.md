@@ -261,6 +261,18 @@ Postgres persistence for control-plane source-of-truth state.
   happen as one audited unit of work. Runtime readers should use
   `MeteringSourceRepository.ListRuntimeEnabled` for deterministic reload input.
 
+## Backoffice metric definitions (`0064_admin_metric_definitions`, `metric_definition.go`)
+
+- Metric definitions are versioned global runtime contracts. Current rows have
+  `superseded_at IS NULL`; runtime aggregators should load only enabled current
+  rows through `MetricDefinitionRepository.ListRuntimePublished`.
+- Billing-grade unit changes must not mutate history. `MetricDefinitionRepository.Upsert`
+  rejects those changes unless `AllowNewVersion` is true, then supersedes the
+  current row and inserts the next version in the same transaction.
+- Use `AdminMetricDefinitionService` for metric-definition mutations so the
+  actor organization check, repository write, and audit append happen as one
+  audited unit of work.
+
 ## Usage counters (`0052_usage_counters`)
 
 - `usage_counters` are billing-period aggregates derived from append-only

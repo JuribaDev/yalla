@@ -12423,8 +12423,8 @@
       ],
       "type": "backoffice-metering-api",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented backoffice metric definition APIs with versioned admin_metric_definitions storage, support-gated HTTP get/upsert/disable routes, audit-backed service writes, billing-grade unit-change versioning, runtime published-definition reload, and focused HTTP/store tests."
     },
     {
       "id": "BE-0607",

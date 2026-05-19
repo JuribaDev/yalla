@@ -212,6 +212,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminPlanManager AdminPlanManager
 	var adminSubscriptionManager AdminSubscriptionManager
 	var adminMeteringSourceManager AdminMeteringSourceManager
+	var adminMetricDefinitionManager AdminMetricDefinitionManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -251,6 +252,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminMeteringSourceManager); ok {
 			adminMeteringSourceManager = v
+		}
+		if v, ok := opt.(AdminMetricDefinitionManager); ok {
+			adminMetricDefinitionManager = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -622,6 +626,51 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "The metering source was persisted and audited.",
 			},
 			handler: upsertAdminMeteringSourceHandler(adminMeteringSourceManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/metering/definitions/{metric_key}",
+				OperationID:        "getAdminMetricDefinition",
+				Summary:            "Get a metric definition",
+				Description:        "Returns the current backoffice metric definition for one tracked metric, including unit, source, aggregation function, aggregation window, billing-grade flag, retention, enforcement link, enabled state, and version. Action admin.metering.manage is support-only until finer backoffice metering roles land.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "metric_key", Description: "Stable tracked metric key."}},
+				SuccessDescription: "The current metric definition.",
+			},
+			handler: getAdminMetricDefinitionHandler(adminMetricDefinitionManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPut,
+				Path:               "/v1/admin/metering/definitions/{metric_key}",
+				OperationID:        "upsertAdminMetricDefinition",
+				Summary:            "Configure a metric definition",
+				Description:        "Creates or updates one published tracked metric definition. Billing-grade unit changes require allow_new_version=true so historical usage remains bound to its original unit and a new version is published instead of mutating history.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "metric_key", Description: "Stable tracked metric key."}},
+				SuccessDescription: "The metric definition was persisted and audited.",
+			},
+			handler: upsertAdminMetricDefinitionHandler(adminMetricDefinitionManager),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodDelete,
+				Path:               "/v1/admin/metering/definitions/{metric_key}",
+				OperationID:        "disableAdminMetricDefinition",
+				Summary:            "Disable a metric definition",
+				Description:        "Disables the current metric definition without deleting version history. Runtime aggregators load only enabled current definitions.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminMeteringManage),
+				PathParams:         []openapi.PathParam{{Name: "metric_key", Description: "Stable tracked metric key."}},
+				SuccessDescription: "The metric definition was disabled and audited.",
+			},
+			handler: disableAdminMetricDefinitionHandler(adminMetricDefinitionManager),
 		},
 		{
 			endpoint: openapi.Endpoint{

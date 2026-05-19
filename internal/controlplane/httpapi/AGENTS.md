@@ -180,6 +180,16 @@ land. Keep handlers thin: validate the subscription or override payload, redact
 secret-shaped metadata keys before delegation, pass the `{org_id}` path scope
 through `organizationIDResolver`, and render only through `apienvelope`.
 
+## Backoffice metering
+
+Backoffice metering source and metric-definition routes use
+`policy.ActionAdminMeteringManage` and support-only access until finer
+backoffice roles land. Keep handlers thin: decode JSON with `validate.DecodeJSON`,
+derive actor/request/correlation data from the authenticated request, delegate
+to the store service, and render stable envelopes only through `apienvelope`.
+Metric-definition unit changes for billing-grade metrics must expose the
+explicit `allow_new_version` switch rather than silently overwriting history.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an
