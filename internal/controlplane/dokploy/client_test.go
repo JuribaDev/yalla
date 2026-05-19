@@ -152,7 +152,11 @@ func TestClientValidationFailure(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()
 	defer fake.Close()
-	c := newTestClient(t, fake)
+	metrics := telemetry.NewDokployDependencyMetrics()
+	c := newTestClient(t, fake, func(cfg *dokploy.Config) {
+		cfg.Metrics = metrics
+		cfg.MaxRetries = -1
+	})
 
 	_, err := c.EnsureProject(context.Background(), dokploy.EnsureProjectInput{Name: ""})
 	if err == nil {
@@ -168,12 +172,72 @@ func TestClientValidationFailure(t *testing.T) {
 	if fake.RequestCount() != 0 {
 		t.Fatalf("validation failure reached Dokploy: %d requests", fake.RequestCount())
 	}
+	if got := metrics.Snapshot().TotalCalls; got != 0 {
+		t.Fatalf("validation failure recorded %d Dokploy dependency calls, want 0", got)
+	}
 
 	if _, err := c.EnsureService(context.Background(), dokploy.EnsureServiceInput{
 		EnvironmentID: "env_1", Name: "x", Type: "bogus",
 	}); codeOf(t, err) != yerr.CodeValidation {
 		t.Fatalf("EnsureService with bad type: %v", err)
 	}
+}
+
+func TestClientRecordsDokployDependencyMetrics(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	metrics := telemetry.NewDokployDependencyMetrics()
+	c := newTestClient(t, fake, func(cfg *dokploy.Config) {
+		cfg.Metrics = metrics
+		cfg.MaxRetries = -1
+	})
+	ctx := telemetry.WithCorrelation(context.Background(), telemetry.Correlation{
+		RequestID:     "req_dokploy_client_metrics",
+		CorrelationID: "corr_dokploy_client_metrics",
+	})
+
+	org, err := c.EnsureOrganization(ctx, dokploy.EnsureOrganizationInput{Name: "acme"})
+	if err != nil {
+		t.Fatalf("EnsureOrganization: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusServiceUnavailable))
+	_, err = c.EnsureProject(ctx, dokploy.EnsureProjectInput{ExistingID: "proj_missing"})
+	if code := codeOf(t, err); code != yerr.CodeDokployUnavailable {
+		t.Fatalf("EnsureProject failure code = %s, want %s", code, yerr.CodeDokployUnavailable)
+	}
+	_ = org
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalCalls != 2 {
+		t.Fatalf("total_calls = %d, want 2: %+v", snapshot.TotalCalls, snapshot.Series)
+	}
+	success := findDokployClientMetric(snapshot.Series, http.MethodPost, "/api/organizations", "success")
+	if success == nil {
+		t.Fatalf("missing organization success metric: %+v", snapshot.Series)
+	}
+	if success.StatusCode != http.StatusCreated || success.RequestID != "req_dokploy_client_metrics" || success.CorrelationID != "corr_dokploy_client_metrics" {
+		t.Errorf("success metric = %+v, want status and correlation hints", *success)
+	}
+	failure := findDokployClientMetric(snapshot.Series, http.MethodGet, "/api/projects/{id}", "failure")
+	if failure == nil {
+		t.Fatalf("missing project failure metric: %+v", snapshot.Series)
+	}
+	if failure.ErrorCode != string(yerr.CodeDokployUnavailable) || !failure.Retryable || failure.StatusClass != "dependency_error" {
+		t.Errorf("failure metric = %+v, want retryable dependency error", *failure)
+	}
+	if strings.Contains(failure.Endpoint, "proj_missing") {
+		t.Errorf("failure endpoint = %q, want normalized endpoint without Dokploy id", failure.Endpoint)
+	}
+}
+
+func findDokployClientMetric(metrics []telemetry.DokployDependencyMetric, method, endpoint, outcome string) *telemetry.DokployDependencyMetric {
+	for i := range metrics {
+		if metrics[i].Method == method && metrics[i].Endpoint == endpoint && metrics[i].Outcome == outcome {
+			return &metrics[i]
+		}
+	}
+	return nil
 }
 
 // TestClientNotFound maps a Dokploy 404 onto E_DOKPLOY_NOT_FOUND.

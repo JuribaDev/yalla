@@ -53,6 +53,11 @@ type apiRoute struct {
 	resolver ResourceResolver
 }
 
+type metricsSnapshot struct {
+	telemetry.HTTPMetricsSnapshot
+	DokployDependencySnapshot telemetry.DokployDependencyMetricsSnapshot `json:"dokploy_dependencies"`
+}
+
 // healthzPayload is the data block of the GET /healthz success envelope.
 type healthzPayload struct {
 	Status string `json:"status"`
@@ -206,6 +211,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminPlanManager AdminPlanManager
 	var adminSubscriptionManager AdminSubscriptionManager
 	httpMetrics := telemetry.DefaultHTTPMetrics
+	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -243,6 +249,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
 		}
+		if v, ok := opt.(*telemetry.DokployDependencyMetrics); ok && v != nil {
+			dokployMetrics = v
+		}
 	}
 
 	return []apiRoute{
@@ -267,13 +276,16 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Method:             http.MethodGet,
 				Path:               "/metrics",
 				OperationID:        "getMetrics",
-				Summary:            "Read HTTP request metrics",
-				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics for this API process. Series are grouped by method, matched route pattern, status code, and status class; request_id, correlation_id, organization_id, principal_id, and target describe only the most recent request in a series so operators can join the aggregate to structured request logs without turning high-cardinality identifiers into metric labels. Secrets in request targets are redacted before they are stored.",
+				Summary:            "Read operational metrics",
+				Description:        "Returns a yalla.output.v1 envelope containing low-cardinality HTTP request metrics and private Dokploy dependency metrics for this process. HTTP series are grouped by method, matched route pattern, status code, and status class; Dokploy dependency series are grouped by method, normalized endpoint template, outcome, status class, stable error code, and retryability. Request ids, correlation ids, organization ids, principal ids, job ids, and resource ids describe only the most recent sample in a series so operators can join aggregates to structured logs during incidents without turning high-cardinality identifiers into dashboard labels. Secrets in request targets and Dokploy endpoint values are redacted or normalized before storage.",
 				Tags:               []string{tagOperations},
-				SuccessDescription: "The current in-process HTTP request metric snapshot.",
+				SuccessDescription: "The current in-process operational metric snapshot.",
 			},
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				apienvelope.WriteData(w, http.StatusOK, requestID(r), httpMetrics.Snapshot())
+				apienvelope.WriteData(w, http.StatusOK, requestID(r), metricsSnapshot{
+					HTTPMetricsSnapshot:       httpMetrics.Snapshot(),
+					DokployDependencySnapshot: dokployMetrics.Snapshot(),
+				})
 			},
 		},
 		{

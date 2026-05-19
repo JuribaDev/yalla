@@ -60,6 +60,9 @@ type Config struct {
 	RetryMaxDelay time.Duration
 	// Logger receives retry diagnostics. When nil, diagnostics are discarded.
 	Logger *slog.Logger
+	// Metrics receives one observation for every actual Dokploy HTTP attempt.
+	// When nil the process-wide default collector is used.
+	Metrics *telemetry.DokployDependencyMetrics
 }
 
 // Client is the typed wrapper around the private Dokploy provisioning backend.
@@ -81,6 +84,7 @@ type Client struct {
 	retryMaxDelay  time.Duration
 	logger         *slog.Logger
 	redactor       *output.Redactor
+	metrics        *telemetry.DokployDependencyMetrics
 }
 
 // New validates cfg and returns a ready Client. Configuration failures are
@@ -137,6 +141,10 @@ func New(cfg Config) (*Client, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	metrics := cfg.Metrics
+	if metrics == nil {
+		metrics = telemetry.DefaultDokployDependencyMetrics
+	}
 
 	return &Client{
 		baseURL:        base,
@@ -147,6 +155,7 @@ func New(cfg Config) (*Client, error) {
 		retryBaseDelay: retryBaseDelay,
 		retryMaxDelay:  retryMaxDelay,
 		logger:         logger,
+		metrics:        metrics,
 		// Seed the redactor with the bearer token so it is scrubbed from any
 		// error built from upstream response data; the built-in patterns scrub
 		// Authorization headers and token query params even when the literal
@@ -214,7 +223,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, dst any) err
 				"method", method, "path", path, "attempt", attempt, "error", lastErr)
 		}
 
-		err := c.attempt(ctx, method, path, encoded, dst)
+		err := c.attempt(ctx, method, path, encoded, dst, attempt+1)
 		if err == nil {
 			return nil
 		}
@@ -229,7 +238,24 @@ func (c *Client) do(ctx context.Context, method, path string, body, dst any) err
 // attempt performs a single HTTP round trip. It applies the per-request
 // timeout, injects the bearer token and correlation headers, and maps the
 // outcome onto the apierr taxonomy.
-func (c *Client) attempt(ctx context.Context, method, path string, body []byte, dst any) error {
+func (c *Client) attempt(ctx context.Context, method, path string, body []byte, dst any, attemptNumber int) (err error) {
+	start := time.Now()
+	statusCode := 0
+	defer func() {
+		if c.metrics == nil {
+			return
+		}
+		c.metrics.RecordDokployDependencyCall(ctx, telemetry.DokployDependencyEvent{
+			Method:     method,
+			Path:       path,
+			StatusCode: statusCode,
+			ErrorCode:  dokployMetricErrorCode(err),
+			Retryable:  err != nil && apierr.Retryable(err),
+			Attempt:    attemptNumber,
+			Latency:    time.Since(start),
+		})
+	}()
+
 	reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -259,6 +285,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 		return c.transportError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	statusCode = resp.StatusCode
 
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 
@@ -273,6 +300,17 @@ func (c *Client) attempt(ctx context.Context, method, path string, body []byte, 
 		return nil
 	}
 	return c.statusError(method, path, resp.StatusCode, payload)
+}
+
+func dokployMetricErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ye *yerr.Error
+	if stderrors.As(err, &ye) {
+		return string(ye.Code)
+	}
+	return string(yerr.CodeInternal)
 }
 
 // transportError classifies a transport-level failure (the request never

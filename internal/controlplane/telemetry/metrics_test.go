@@ -1,8 +1,10 @@
 package telemetry
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -164,6 +166,84 @@ func TestJobQueueMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
 func findJobQueueMetric(metrics []JobQueueMetric, event JobQueueEventName, jobType, status string) *JobQueueMetric {
 	for i := range metrics {
 		if metrics[i].Event == event && metrics[i].JobType == jobType && metrics[i].Status == status {
+			return &metrics[i]
+		}
+	}
+	return nil
+}
+
+func TestDokployDependencyMetricsRecordsLowCardinalityOutcomes(t *testing.T) {
+	t.Parallel()
+
+	metrics := NewDokployDependencyMetrics()
+	ctx := WithCorrelation(contextWithFields(t), Correlation{
+		RequestID:     "req_dokploy_metrics",
+		CorrelationID: "corr_dokploy_metrics",
+	})
+	SetOrgID(ctx, "org_dokploy_metrics")
+	SetPrincipalID(ctx, "usr_dokploy_metrics")
+
+	metrics.RecordDokployDependencyCall(ctx, DokployDependencyEvent{
+		Method:         http.MethodGet,
+		Path:           "/api/services/svc_sensitive/status",
+		StatusCode:     http.StatusOK,
+		Attempt:        1,
+		Latency:        12,
+		OrganizationID: "org_dokploy_hint",
+		ServiceID:      "svc_yalla_safe",
+	})
+	metrics.RecordDokployDependencyCall(ctx, DokployDependencyEvent{
+		Method:    "BREW",
+		Path:      "/api/services/svc_secret/backups/backup_secret/restore?token=secret",
+		ErrorCode: "E_DOKPLOY_UNAVAILABLE",
+		Retryable: true,
+		Attempt:   2,
+		Latency:   34,
+		ServiceID: "svc_yalla_safe",
+	})
+
+	snapshot := metrics.Snapshot()
+	if snapshot.TotalCalls != 2 {
+		t.Fatalf("total_calls = %d, want 2", snapshot.TotalCalls)
+	}
+	if len(snapshot.Series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(snapshot.Series), snapshot.Series)
+	}
+
+	success := findDokployDependencyMetric(snapshot.Series, http.MethodGet, "/api/services/{id}/status", "success")
+	if success == nil {
+		t.Fatalf("missing success metric: %+v", snapshot.Series)
+	}
+	if success.Count != 1 || success.StatusCode != http.StatusOK || success.StatusClass != "2xx" {
+		t.Errorf("success metric = %+v, want 200 2xx count=1", *success)
+	}
+	if success.RequestID != "req_dokploy_metrics" || success.CorrelationID != "corr_dokploy_metrics" {
+		t.Errorf("success metric = %+v, want request/correlation hints", *success)
+	}
+	if success.OrganizationID != "org_dokploy_hint" || success.PrincipalID != "usr_dokploy_metrics" || success.ServiceID != "svc_yalla_safe" {
+		t.Errorf("success metric = %+v, want safe resource hints", *success)
+	}
+
+	failure := findDokployDependencyMetric(snapshot.Series, "OTHER", "/api/services/{id}/backups/{id}/restore", "failure")
+	if failure == nil {
+		t.Fatalf("missing failure metric: %+v", snapshot.Series)
+	}
+	if failure.ErrorCode != "E_DOKPLOY_UNAVAILABLE" || !failure.Retryable || failure.StatusClass != "dependency_error" {
+		t.Errorf("failure metric = %+v, want dependency error retry hints", *failure)
+	}
+	if strings.Contains(failure.Endpoint, "svc_secret") || strings.Contains(failure.Endpoint, "backup_secret") || strings.Contains(failure.Endpoint, "token") {
+		t.Errorf("failure endpoint = %q, want normalized redacted endpoint", failure.Endpoint)
+	}
+}
+
+func contextWithFields(t *testing.T) context.Context {
+	t.Helper()
+	return withRequestFields(context.Background())
+}
+
+func findDokployDependencyMetric(metrics []DokployDependencyMetric, method, endpoint, outcome string) *DokployDependencyMetric {
+	for i := range metrics {
+		if metrics[i].Method == method && metrics[i].Endpoint == endpoint && metrics[i].Outcome == outcome {
 			return &metrics[i]
 		}
 	}

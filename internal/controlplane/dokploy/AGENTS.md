@@ -49,6 +49,12 @@ client.
   built from upstream response data is run through it before being wrapped.
 - Correlation IDs from `telemetry.FromContext` are forwarded to Dokploy as
   `X-Request-Id` / `X-Correlation-Id` headers on every request.
+- The typed client records one `telemetry.DokployDependencyEvent` per actual
+  HTTP attempt through `Config.Metrics` (or the default collector). Keep metric
+  dimensions low-cardinality: method, normalized endpoint template, status
+  class, stable error code, retryability, and outcome. Raw Dokploy ids and query
+  strings must never become metric labels; Yalla ids belong only in
+  latest-sample hint fields for joining to request/job logs.
 
 ## Hierarchy mapping (`mapping.go`)
 
