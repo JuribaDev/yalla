@@ -643,6 +643,68 @@ func TestUsageReaderIncludesBuildMinutesCountersForCurrentPeriod(t *testing.T) {
 	}
 }
 
+func TestUsageReaderIncludesDeploymentsCountersForCurrentPeriod(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	counters := store.NewUsageCounterRepository()
+	events := store.NewUsageEventRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	org := seedOrg(t, db, f, "DeploymentsUsage")
+	plan := seededPlan(ctx, t, s, pricing, "business-deployments")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, baseSubscriptionInput(org.ID, plan.ID, store.SubscriptionStatusActive, now))
+	upsertSubscriptionEntitlementOrFail(ctx, t, s, subs,
+		baseOverrideInput(org.ID, sub.ID, "deployments", store.EntitlementSourceSubscriptionOverride, 25, now))
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceDeployments,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       3,
+		Unit:           "deployment",
+		Source:         "yalla_events",
+		IdempotencyKey: "deployments:test-window",
+		OccurredAt:     now,
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        now.Add(-time.Hour),
+		PeriodEnd:          now.Add(time.Hour),
+		AggregatedAt:       now,
+		AggregationVersion: 1,
+	})
+
+	reader, err := store.NewUsageReader(s, nil)
+	if err != nil {
+		t.Fatalf("NewUsageReader: %v", err)
+	}
+	got, err := reader.ListOrganizationUsage(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListOrganizationUsage: %v", err)
+	}
+	var deployments store.OrganizationResourceUsage
+	for _, row := range got {
+		if row.Resource == store.QuotaResourceDeployments {
+			deployments = row
+			break
+		}
+	}
+	if deployments.Resource == "" {
+		t.Fatalf("usage rows %+v missing deployments counter", got)
+	}
+	if deployments.UsedValue != 3 {
+		t.Fatalf("deployments UsedValue = %d, want aggregated counter 3", deployments.UsedValue)
+	}
+	if deployments.LimitValue == nil || *deployments.LimitValue != 25 {
+		t.Fatalf("deployments limit = %+v, want subscription entitlement 25", deployments)
+	}
+}
+
 // TestNewUsageReaderRejectsNilStore proves a misconfigured reader fails at
 // construction rather than on its first request.
 func TestNewUsageReaderRejectsNilStore(t *testing.T) {

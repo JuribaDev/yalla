@@ -12,6 +12,9 @@ const (
 	MetricEnforcementSoft MetricEnforcement = "soft"
 	// MetricEnforcementMetered records billing-grade usage without a hard ceiling.
 	MetricEnforcementMetered MetricEnforcement = "metered"
+	// MetricEnforcementHardOrMetered records billing-grade usage that can be
+	// enforced as a hard entitlement or billed as metered overage by plan policy.
+	MetricEnforcementHardOrMetered MetricEnforcement = "hard_or_metered"
 	// MetricEnforcementObservability records non-billing operational signals.
 	MetricEnforcementObservability MetricEnforcement = "observability"
 )
@@ -87,6 +90,13 @@ var metricDefinitions = map[string]MetricDefinition{
 		Unit:         "minute",
 		Source:       BuildMinutesUsageSource,
 		Enforcement:  MetricEnforcementMetered,
+		BillingGrade: true,
+	},
+	"deployments": {
+		Key:          "deployments",
+		Unit:         "deployment",
+		Source:       DeploymentUsageSource,
+		Enforcement:  MetricEnforcementHardOrMetered,
 		BillingGrade: true,
 	},
 }
