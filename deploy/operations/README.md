@@ -43,6 +43,22 @@ environment variable values.
 Do not paste `/etc/yalla/control-plane.env` into tickets or runbooks. The
 dry-run plan prints only redacted `YALLA_*` variable names and command shape.
 
+## Production Verification Path
+
+Before calling a control-plane persistence, migration, readiness, quota, tenant
+isolation, or durable-job change production-ready, run the database-backed
+verification mode against a throwaway local Postgres database:
+
+```bash
+docker compose up -d postgres
+export YALLA_TEST_DATABASE_URL='postgres://yalla:yalla@127.0.0.1:5432/yalla_test?sslmode=disable'
+./scripts/verify.sh --with-postgres
+```
+
+The DSN must target local test infrastructure only. The script fails fast when
+`YALLA_TEST_DATABASE_URL` is unset, then runs the normal verification gate plus
+the Postgres-backed control-plane commands pinned in `ralph/VERIFICATION.md`.
+
 ## Database Backup
 
 Run the control-plane logical backup through the operator-owned backup

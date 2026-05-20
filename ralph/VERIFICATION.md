@@ -54,6 +54,29 @@ goreleaser check
 
 If a tool is **not** installed, document that in `ralph/progress.txt` for the story rather than skipping silently.
 
+### Database-backed loop — before production readiness claims
+
+Run this when a story changes control-plane persistence, migrations, durable
+jobs, tenant isolation, quota concurrency, or readiness gates. It requires a
+throwaway local Postgres database and must never point at production:
+
+```bash
+docker compose up -d postgres
+export YALLA_TEST_DATABASE_URL='postgres://yalla:yalla@127.0.0.1:5432/yalla_test?sslmode=disable'
+./scripts/verify.sh --with-postgres
+```
+
+The `--with-postgres` mode fails immediately when `YALLA_TEST_DATABASE_URL` is
+unset, then runs the full verification script plus the database-backed control
+plane checks:
+
+```bash
+go test ./...
+go test -race ./internal/controlplane/...
+go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...
+go vet ./...
+```
+
 ## Contract assertions every command test must enforce
 
 Every command test built on `internal/testutil` is expected to assert each of the following items that apply to the command under test:

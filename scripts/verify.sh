@@ -12,6 +12,9 @@
 #   scripts/verify.sh --release      Adds `goreleaser release --snapshot --clean`
 #   scripts/verify.sh --strict       Treats every missing optional tool as a failure
 #   scripts/verify.sh --quiet        Suppresses per-step banners (CI-friendly)
+#   scripts/verify.sh --with-postgres
+#                                    Requires YALLA_TEST_DATABASE_URL and adds
+#                                    database-backed control-plane checks
 #
 # Exit codes:
 #   0   all run checks passed
@@ -23,11 +26,13 @@ set -euo pipefail
 release=0
 strict=0
 quiet=0
+with_postgres=0
 for arg in "$@"; do
   case "$arg" in
     --release) release=1 ;;
     --strict)  strict=1 ;;
     --quiet)   quiet=1 ;;
+    --with-postgres) with_postgres=1 ;;
     -h|--help)
       sed -n '2,20p' "$0"
       exit 0
@@ -50,6 +55,10 @@ step() {
 
 skipped_tools=()
 required_failed=0
+
+if [[ "$with_postgres" -eq 1 ]]; then
+  : "${YALLA_TEST_DATABASE_URL:?YALLA_TEST_DATABASE_URL is required for --with-postgres}"
+fi
 
 # 1. Required: formatting (gofmt -l should be empty)
 step "gofmt -l ."
@@ -242,6 +251,32 @@ fi
 step "go test -run TestDeploymentLifecycleE2E ./..."
 if ! go test -run TestDeploymentLifecycleE2E ./...; then
   required_failed=1
+fi
+
+# Required when --with-postgres is set: database-backed verification against
+# the Postgres DSN supplied through YALLA_TEST_DATABASE_URL. The normal unit
+# loop skips these integration members when the env var is unset; this mode
+# turns that skip into an explicit operator contract.
+if [[ "$with_postgres" -eq 1 ]]; then
+  step "go test ./... (with Postgres)"
+  if ! go test ./...; then
+    required_failed=1
+  fi
+
+  step "go test -race ./internal/controlplane/... (with Postgres)"
+  if ! go test -race ./internal/controlplane/...; then
+    required_failed=1
+  fi
+
+  step "go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/... (with Postgres)"
+  if ! go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...; then
+    required_failed=1
+  fi
+
+  step "go vet ./... (with Postgres mode)"
+  if ! go vet ./...; then
+    required_failed=1
+  fi
 fi
 
 # Required: Kubernetes operations artifact static tests
