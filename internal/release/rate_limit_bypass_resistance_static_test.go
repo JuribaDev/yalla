@@ -427,13 +427,13 @@ func deny(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			name: "RateLimit(...) construction site is detected",
+			name: "RateLimitWithClientIPResolver(...) construction site is detected",
 			src: `package httpapi
 
 import "net/http"
 
 func wire(rateLimiter RateLimiter, logger interface{}) http.Handler {
-	rateLimit := RateLimit(rateLimiter, logger)
+	rateLimit := RateLimitWithClientIPResolver(rateLimiter, logger, ClientIP)
 	var h http.Handler
 	h = rateLimit(h)
 	return h
@@ -773,7 +773,8 @@ func findRateLimit429EmitSeams(fset *token.FileSet, file *ast.File) (rateLimited
 
 // findRateLimitWrapSeams returns:
 //
-//   - constructionSites: positions of `RateLimit(...)` construction calls.
+//   - constructionSites: positions of `RateLimit(...)` or
+//     `RateLimitWithClientIPResolver(...)` construction calls.
 //   - wrapSites: positions of `h = rateLimit(h)` (or any
 //     `<lhs> = <rhs>(<lhs>)` where the rhs is the `rateLimit` local)
 //     assignment statements.
@@ -781,16 +782,16 @@ func findRateLimit429EmitSeams(fset *token.FileSet, file *ast.File) (rateLimited
 // The two together prove the middleware is wired once at the
 // construction site and applied once per route.
 func findRateLimitWrapSeams(fset *token.FileSet, file *ast.File) (constructionSites, wrapSites []string) {
-	// Track every local name bound to a `RateLimit(...)` call so the
+	// Track every local name bound to a rate-limit construction call so the
 	// wrap-site matcher knows what identifier to look for.
 	binders := map[string]struct{}{}
 	ast.Inspect(file, func(n ast.Node) bool {
-		// Constructions: any call whose Fun is the Ident `RateLimit`.
+		// Constructions: any call whose Fun is an accepted rate-limit builder.
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "RateLimit" {
+		if id, ok := call.Fun.(*ast.Ident); ok && isRateLimitBuilder(id.Name) {
 			constructionSites = append(constructionSites, fset.Position(call.Pos()).String())
 			// Walk up to find the enclosing assign/short-decl and
 			// capture the binder name. Because ast.Inspect doesn't
@@ -804,7 +805,7 @@ func findRateLimitWrapSeams(fset *token.FileSet, file *ast.File) (constructionSi
 		case *ast.AssignStmt:
 			if len(s.Rhs) == 1 {
 				if c, ok := s.Rhs[0].(*ast.CallExpr); ok {
-					if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "RateLimit" {
+					if id, ok := c.Fun.(*ast.Ident); ok && isRateLimitBuilder(id.Name) {
 						for _, lhs := range s.Lhs {
 							if name, ok := lhs.(*ast.Ident); ok {
 								binders[name.Name] = struct{}{}
@@ -850,5 +851,8 @@ func findRateLimitWrapSeams(fset *token.FileSet, file *ast.File) (constructionSi
 	return
 }
 
-// (intentionally no extra helpers; the matchers above are self-contained.)
+func isRateLimitBuilder(name string) bool {
+	return name == "RateLimit" || name == "RateLimitWithClientIPResolver"
+}
+
 var _ = strconv.Itoa // keep strconv import live for future use; matches the BE-0361 file style.

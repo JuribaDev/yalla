@@ -57,27 +57,33 @@ If a tool is **not** installed, document that in `ralph/progress.txt` for the st
 ### Database-backed loop — before production readiness claims
 
 Run this when a story changes control-plane persistence, migrations, durable
-jobs, tenant isolation, quota concurrency, or readiness gates. It requires a
-throwaway local Postgres database and must never point at production:
+jobs, tenant isolation, quota concurrency, readiness gates, or distributed rate
+limits. It requires throwaway local Postgres and Redis instances and must never
+point at production:
 
 ```bash
 docker compose up -d postgres
 export YALLA_TEST_DATABASE_URL='postgres://yalla:yalla@127.0.0.1:5432/yalla_test?sslmode=disable'
+export YALLA_TEST_REDIS_URL='redis://127.0.0.1:6379/15'
 ./scripts/verify.sh --with-postgres
 ```
 
-The `--with-postgres` mode fails immediately when `YALLA_TEST_DATABASE_URL` is
-unset, then runs the full verification script plus the database-backed control
-plane checks. Postgres-backed Go tests run with package parallelism `-p 1` and
-test function parallelism `-parallel 1` by default so local Postgres does not
-fail from connection exhaustion; set
+The `--with-postgres` mode fails immediately when `YALLA_TEST_DATABASE_URL` or
+`YALLA_TEST_REDIS_URL` is unset, then runs the full verification script plus
+the database-backed control-plane checks and the Redis-backed distributed
+rate-limiter check. Postgres-backed Go tests run with package parallelism
+`-p 1` and test function parallelism `-parallel 1` by default so local Postgres
+does not fail from connection exhaustion; set
 `YALLA_POSTGRES_TEST_PARALLELISM` to a larger positive integer only when the
-test database is sized for it:
+test database is sized for it. The Postgres phase defaults
+`YALLA_POSTGRES_TEST_TIMEOUT` to `30m` because the serial store package runs
+the full integration suite under the race detector:
 
 ```bash
-go test -p 1 -parallel 1 ./...
-go test -p 1 -parallel 1 -race ./internal/controlplane/...
-go test -p 1 -parallel 1 -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...
+go test -timeout 30m -p 1 -parallel 1 ./...
+go test -timeout 30m -p 1 -parallel 1 -race ./internal/controlplane/...
+go test -timeout 30m -p 1 -parallel 1 -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...
+go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter -count=1
 go vet ./...
 ```
 

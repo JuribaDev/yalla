@@ -46,23 +46,28 @@ dry-run plan prints only redacted `YALLA_*` variable names and command shape.
 ## Production Verification Path
 
 Before calling a control-plane persistence, migration, readiness, quota, tenant
-isolation, or durable-job change production-ready, run the database-backed
-verification mode against a throwaway local Postgres database:
+isolation, durable-job, or distributed-rate-limit change production-ready, run
+the external-service-backed verification mode against throwaway local Postgres
+and Redis instances:
 
 ```bash
 docker compose up -d postgres
 export YALLA_TEST_DATABASE_URL='postgres://yalla:yalla@127.0.0.1:5432/yalla_test?sslmode=disable'
+export YALLA_TEST_REDIS_URL='redis://127.0.0.1:6379/15'
 ./scripts/verify.sh --with-postgres
 ```
 
-The DSN must target local test infrastructure only. The script fails fast when
-`YALLA_TEST_DATABASE_URL` is unset, then runs the normal verification gate plus
-the Postgres-backed control-plane commands pinned in `ralph/VERIFICATION.md`.
-Those Postgres-backed Go test commands use package parallelism `-p 1` and test
-function parallelism `-parallel 1` by default to avoid local database
-connection exhaustion; raise
+The DSNs must target local test infrastructure only. The script fails fast when
+`YALLA_TEST_DATABASE_URL` or `YALLA_TEST_REDIS_URL` is unset, then runs the
+normal verification gate plus the Postgres-backed control-plane commands and
+the Redis-backed distributed rate-limiter check pinned in
+`ralph/VERIFICATION.md`. Those Postgres-backed Go test commands use package
+parallelism `-p 1` and test function parallelism `-parallel 1` by default to
+avoid local database connection exhaustion; raise
 `YALLA_POSTGRES_TEST_PARALLELISM` only for a test database sized for the higher
-fan-out.
+fan-out. The Postgres phase defaults `YALLA_POSTGRES_TEST_TIMEOUT` to `30m`
+because the serial store package intentionally runs the full integration suite
+under the race detector.
 
 ## Database Backup
 

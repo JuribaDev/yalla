@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -23,6 +25,16 @@ var (
 )
 
 func main() {
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		slog.Error("invalid yalla-worker command line", "error", err.Error())
+		os.Exit(2)
+	}
+	if opts.version {
+		printVersion("yalla-worker")
+		return
+	}
+
 	// Resolve configuration before anything else so a misconfigured worker
 	// fails fast with a deterministic exit code instead of half-starting.
 	cfg, err := config.LoadFromEnv()
@@ -117,4 +129,24 @@ func main() {
 	}
 
 	logger.Info("yalla control-plane worker stopped")
+}
+
+type cliOptions struct {
+	version bool
+}
+
+func parseOptions(args []string) (cliOptions, error) {
+	var opts cliOptions
+	fs := flag.NewFlagSet("yalla-worker", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&opts.version, "version", false, "print build version and exit without loading configuration")
+	if err := fs.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+	return opts, nil
+}
+
+func printVersion(name string) {
+	build := runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}.Normalized()
+	fmt.Fprintf(os.Stdout, "%s version=%s commit=%s date=%s\n", name, build.Version, build.Commit, build.Date)
 }

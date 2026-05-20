@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	redis "github.com/redis/go-redis/v9"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
@@ -46,6 +47,10 @@ func main() {
 	if err != nil {
 		slog.Error("invalid yalla-api command line", "error", err.Error())
 		os.Exit(2)
+	}
+	if opts.version {
+		printVersion("yalla-api")
+		return
 	}
 
 	// Resolve configuration before anything else so a misconfigured process
@@ -161,6 +166,8 @@ func main() {
 		os.Exit(1)
 	}
 	jobEnqueuer := jobs.NewEnqueuer()
+	engine := policy.NewEngine()
+	storeAuthz := policyStoreAuthorizer{engine: engine}
 	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, jobEnqueuer, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
@@ -235,13 +242,10 @@ func main() {
 		logger.Error("failed to initialize the project reader", "error", err.Error())
 		os.Exit(1)
 	}
-	// Defense-in-depth ports for the project creation unit of work. The HTTP
-	// RequireAuth middleware is the authoritative gate for action
-	// project.create; the in-transaction Authorizer is still a redundant
-	// placeholder until the policy.Engine-driven store adapter lands. The
-	// quota port is the entitlement-aware checker, and the job port persists
-	// the durable provisioning work in the same transaction as desired state.
-	projectAuthz := alwaysAllowAuthorizer{}
+	// Defense-in-depth ports for the project unit of work. The HTTP RequireAuth
+	// middleware is the authoritative request-boundary gate; the in-transaction
+	// Authorizer re-checks the same policy engine before desired-state writes.
+	projectAuthz := storeAuthz
 	projectQuota := quotaChecker
 	projectJobs := jobEnqueuer
 	projectService, err := store.NewProjectService(dataStore, store.NewProjectRepository(), projectAuthz, projectQuota, projectJobs, auditRepo)
@@ -274,14 +278,9 @@ func main() {
 		logger.Error("failed to initialize the environment reader", "error", err.Error())
 		os.Exit(1)
 	}
-	// Defense-in-depth ports for the environment creation unit of work. The
-	// HTTP RequireAuth middleware is the authoritative gate for action
-	// environment.create; the in-transaction Authorizer is a redundant check
-	// whose real adapter (a policy.Engine-driven port that reads grant rows
-	// from the same *Tx as the desired-state write) lands later. Quota is the
-	// entitlement-aware checker, and jobs are durably enqueued with the
-	// desired-state write.
-	environmentAuthz := alwaysAllowAuthorizer{}
+	// Defense-in-depth ports for the environment unit of work. Policy, quota,
+	// and jobs all run before the desired-state transaction commits.
+	environmentAuthz := storeAuthz
 	environmentQuota := quotaChecker
 	environmentJobs := jobEnqueuer
 	environmentService, err := store.NewEnvironmentService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), environmentAuthz, environmentQuota, environmentJobs, auditRepo)
@@ -319,15 +318,9 @@ func main() {
 		logger.Error("failed to initialize the service reader", "error", err.Error())
 		os.Exit(1)
 	}
-	// Defense-in-depth ports for the service creation unit of work.
-	// As with environmentAuthz / environmentQuota / environmentJobs,
-	// the HTTP RequireAuth middleware is the authoritative gate for
-	// action service.create; the in-transaction Authorizer is a
-	// redundant check whose real adapter (a policy.Engine-driven port
-	// that reads grant rows from the same *Tx as the desired-state
-	// write) lands later. Quota is the entitlement-aware checker; jobs are
-	// persisted by the durable provisioning enqueuer.
-	serviceAuthz := alwaysAllowAuthorizer{}
+	// Defense-in-depth ports for service-scoped units of work. The store
+	// authorizer reuses the same policy engine as the HTTP boundary.
+	serviceAuthz := storeAuthz
 	serviceQuota := quotaChecker
 	serviceJobs := jobEnqueuer
 	serviceService, err := store.NewServiceService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), store.NewServiceRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
@@ -482,8 +475,6 @@ func main() {
 		logger.Error("failed to initialize the authenticator", "error", err.Error())
 		os.Exit(1)
 	}
-	engine := policy.NewEngine()
-
 	build := runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}.Normalized()
 
 	// Readiness gates the load balancer: /readyz reports 503 until every
@@ -549,18 +540,53 @@ func main() {
 	// limiter off without changing the wiring.
 	var httpRateLimiter httpapi.RateLimiter
 	if cfg.RateLimit.AnyEnabled() {
-		built, err := ratelimit.New(rateLimitConfigFromAppConfig(cfg.RateLimit))
-		if err != nil {
-			logger.Error("failed to initialize the rate limiter", "error", err.Error())
+		rlCfg := rateLimitConfigFromAppConfig(cfg.RateLimit)
+		switch cfg.RateLimit.Backend {
+		case config.RateLimitBackendRedis:
+			opt, err := redis.ParseURL(cfg.RateLimit.RedisURL)
+			if err != nil {
+				logger.Error("invalid Redis rate-limit configuration", "error", config.EnvRateLimitRedisURL+" is invalid")
+				os.Exit(1)
+			}
+			opt.DialTimeout = cfg.RateLimit.RedisTimeout
+			opt.ReadTimeout = cfg.RateLimit.RedisTimeout
+			opt.WriteTimeout = cfg.RateLimit.RedisTimeout
+			client := redis.NewClient(opt)
+			if err := client.Ping(ctx).Err(); err != nil {
+				_ = client.Close()
+				logger.Error("failed to connect to Redis rate-limit backend")
+				os.Exit(1)
+			}
+			built, err := ratelimit.NewRedisLimiter(client, rlCfg, cfg.RateLimit.RedisPrefix)
+			if err != nil {
+				_ = client.Close()
+				logger.Error("failed to initialize the Redis rate limiter", "error", err.Error())
+				os.Exit(1)
+			}
+			defer func() { _ = built.Close() }()
+			httpRateLimiter = built
+		case config.RateLimitBackendMemory:
+			built, err := ratelimit.New(rlCfg)
+			if err != nil {
+				logger.Error("failed to initialize the rate limiter", "error", err.Error())
+				os.Exit(1)
+			}
+			defer func() { _ = built.Close() }()
+			httpRateLimiter = built
+		default:
+			logger.Error("invalid rate-limit backend", "backend", cfg.RateLimit.Backend)
 			os.Exit(1)
 		}
-		httpRateLimiter = built
 	}
+	clientIPResolver := httpapi.NewTrustedProxyClientIPResolver(cfg.TrustedProxyCIDRs)
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceBackupService, serviceBackupService, serviceBackupService, serviceBackupService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter, previewService, jobReader, driftFindingReader, dokployRefReader, adminImportService, adminConfigValidator, adminConfigService, adminPlanService, adminSubscriptionService, adminMeteringSourceService, adminMetricDefinitionService, adminAttributionRuleService, adminUsageAggregationScheduleService, adminBillingProviderService, adminOveragePolicyService, adminFeatureFlagService),
+		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceBackupService, serviceBackupService, serviceBackupService, serviceBackupService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter, previewService, jobReader, driftFindingReader, dokployRefReader, adminImportService, adminConfigValidator, adminConfigService, adminPlanService, adminSubscriptionService, adminMeteringSourceService, adminMetricDefinitionService, adminAttributionRuleService, adminUsageAggregationScheduleService, adminBillingProviderService, adminOveragePolicyService, adminFeatureFlagService, clientIPResolver),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
 	// Run startup checks in the background so the server can answer probes
@@ -585,6 +611,7 @@ func main() {
 }
 
 type cliOptions struct {
+	version                bool
 	migrateOnly            bool
 	seedAdmin              bool
 	seedAdminEmail         string
@@ -598,6 +625,7 @@ func parseOptions(args []string) (cliOptions, error) {
 	var opts cliOptions
 	fs := flag.NewFlagSet("yalla-api", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&opts.version, "version", false, "print build version and exit without loading configuration")
 	fs.BoolVar(&opts.migrateOnly, "migrate-only", false, "apply embedded database migrations and exit without starting the HTTP API")
 	fs.BoolVar(&opts.seedAdmin, "seed-admin", false, "seed an initial operator user and membership, then exit without starting the HTTP API")
 	fs.StringVar(&opts.seedAdminEmail, "seed-admin-email", "", "email address for the initial operator user")
@@ -608,10 +636,18 @@ func parseOptions(args []string) (cliOptions, error) {
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
+	if opts.version && (opts.migrateOnly || opts.seedAdmin) {
+		return cliOptions{}, fmt.Errorf("version cannot be combined with maintenance modes")
+	}
 	if opts.migrateOnly && opts.seedAdmin {
 		return cliOptions{}, fmt.Errorf("only one maintenance mode may be selected")
 	}
 	return opts, nil
+}
+
+func printVersion(name string) {
+	build := runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}.Normalized()
+	fmt.Fprintf(os.Stdout, "%s version=%s commit=%s date=%s\n", name, build.Version, build.Commit, build.Date)
 }
 
 func runMigrationCommand(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) error {
@@ -833,20 +869,6 @@ type missingSecretKeysErr struct{}
 
 func (missingSecretKeysErr) Error() string {
 	return "YALLA_SECRET_KEYS is required in strict profiles"
-}
-
-// alwaysAllowAuthorizer is a placeholder store.Authorizer for the project
-// creation unit of work. The authoritative authorization for POST
-// /v1/projects is the HTTP RequireAuth middleware, which authorizes action
-// project.create against the principal's home organization before the
-// handler runs; the in-transaction Authorizer step is defense-in-depth that
-// will become a real policy.Engine-driven adapter when its story lands.
-// Until then, this placeholder always allows — never overriding the HTTP
-// gate, but never running an extra check either.
-type alwaysAllowAuthorizer struct{}
-
-func (alwaysAllowAuthorizer) Authorize(context.Context, store.Querier, string, string) error {
-	return nil
 }
 
 // rateLimitConfigFromAppConfig adapts the resolved config.RateLimit

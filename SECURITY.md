@@ -105,6 +105,7 @@ defined in `.github/workflows/ci.yml`:
 | Dokploy token isolation | `go test ./internal/release/... -run TestDokployTokenIsolation` and `go test ./internal/controlplane/config/... -run TestRuntimeConfigDokployToken` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup encryption | `go test ./internal/release/... -run TestBackupEncryption` and `go test ./internal/controlplane/backup/... -run TestFileReporterEncryptionMarker` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Rate limit bypass resistance | `go test ./internal/release/... -run TestRateLimitBypassResistance` and `go test ./internal/controlplane/httpapi/... -run TestRateLimitBypassResistance` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Distributed Redis rate limiter | `go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter` | CI `test` job, `scripts/verify.sh --with-postgres` with `YALLA_TEST_REDIS_URL` | Every push and external-service release verification |
 | Kubernetes operations artifact | `go test ./internal/release/... -run TestKubernetesArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | systemd operations artifact | `go test ./internal/release/... -run TestSystemdArtifact` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Database migration command artifact | `go test ./internal/release/... -run TestDatabaseMigrationCommand` | CI `test` job, `scripts/verify.sh` | Every push and PR |
@@ -247,13 +248,15 @@ and uses `RuntimeDefault` seccomp.
 The checked-in manifest intentionally does **not** include a Kubernetes
 `Secret`. Runtime credentials are bound by `secretKeyRef` from the
 operator-created `yalla-control-plane-secrets` object so database URLs,
-signing keys, Dokploy endpoints, and Dokploy tokens are never baked into
-images or repository files.
+signing keys, Dokploy endpoints, Dokploy tokens, internal worker tokens,
+and the Redis rate-limit DSN are never baked into images or repository files.
 
 `yalla-api` exposes `/healthz` and `/readyz` on port 8080 for Kubernetes
 liveness and readiness probes. `yalla-worker` has no HTTP listener; its
 health model is process liveness, durable job state, worker metrics, and
-structured JSON logs. Operators can render the artifact offline with
+structured JSON logs. The checked-in NetworkPolicy denies ingress by default
+and allows the API only from the configured ingress controller selector and
+the Yalla worker pods. Operators can render the artifact offline with
 `kubectl kustomize deploy/kubernetes` or validate it against a cluster with
 `kubectl apply --dry-run=server -f deploy/kubernetes/yalla-control-plane.yaml`.
 CI pins the contract with
@@ -1027,13 +1030,19 @@ in any one of the following is caught at build time:
   `*http.Server` MUST NOT set `TLSConfig` or `TLSNextProto`. Any
   TLS-termination shape inside the binary is rejected.
 - **Slowloris guard.** Every `*http.Server` literal in the API
-  binary MUST set a positive `ReadHeaderTimeout`. The current value
-  is `10 * time.Second`. Removing the field, or initialising the
-  server with the zero value, is rejected.
+  binary MUST set a positive `ReadHeaderTimeout`, `ReadTimeout`,
+  `WriteTimeout`, and `IdleTimeout`. `ReadHeaderTimeout` is fixed at
+  `10 * time.Second`; the other three are resolved from validated
+  `YALLA_HTTP_READ_TIMEOUT`, `YALLA_HTTP_WRITE_TIMEOUT`, and
+  `YALLA_HTTP_IDLE_TIMEOUT` config. Removing any field, or
+  initialising the server with a zero value, is rejected.
 - **Closed-set proxy header trust.** The rate limiter resolves the
-  caller's identity through `ClientIP(r)` in
-  `internal/controlplane/httpapi/ratelimit.go`. The helper consults
-  only two forwarding headers:
+  caller's identity through the safe `ClientIP(r)` default or the
+  production `NewTrustedProxyClientIPResolver` in
+  `internal/controlplane/httpapi/ratelimit.go`. `ClientIP(r)` uses
+  only the connection-level `RemoteAddr`; forwarded headers are
+  honored only when `RemoteAddr` belongs to `YALLA_TRUSTED_PROXY_CIDRS`.
+  The trusted-proxy resolver consults only two forwarding headers:
   - `X-Forwarded-For` — the **first hop only** is taken so a forged
     tail entry cannot displace the real client.
   - `X-Real-IP` as a fallback.
@@ -1045,9 +1054,9 @@ in any one of the following is caught at build time:
   `X-Forwarded-Server`) are deliberately ignored. If the API is
   ever reachable directly — a network misconfiguration, an internal
   pivot, or a forgotten test fixture — an attacker who can reach it
-  must not be able to spoof their identity past the IP bucket by
-  sending one of those headers. The closed set is enforced by the
-  static analyser; adding a new header to the trust list requires
+  cannot spoof their identity past the IP bucket by sending one of
+  those headers. The closed set is enforced by the static analyser;
+  adding a new header to the trust list requires
   an explicit, reviewed change to the allow-list.
 
 ### Operator expectations
@@ -1597,8 +1606,10 @@ customer API keys.
 
 The customer-facing HTTP rate-limit gate
 (`internal/controlplane/httpapi/ratelimit.go`, BE-0035) bills three
-in-memory token buckets in order: the resolved organization, the
-resolved API key / session principal, and the resolved client IP.
+token buckets in order: the resolved organization, the resolved API key /
+session principal, and the resolved client IP. Local development can use the
+in-process limiter; staging and production default to the Redis-backed
+limiter so every `yalla-api` replica shares the same buckets.
 The dimension name (`organization` / `api_key` / `ip`) is the only
 identity Yalla puts on the wire. The bucket *identity* (a tenant
 org id, an API key id, a client IP) is never echoed to the wire,
@@ -1688,6 +1699,11 @@ the same invariants end-to-end through the middleware:
 - A concurrent burst of 20 parallel requests against a single
   per-key bucket with `Burst=3` cannot grant more than 3
   successes (atomicity of the production `*ratelimit.Limiter`).
+- The Redis limiter tests drive two limiter instances against one Redis
+  server and prove the third request is denied from shared state, upstream
+  denial does not debit downstream buckets, internal-worker exemption is
+  preserved, and `Decision.Bucket` still returns only the closed dimension
+  constants.
 - The WARN log record emitted on a denial carries only the
   bucket dimension name; the bucket identity (principal id, org
   id, client IP) never appears in the record.
@@ -3802,8 +3818,9 @@ for every collateral surface lives in
   log level, invalid listen address, invalid public URL, invalid
   Dokploy URL, non-postgres `YALLA_DATABASE_URL` scheme, short
   signing key, wrong-length / non-hex `YALLA_SECRET_KEYS` entry,
-  malformed / too-small / too-large shutdown timeout, non-absolute
-  backup status file path, malformed / negative backup max age,
+  malformed / too-small / too-large shutdown timeout, malformed /
+  too-small / too-large HTTP server timeouts, non-absolute backup
+  status file path, malformed / negative backup max age,
   bad feature-flag value / empty flag name, negative or oversized
   rate-limit RPS / burst / idle TTL, malformed bool / int rate-
   limit overrides, and the strict-profile presence checks for

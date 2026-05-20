@@ -145,14 +145,39 @@ starts without real credentials.
 ## Rate-limit variables
 
 The inbound HTTP rate limiter is enabled by default in `local`, `staging`, and
-`production`. The `test` profile disables it so contract tests never
-accidentally trip it.
+`production`. Local uses the in-process backend by default; staging and
+production use Redis so every API replica shares the same bucket state. The
+`test` profile disables it so contract tests never accidentally trip it.
 
 ### `YALLA_RATE_LIMIT_DISABLED`
 - **Default:** `false`
 - **Allowed values:** `1`, `true`, `yes`, `on`, `0`, `false`, `no`, `off`
 - **Description:** Master switch that turns the limiter off for every
   dimension. Exists for staging soak tests and local development.
+
+### `YALLA_RATE_LIMIT_BACKEND`
+- **Default:** `memory` (local/test), `redis` (staging/production)
+- **Allowed values:** `memory`, `redis`
+- **Description:** Selects where bucket state is stored. Production should use
+  Redis unless an approved incident response temporarily disables the limiter.
+
+### `YALLA_RATE_LIMIT_REDIS_URL`
+- **Default:** Empty
+- **Format:** `redis://` or `rediss://` URL
+- **Description:** Redis DSN for the distributed limiter. Required when the
+  limiter is enabled and `YALLA_RATE_LIMIT_BACKEND=redis`. The value may
+  contain credentials and is redacted from logs.
+
+### `YALLA_RATE_LIMIT_REDIS_KEY_PREFIX`
+- **Default:** `yalla:ratelimit`
+- **Description:** Prefix applied to every Redis limiter key. Use a distinct
+  prefix per environment or cluster.
+
+### `YALLA_RATE_LIMIT_REDIS_TIMEOUT`
+- **Default:** `250ms`
+- **Format:** Go duration string
+- **Range:** Between `1ms` and `5s`
+- **Description:** Dial/read/write timeout applied to Redis limiter calls.
 
 ### `YALLA_RATE_LIMIT_ORG_READ_RPS` / `YALLA_RATE_LIMIT_ORG_READ_BURST`
 - **Default:** `50` / `100` (local), `100` / `200` (staging/production)

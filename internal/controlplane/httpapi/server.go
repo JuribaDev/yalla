@@ -150,6 +150,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 	deadLetterAlertMetrics := telemetry.DefaultDeadLetterAlertMetrics
 	reconciliationDriftAlertMetrics := telemetry.DefaultReconciliationDriftAlertMetrics
 	secretRedactionCanaryMetrics := telemetry.DefaultSecretRedactionCanaryMetrics
+	clientIPResolver := ClientIP
 	for _, opt := range routeOptions {
 		switch v := opt.(type) {
 		case PreviewCreator:
@@ -234,6 +235,10 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 			if v != nil {
 				secretRedactionCanaryMetrics = v
 			}
+		case ClientIPResolver:
+			if v != nil {
+				clientIPResolver = v
+			}
 		}
 	}
 
@@ -270,7 +275,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 		},
 	})
 
-	rateLimit := RateLimit(rateLimiter, logger)
+	rateLimit := RateLimitWithClientIPResolver(rateLimiter, logger, clientIPResolver)
 	for _, rt := range table {
 		h := http.Handler(rt.handler)
 		// Rate limiting wraps the handler INSIDE the auth gate so the

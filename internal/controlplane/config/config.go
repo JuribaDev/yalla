@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -84,6 +85,18 @@ const (
 	// in-flight HTTP requests and release in-flight job leases during a
 	// graceful shutdown. Accepts any Go duration string (e.g. "15s", "1m").
 	EnvShutdownTimeout = "YALLA_SHUTDOWN_TIMEOUT"
+	// EnvHTTPReadTimeout bounds reading the full request, including body.
+	// Accepts any Go duration string (e.g. "15s", "1m").
+	EnvHTTPReadTimeout = "YALLA_HTTP_READ_TIMEOUT"
+	// EnvHTTPWriteTimeout bounds response writes. Accepts any Go duration
+	// string (e.g. "60s", "2m").
+	EnvHTTPWriteTimeout = "YALLA_HTTP_WRITE_TIMEOUT"
+	// EnvHTTPIdleTimeout bounds keep-alive idle connections. Accepts any Go
+	// duration string (e.g. "120s", "3m").
+	EnvHTTPIdleTimeout = "YALLA_HTTP_IDLE_TIMEOUT"
+	// EnvTrustedProxyCIDRs is a comma-separated list of reverse-proxy CIDR
+	// ranges whose X-Forwarded-For / X-Real-IP headers may be trusted.
+	EnvTrustedProxyCIDRs = "YALLA_TRUSTED_PROXY_CIDRS"
 	// EnvBackupStatusFile is the absolute path of the file the operator's
 	// backup pipeline writes its last-success RFC3339 timestamp to. When
 	// set, the unauthenticated GET /healthz/backup probe reports the
@@ -108,6 +121,17 @@ const (
 	// The flag exists for staging soak tests and local development where the
 	// extra layer would be noise; production processes leave it unset.
 	EnvRateLimitDisabled = "YALLA_RATE_LIMIT_DISABLED"
+	// EnvRateLimitBackend selects the limiter storage backend: "memory" for
+	// single-process local enforcement or "redis" for shared multi-replica
+	// enforcement.
+	EnvRateLimitBackend = "YALLA_RATE_LIMIT_BACKEND"
+	// EnvRateLimitRedisURL is the Redis DSN used by the distributed limiter.
+	// Treated as a secret because it can embed credentials.
+	EnvRateLimitRedisURL = "YALLA_RATE_LIMIT_REDIS_URL"
+	// EnvRateLimitRedisPrefix prefixes every Redis limiter key.
+	EnvRateLimitRedisPrefix = "YALLA_RATE_LIMIT_REDIS_KEY_PREFIX"
+	// EnvRateLimitRedisTimeout bounds Redis dial/read/write operations.
+	EnvRateLimitRedisTimeout = "YALLA_RATE_LIMIT_REDIS_TIMEOUT"
 	// EnvRateLimitOrgReadRPS sets the steady-state allowed read requests per
 	// second per organization. A non-positive value disables the read-side
 	// org bucket.
@@ -154,6 +178,16 @@ const (
 	ProfileTest       Profile = "test"
 	ProfileStaging    Profile = "staging"
 	ProfileProduction Profile = "production"
+)
+
+// RateLimitBackend identifies where inbound rate-limit bucket state is stored.
+type RateLimitBackend string
+
+const (
+	// RateLimitBackendMemory keeps bucket state inside one API process.
+	RateLimitBackendMemory RateLimitBackend = "memory"
+	// RateLimitBackendRedis stores bucket state in Redis for multi-replica APIs.
+	RateLimitBackendRedis RateLimitBackend = "redis"
 )
 
 // allProfiles is the canonical, ordered list of valid profiles. Used for
@@ -213,6 +247,15 @@ type Config struct {
 	// accepting connections and drains in-flight requests within this
 	// window, and the worker releases in-flight job leases within it.
 	ShutdownTimeout time.Duration
+	// HTTPReadTimeout bounds reading the full HTTP request.
+	HTTPReadTimeout time.Duration
+	// HTTPWriteTimeout bounds writing the HTTP response.
+	HTTPWriteTimeout time.Duration
+	// HTTPIdleTimeout bounds keep-alive idle connections.
+	HTTPIdleTimeout time.Duration
+	// TrustedProxyCIDRs are the reverse proxy source ranges from which
+	// X-Forwarded-For / X-Real-IP may be trusted.
+	TrustedProxyCIDRs []netip.Prefix
 	// BackupStatusFile is the absolute path of the file the operator's
 	// backup pipeline writes its last-success RFC3339 timestamp to. An
 	// empty value disables the GET /healthz/backup probe — the endpoint
@@ -240,6 +283,14 @@ type RateLimit struct {
 	// Disabled, when true, turns off the limiter for every dimension
 	// even if the Specs below carry positive values.
 	Disabled bool
+	// Backend selects where bucket state is stored.
+	Backend RateLimitBackend
+	// RedisURL is the Redis DSN for the distributed backend. Secret.
+	RedisURL string
+	// RedisPrefix prefixes every Redis limiter key.
+	RedisPrefix string
+	// RedisTimeout bounds Redis dial/read/write operations.
+	RedisTimeout time.Duration
 	// OrgReadRPS, OrgReadBurst, OrgWriteRPS, OrgWriteBurst control the
 	// per-organization bucket. A non-positive RPS or Burst disables the
 	// matching side.
@@ -337,11 +388,19 @@ type RedactedConfig struct {
 	DokployToken          string          `json:"dokploy_token"`
 	InternalWorkerToken   string          `json:"internal_worker_token"`
 	ShutdownTimeout       string          `json:"shutdown_timeout"`
+	HTTPReadTimeout       string          `json:"http_read_timeout"`
+	HTTPWriteTimeout      string          `json:"http_write_timeout"`
+	HTTPIdleTimeout       string          `json:"http_idle_timeout"`
+	TrustedProxyCIDRs     []string        `json:"trusted_proxy_cidrs"`
 	BackupStatusFile      string          `json:"backup_status_file"`
 	BackupMaxAge          string          `json:"backup_max_age"`
 	LogLevel              string          `json:"log_level"`
 	FeatureFlags          map[string]bool `json:"feature_flags"`
 	RateLimitEnabled      bool            `json:"rate_limit_enabled"`
+	RateLimitBackend      string          `json:"rate_limit_backend"`
+	RateLimitRedisURL     string          `json:"rate_limit_redis_url"`
+	RateLimitRedisPrefix  string          `json:"rate_limit_redis_prefix"`
+	RateLimitRedisTimeout string          `json:"rate_limit_redis_timeout"`
 }
 
 // Redacted returns a credential-free projection of the config. Secret values
@@ -373,11 +432,19 @@ func (c *Config) Redacted() RedactedConfig {
 		DokployToken:          redact(c.DokployToken),
 		InternalWorkerToken:   redact(c.InternalWorkerToken),
 		ShutdownTimeout:       c.ShutdownTimeout.String(),
+		HTTPReadTimeout:       c.HTTPReadTimeout.String(),
+		HTTPWriteTimeout:      c.HTTPWriteTimeout.String(),
+		HTTPIdleTimeout:       c.HTTPIdleTimeout.String(),
+		TrustedProxyCIDRs:     prefixStrings(c.TrustedProxyCIDRs),
 		BackupStatusFile:      c.BackupStatusFile,
 		BackupMaxAge:          c.BackupMaxAge.String(),
 		LogLevel:              c.LogLevel.String(),
 		FeatureFlags:          flags,
 		RateLimitEnabled:      c.RateLimit.AnyEnabled(),
+		RateLimitBackend:      string(c.RateLimit.Backend),
+		RateLimitRedisURL:     redact(c.RateLimit.RedisURL),
+		RateLimitRedisPrefix:  c.RateLimit.RedisPrefix,
+		RateLimitRedisTimeout: c.RateLimit.RedisTimeout.String(),
 	}
 }
 
@@ -407,10 +474,18 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("dokploy_token", r.DokployToken),
 		slog.String("internal_worker_token", r.InternalWorkerToken),
 		slog.String("shutdown_timeout", r.ShutdownTimeout),
+		slog.String("http_read_timeout", r.HTTPReadTimeout),
+		slog.String("http_write_timeout", r.HTTPWriteTimeout),
+		slog.String("http_idle_timeout", r.HTTPIdleTimeout),
+		slog.Any("trusted_proxy_cidrs", r.TrustedProxyCIDRs),
 		slog.String("backup_status_file", r.BackupStatusFile),
 		slog.String("backup_max_age", r.BackupMaxAge),
 		slog.String("log_level", r.LogLevel),
 		slog.Bool("rate_limit_enabled", r.RateLimitEnabled),
+		slog.String("rate_limit_backend", r.RateLimitBackend),
+		slog.String("rate_limit_redis_url", r.RateLimitRedisURL),
+		slog.String("rate_limit_redis_prefix", r.RateLimitRedisPrefix),
+		slog.String("rate_limit_redis_timeout", r.RateLimitRedisTimeout),
 		slog.Group("feature_flags", anyAttrs(attrs)...),
 	)
 }
@@ -452,9 +527,22 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d secret_keys_configured:%d dokploy_base_url:%s dokploy_token:%s internal_worker_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d secret_keys_configured:%d dokploy_base_url:%s dokploy_token:%s internal_worker_token:%s shutdown_timeout:%s http_read_timeout:%s http_write_timeout:%s http_idle_timeout:%s trusted_proxy_cidrs:[%s] backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t rate_limit_backend:%s rate_limit_redis_url:%s rate_limit_redis_prefix:%s rate_limit_redis_timeout:%s feature_flags:[%s]}",
 		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured, r.SecretKeysConfigured,
-		r.DokployBaseURL, r.DokployToken, r.InternalWorkerToken, r.ShutdownTimeout, r.BackupStatusFile, r.BackupMaxAge,
-		r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
+		r.DokployBaseURL, r.DokployToken, r.InternalWorkerToken, r.ShutdownTimeout, r.HTTPReadTimeout,
+		r.HTTPWriteTimeout, r.HTTPIdleTimeout, strings.Join(r.TrustedProxyCIDRs, ","), r.BackupStatusFile,
+		r.BackupMaxAge, r.LogLevel, r.RateLimitEnabled, r.RateLimitBackend, r.RateLimitRedisURL,
+		r.RateLimitRedisPrefix, r.RateLimitRedisTimeout, strings.Join(flags, " "),
 	)
+}
+
+func prefixStrings(prefixes []netip.Prefix) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		out[i] = prefix.String()
+	}
+	return out
 }

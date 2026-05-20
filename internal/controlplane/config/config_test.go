@@ -26,6 +26,7 @@ func strictEnv() map[string]string {
 		EnvDokployBaseURL:      "https://dokploy.internal",
 		EnvDokployToken:        "dokploy-service-token-zzzz",
 		EnvInternalWorkerToken: "internal-worker-token-0123456789abcdef",
+		EnvRateLimitRedisURL:   "redis://redis.internal:6379/0",
 		EnvLogLevel:            "info",
 		EnvFeatureFlags:        "billing,preview=false",
 	}
@@ -116,6 +117,64 @@ func TestLoadLocalAndTestAllowMissingSecrets(t *testing.T) {
 				t.Errorf("expected empty internal worker token in %s profile", profile)
 			}
 		})
+	}
+}
+
+func TestHTTPTimeoutDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(MapLookup(strictEnv()))
+	if err != nil {
+		t.Fatalf("Load strict env: %v", err)
+	}
+	if cfg.HTTPReadTimeout != 15*time.Second {
+		t.Errorf("HTTPReadTimeout = %s, want 15s", cfg.HTTPReadTimeout)
+	}
+	if cfg.HTTPWriteTimeout != 60*time.Second {
+		t.Errorf("HTTPWriteTimeout = %s, want 60s", cfg.HTTPWriteTimeout)
+	}
+	if cfg.HTTPIdleTimeout != 120*time.Second {
+		t.Errorf("HTTPIdleTimeout = %s, want 120s", cfg.HTTPIdleTimeout)
+	}
+
+	env := strictEnv()
+	env[EnvHTTPReadTimeout] = "20s"
+	env[EnvHTTPWriteTimeout] = "90s"
+	env[EnvHTTPIdleTimeout] = "3m"
+	cfg, err = Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load overridden env: %v", err)
+	}
+	if cfg.HTTPReadTimeout != 20*time.Second || cfg.HTTPWriteTimeout != 90*time.Second || cfg.HTTPIdleTimeout != 3*time.Minute {
+		t.Fatalf("HTTP timeouts = %s/%s/%s, want 20s/90s/3m", cfg.HTTPReadTimeout, cfg.HTTPWriteTimeout, cfg.HTTPIdleTimeout)
+	}
+}
+
+func TestTrustedProxyCIDRsDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(MapLookup(strictEnv()))
+	if err != nil {
+		t.Fatalf("Load strict env: %v", err)
+	}
+	if len(cfg.TrustedProxyCIDRs) != 0 {
+		t.Fatalf("TrustedProxyCIDRs = %v, want empty default", cfg.TrustedProxyCIDRs)
+	}
+
+	env := strictEnv()
+	env[EnvTrustedProxyCIDRs] = "10.42.0.0/16, 2001:db8::/32"
+	cfg, err = Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load overridden env: %v", err)
+	}
+	if len(cfg.TrustedProxyCIDRs) != 2 {
+		t.Fatalf("TrustedProxyCIDRs length = %d, want 2", len(cfg.TrustedProxyCIDRs))
+	}
+	if got := cfg.TrustedProxyCIDRs[0].String(); got != "10.42.0.0/16" {
+		t.Errorf("TrustedProxyCIDRs[0] = %q, want 10.42.0.0/16", got)
+	}
+	if got := cfg.TrustedProxyCIDRs[1].String(); got != "2001:db8::/32" {
+		t.Errorf("TrustedProxyCIDRs[1] = %q, want 2001:db8::/32", got)
 	}
 }
 
@@ -421,6 +480,57 @@ func TestRateLimitProfileDefaults(t *testing.T) {
 				t.Errorf("%s RateLimit.AnyEnabled = %t, want %t", tc.profile, got, tc.wantEnabled)
 			}
 		})
+	}
+}
+
+func TestRateLimitBackendDefaults(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	delete(env, EnvRateLimitRedisURL)
+	_, err := Load(MapLookup(env))
+	if err == nil {
+		t.Fatal("production rate limiting without Redis URL succeeded, want config error")
+	}
+	if !strings.Contains(err.Error(), EnvRateLimitRedisURL) {
+		t.Fatalf("error %q does not mention %s", err.Error(), EnvRateLimitRedisURL)
+	}
+
+	env[EnvRateLimitRedisURL] = "redis://redis.internal:6379/0"
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load with Redis URL: %v", err)
+	}
+	if cfg.RateLimit.Backend != RateLimitBackendRedis {
+		t.Fatalf("backend = %q, want %q", cfg.RateLimit.Backend, RateLimitBackendRedis)
+	}
+	if cfg.RateLimit.RedisURL != "redis://redis.internal:6379/0" {
+		t.Fatalf("RedisURL = %q, want configured URL", cfg.RateLimit.RedisURL)
+	}
+	if cfg.RateLimit.RedisPrefix == "" {
+		t.Fatal("RedisPrefix is empty")
+	}
+	if cfg.RateLimit.RedisTimeout <= 0 {
+		t.Fatalf("RedisTimeout = %s, want positive duration", cfg.RateLimit.RedisTimeout)
+	}
+
+	local, err := Load(MapLookup(map[string]string{
+		EnvProfile:     string(ProfileLocal),
+		EnvDatabaseURL: "postgres://localhost:5432/yalla",
+	}))
+	if err != nil {
+		t.Fatalf("Load local profile: %v", err)
+	}
+	if local.RateLimit.Backend != RateLimitBackendMemory {
+		t.Fatalf("local backend = %q, want %q", local.RateLimit.Backend, RateLimitBackendMemory)
+	}
+
+	testCfg, err := Load(MapLookup(map[string]string{EnvProfile: string(ProfileTest)}))
+	if err != nil {
+		t.Fatalf("Load test profile: %v", err)
+	}
+	if testCfg.RateLimit.AnyEnabled() {
+		t.Fatal("test profile rate limit should be disabled")
 	}
 }
 

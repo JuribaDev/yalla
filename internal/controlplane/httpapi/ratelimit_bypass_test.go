@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,33 @@ import (
 // realistic header value so a partial-write or truncation regression
 // would still surface the leak.
 const bypassMarker = "BE0363RATELIMITBYPASSMARKERXYZ"
+
+func TestClientIPIgnoresForwardedHeadersFromUntrustedRemote(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/projects", nil)
+	req.RemoteAddr = "198.51.100.10:45678"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+
+	resolver := NewTrustedProxyClientIPResolver(nil)
+	if got := resolver(req); got != "198.51.100.10" {
+		t.Fatalf("resolver = %q, want remote addr when proxy is untrusted", got)
+	}
+}
+
+func TestClientIPHonoursForwardedHeadersFromTrustedProxy(t *testing.T) {
+	t.Parallel()
+
+	prefix := netip.MustParsePrefix("10.42.0.0/16")
+	req := httptest.NewRequest(http.MethodGet, "/v1/projects", nil)
+	req.RemoteAddr = "10.42.5.7:45678"
+	req.Header.Set("X-Forwarded-For", "203.0.113.99, 10.42.5.7")
+
+	resolver := NewTrustedProxyClientIPResolver([]netip.Prefix{prefix})
+	if got := resolver(req); got != "203.0.113.99" {
+		t.Fatalf("resolver = %q, want first forwarded client IP", got)
+	}
+}
 
 // TestRateLimitBypassResistanceForgedInternalHeaderDoesNotExempt proves
 // the middleware never trusts a client-supplied "internal-worker" claim.
@@ -212,7 +240,8 @@ func TestRateLimitBypassResistanceClientIPHonoursOnlyFirstHop(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			limiter := &fakeRateLimiter{}
-			h := RateLimit(limiter, nil)(&rateLimitOK{})
+			resolver := NewTrustedProxyClientIPResolver([]netip.Prefix{netip.MustParsePrefix("172.18.0.0/16")})
+			h := RateLimitWithClientIPResolver(limiter, nil, resolver)(&rateLimitOK{})
 			req := httptest.NewRequest(http.MethodGet, "/v1/projects", nil)
 			req.RemoteAddr = "172.18.0.5:1234"
 			if tc.xff != "" {

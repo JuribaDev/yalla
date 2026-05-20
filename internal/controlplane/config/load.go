@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -34,11 +35,14 @@ func MapLookup(env map[string]string) LookupFunc { return mapLookup(env) }
 // profileDefaults holds the per-profile baseline applied before environment
 // variables are layered on top.
 type profileDefaults struct {
-	apiAddr         string
-	logLevel        slog.Level
-	publicURL       string
-	shutdownTimeout time.Duration
-	rateLimit       RateLimit
+	apiAddr          string
+	logLevel         slog.Level
+	publicURL        string
+	shutdownTimeout  time.Duration
+	httpReadTimeout  time.Duration
+	httpWriteTimeout time.Duration
+	httpIdleTimeout  time.Duration
+	rateLimit        RateLimit
 }
 
 // defaultsByProfile maps each profile to its baseline. Local is tuned for a
@@ -54,11 +58,15 @@ type profileDefaults struct {
 // YALLA_RATE_LIMIT_* environment variables.
 var defaultsByProfile = map[Profile]profileDefaults{
 	ProfileLocal: {
-		apiAddr:         ":8080",
-		logLevel:        slog.LevelDebug,
-		publicURL:       "http://localhost:8080",
-		shutdownTimeout: 15 * time.Second,
+		apiAddr:          ":8080",
+		logLevel:         slog.LevelDebug,
+		publicURL:        "http://localhost:8080",
+		shutdownTimeout:  15 * time.Second,
+		httpReadTimeout:  15 * time.Second,
+		httpWriteTimeout: 60 * time.Second,
+		httpIdleTimeout:  120 * time.Second,
 		rateLimit: RateLimit{
+			Backend: RateLimitBackendMemory, RedisPrefix: "yalla:ratelimit", RedisTimeout: 250 * time.Millisecond,
 			OrgReadRPS: 50, OrgReadBurst: 100, OrgWriteRPS: 20, OrgWriteBurst: 40,
 			KeyReadRPS: 25, KeyReadBurst: 50, KeyWriteRPS: 10, KeyWriteBurst: 20,
 			IPReadRPS: 50, IPReadBurst: 100, IPWriteRPS: 20, IPWriteBurst: 40,
@@ -66,17 +74,27 @@ var defaultsByProfile = map[Profile]profileDefaults{
 		},
 	},
 	ProfileTest: {
-		apiAddr:         "127.0.0.1:0",
-		logLevel:        slog.LevelWarn,
-		publicURL:       "http://127.0.0.1",
-		shutdownTimeout: 2 * time.Second,
-		rateLimit:       RateLimit{Disabled: true},
+		apiAddr:          "127.0.0.1:0",
+		logLevel:         slog.LevelWarn,
+		publicURL:        "http://127.0.0.1",
+		shutdownTimeout:  2 * time.Second,
+		httpReadTimeout:  2 * time.Second,
+		httpWriteTimeout: 5 * time.Second,
+		httpIdleTimeout:  10 * time.Second,
+		rateLimit: RateLimit{
+			Disabled: true, Backend: RateLimitBackendMemory,
+			RedisPrefix: "yalla:ratelimit", RedisTimeout: 250 * time.Millisecond,
+		},
 	},
 	ProfileStaging: {
-		apiAddr:         ":8080",
-		logLevel:        slog.LevelInfo,
-		shutdownTimeout: 25 * time.Second,
+		apiAddr:          ":8080",
+		logLevel:         slog.LevelInfo,
+		shutdownTimeout:  25 * time.Second,
+		httpReadTimeout:  15 * time.Second,
+		httpWriteTimeout: 60 * time.Second,
+		httpIdleTimeout:  120 * time.Second,
 		rateLimit: RateLimit{
+			Backend: RateLimitBackendRedis, RedisPrefix: "yalla:ratelimit", RedisTimeout: 250 * time.Millisecond,
 			OrgReadRPS: 100, OrgReadBurst: 200, OrgWriteRPS: 30, OrgWriteBurst: 60,
 			KeyReadRPS: 50, KeyReadBurst: 100, KeyWriteRPS: 15, KeyWriteBurst: 30,
 			IPReadRPS: 60, IPReadBurst: 120, IPWriteRPS: 20, IPWriteBurst: 40,
@@ -84,10 +102,14 @@ var defaultsByProfile = map[Profile]profileDefaults{
 		},
 	},
 	ProfileProduction: {
-		apiAddr:         ":8080",
-		logLevel:        slog.LevelInfo,
-		shutdownTimeout: 25 * time.Second,
+		apiAddr:          ":8080",
+		logLevel:         slog.LevelInfo,
+		shutdownTimeout:  25 * time.Second,
+		httpReadTimeout:  15 * time.Second,
+		httpWriteTimeout: 60 * time.Second,
+		httpIdleTimeout:  120 * time.Second,
 		rateLimit: RateLimit{
+			Backend: RateLimitBackendRedis, RedisPrefix: "yalla:ratelimit", RedisTimeout: 250 * time.Millisecond,
 			OrgReadRPS: 100, OrgReadBurst: 200, OrgWriteRPS: 30, OrgWriteBurst: 60,
 			KeyReadRPS: 50, KeyReadBurst: 100, KeyWriteRPS: 15, KeyWriteBurst: 30,
 			IPReadRPS: 60, IPReadBurst: 120, IPWriteRPS: 20, IPWriteBurst: 40,
@@ -119,7 +141,16 @@ const secretKeyHexLen = 64
 const (
 	minShutdownTimeout = time.Second
 	maxShutdownTimeout = 5 * time.Minute
+	minHTTPTimeout     = time.Second
+	maxHTTPTimeout     = 5 * time.Minute
 )
+
+func validateHTTPTimeout(env string, d time.Duration) error {
+	if d < minHTTPTimeout || d > maxHTTPTimeout {
+		return yerr.Newf(yerr.CodeConfig, "%s %s is out of range (want between %s and %s)", env, d, minHTTPTimeout, maxHTTPTimeout)
+	}
+	return nil
+}
 
 // LoadFromEnv resolves the backend configuration from the real process
 // environment. It is the entry point both backend binaries call once at
@@ -159,6 +190,23 @@ func Load(lookup LookupFunc) (*Config, error) {
 		return nil, err
 	}
 
+	httpReadTimeout, err := resolveDuration(lookup, EnvHTTPReadTimeout, defaults.httpReadTimeout)
+	if err != nil {
+		return nil, err
+	}
+	httpWriteTimeout, err := resolveDuration(lookup, EnvHTTPWriteTimeout, defaults.httpWriteTimeout)
+	if err != nil {
+		return nil, err
+	}
+	httpIdleTimeout, err := resolveDuration(lookup, EnvHTTPIdleTimeout, defaults.httpIdleTimeout)
+	if err != nil {
+		return nil, err
+	}
+	trustedProxyCIDRs, err := resolveTrustedProxyCIDRs(lookup)
+	if err != nil {
+		return nil, err
+	}
+
 	backupMaxAge, err := resolveBackupMaxAge(lookup)
 	if err != nil {
 		return nil, err
@@ -180,6 +228,10 @@ func Load(lookup LookupFunc) (*Config, error) {
 		DokployToken:        valueOr(lookup, EnvDokployToken, ""),
 		InternalWorkerToken: valueOr(lookup, EnvInternalWorkerToken, ""),
 		ShutdownTimeout:     shutdownTimeout,
+		HTTPReadTimeout:     httpReadTimeout,
+		HTTPWriteTimeout:    httpWriteTimeout,
+		HTTPIdleTimeout:     httpIdleTimeout,
+		TrustedProxyCIDRs:   trustedProxyCIDRs,
 		BackupStatusFile:    strings.TrimSpace(valueOr(lookup, EnvBackupStatusFile, "")),
 		BackupMaxAge:        backupMaxAge,
 		LogLevel:            logLevel,
@@ -262,6 +314,18 @@ func (c *Config) Validate() error {
 		return yerr.Newf(yerr.CodeConfig,
 			"%s %s is out of range (want between %s and %s)",
 			EnvShutdownTimeout, c.ShutdownTimeout, minShutdownTimeout, maxShutdownTimeout)
+	}
+	for _, timeout := range []struct {
+		env string
+		d   time.Duration
+	}{
+		{EnvHTTPReadTimeout, c.HTTPReadTimeout},
+		{EnvHTTPWriteTimeout, c.HTTPWriteTimeout},
+		{EnvHTTPIdleTimeout, c.HTTPIdleTimeout},
+	} {
+		if err := validateHTTPTimeout(timeout.env, timeout.d); err != nil {
+			return err
+		}
 	}
 
 	if c.BackupStatusFile != "" {
@@ -396,6 +460,28 @@ func resolveShutdownTimeout(lookup LookupFunc, fallback time.Duration) (time.Dur
 	return d, nil
 }
 
+func resolveTrustedProxyCIDRs(lookup LookupFunc) ([]netip.Prefix, error) {
+	raw, ok := lookup(EnvTrustedProxyCIDRs)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, yerr.Newf(yerr.CodeConfig,
+				"invalid %s entry %q (want CIDR such as 10.42.0.0/16)", EnvTrustedProxyCIDRs, part)
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
+}
+
 // resolveFeatureFlags parses YALLA_FEATURE_FLAGS into a name->enabled map.
 // Each comma-separated entry is either "name" (enabled) or "name=<bool>".
 // An empty variable yields an empty, non-nil map.
@@ -528,8 +614,10 @@ const rateLimitMaxRPS = 10_000.0
 // this would have the limiter constantly rebuilding buckets, defeating
 // the burst budget.
 const (
-	rateLimitMinIdleTTL = 10 * time.Second
-	rateLimitMaxIdleTTL = time.Hour
+	rateLimitMinIdleTTL      = 10 * time.Second
+	rateLimitMaxIdleTTL      = time.Hour
+	rateLimitMinRedisTimeout = time.Millisecond
+	rateLimitMaxRedisTimeout = 5 * time.Second
 )
 
 // resolveRateLimit layers the YALLA_RATE_LIMIT_* environment variables
@@ -546,14 +634,26 @@ func resolveRateLimit(lookup LookupFunc, fallback RateLimit) (RateLimit, error) 
 	if err != nil {
 		return RateLimit{}, err
 	}
+	backend, err := resolveRateLimitBackend(lookup, fallback.Backend)
+	if err != nil {
+		return RateLimit{}, err
+	}
 	idleTTL, err := resolveDuration(lookup, EnvRateLimitIdleTTL, fallback.IdleTTL)
+	if err != nil {
+		return RateLimit{}, err
+	}
+	redisTimeout, err := resolveDuration(lookup, EnvRateLimitRedisTimeout, fallback.RedisTimeout)
 	if err != nil {
 		return RateLimit{}, err
 	}
 
 	out := RateLimit{
-		Disabled: disabled,
-		IdleTTL:  idleTTL,
+		Disabled:     disabled,
+		Backend:      backend,
+		RedisURL:     valueOr(lookup, EnvRateLimitRedisURL, fallback.RedisURL),
+		RedisPrefix:  valueOr(lookup, EnvRateLimitRedisPrefix, fallback.RedisPrefix),
+		RedisTimeout: redisTimeout,
+		IdleTTL:      idleTTL,
 	}
 	specs := []struct {
 		env      string
@@ -651,6 +751,61 @@ func validateRateLimit(r RateLimit) error {
 		return yerr.Newf(yerr.CodeConfig,
 			"%s %s is out of range (want between %s and %s)",
 			EnvRateLimitIdleTTL, r.IdleTTL, rateLimitMinIdleTTL, rateLimitMaxIdleTTL)
+	}
+	switch r.Backend {
+	case RateLimitBackendMemory, RateLimitBackendRedis:
+	case "":
+		return yerr.Newf(yerr.CodeConfig, "%s is required", EnvRateLimitBackend)
+	default:
+		return yerr.Newf(yerr.CodeConfig, "invalid %s %q (want memory or redis)", EnvRateLimitBackend, r.Backend)
+	}
+	if r.RedisTimeout != 0 && (r.RedisTimeout < rateLimitMinRedisTimeout || r.RedisTimeout > rateLimitMaxRedisTimeout) {
+		return yerr.Newf(yerr.CodeConfig,
+			"%s %s is out of range (want between %s and %s)",
+			EnvRateLimitRedisTimeout, r.RedisTimeout, rateLimitMinRedisTimeout, rateLimitMaxRedisTimeout)
+	}
+	if r.AnyEnabled() && r.Backend == RateLimitBackendRedis {
+		if r.RedisURL == "" {
+			return yerr.Newf(yerr.CodeConfig, "%s is required when %s=redis and rate limiting is enabled",
+				EnvRateLimitRedisURL, EnvRateLimitBackend)
+		}
+		if err := validateRedisURL(r.RedisURL); err != nil {
+			return err
+		}
+		if strings.TrimSpace(r.RedisPrefix) == "" {
+			return yerr.Newf(yerr.CodeConfig, "%s is required when %s=redis", EnvRateLimitRedisPrefix, EnvRateLimitBackend)
+		}
+	}
+	return nil
+}
+
+func resolveRateLimitBackend(lookup LookupFunc, fallback RateLimitBackend) (RateLimitBackend, error) {
+	raw, ok := lookup(EnvRateLimitBackend)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	switch RateLimitBackend(strings.ToLower(raw)) {
+	case RateLimitBackendMemory:
+		return RateLimitBackendMemory, nil
+	case RateLimitBackendRedis:
+		return RateLimitBackendRedis, nil
+	default:
+		return "", yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want memory or redis)", EnvRateLimitBackend, raw)
+	}
+}
+
+func validateRedisURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return yerr.Newf(yerr.CodeConfig, "invalid %s: not a valid URL", EnvRateLimitRedisURL)
+	}
+	if u.Scheme != "redis" && u.Scheme != "rediss" {
+		return yerr.Newf(yerr.CodeConfig, "invalid %s: scheme must be redis or rediss", EnvRateLimitRedisURL)
+	}
+	if u.Host == "" {
+		return yerr.Newf(yerr.CodeConfig, "invalid %s: missing host", EnvRateLimitRedisURL)
 	}
 	return nil
 }

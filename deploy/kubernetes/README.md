@@ -19,13 +19,40 @@ kubectl -n yalla-control-plane create secret generic yalla-control-plane-secrets
   --from-literal=YALLA_DOKPLOY_BASE_URL='<redacted>' \
   --from-literal=YALLA_DOKPLOY_TOKEN='<redacted>' \
   --from-literal=YALLA_INTERNAL_WORKER_TOKEN='<redacted>' \
+  --from-literal=YALLA_RATE_LIMIT_REDIS_URL='<redacted>' \
   --dry-run=client -o yaml
 ```
 
 Do not commit the rendered Secret. The checked-in Deployment binds those
 keys by `secretKeyRef` at runtime so database URLs, signing material,
-secret-encryption keys, Dokploy credentials, and internal worker callback
-tokens are never baked into images or files.
+secret-encryption keys, Dokploy credentials, internal worker callback tokens,
+and the Redis rate-limit DSN are never baked into images or files.
+
+Production and staging use Redis-backed rate limiting so every `yalla-api`
+replica shares the same org, API-key, and IP buckets. The checked-in
+ConfigMap sets `YALLA_RATE_LIMIT_BACKEND=redis`; supply
+`YALLA_RATE_LIMIT_REDIS_URL` through the Secret or explicitly disable the
+limiter only for an approved incident.
+
+## Production Rollout
+
+The source tree uses `0.0.0-dev` image tags as placeholders only. Release
+manifests are rendered with immutable image digests, and manual Kustomize
+rollouts should pin the same way:
+
+```bash
+cd deploy/kubernetes
+kustomize edit set image ghcr.io/juribadev/yalla-api=ghcr.io/juribadev/yalla-api@sha256:<api-digest>
+kustomize edit set image ghcr.io/juribadev/yalla-worker=ghcr.io/juribadev/yalla-worker@sha256:<worker-digest>
+cd ../..
+kubectl apply --server-side -k deploy/kubernetes
+kubectl -n yalla-control-plane rollout status deploy/yalla-api
+kubectl -n yalla-control-plane rollout status deploy/yalla-worker
+```
+
+Use the `dist/yalla-control-plane-<tag>.yaml` artifact from a release when you
+do not need local overlays. It contains the same baseline manifest with the
+API and worker images replaced by the signed release digests.
 
 ## Verification
 

@@ -118,6 +118,9 @@ var forbiddenAPITLSStructFields = map[string]struct{}{
 // gate stays honest.
 var requiredHTTPServerFields = map[string]struct{}{
 	"ReadHeaderTimeout": {},
+	"ReadTimeout":       {},
+	"WriteTimeout":      {},
+	"IdleTimeout":       {},
 }
 
 // clientIPFuncName is the function whose body owns the forwarded-IP
@@ -304,6 +307,9 @@ func main() {
 		Addr:              ":8080",
 		Handler:           nil,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	_ = srv.ListenAndServe()
 }`,
@@ -314,7 +320,7 @@ func main() {
 				source: `package main
 import "net/http"
 func main() {
-	srv := &http.Server{Addr: ":8080"}
+	srv := &http.Server{Addr: ":8080", ReadTimeout: 15, WriteTimeout: 60, IdleTimeout: 120}
 	_ = srv.ListenAndServe()
 }`,
 				wantHits: 1,
@@ -331,6 +337,9 @@ func main() {
 	srv := &http.Server{
 		Addr:              ":8080",
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		TLSConfig:         &tls.Config{},
 	}
 	_ = srv.ListenAndServe()
@@ -348,6 +357,9 @@ func main() {
 	srv := &http.Server{
 		Addr:              ":8080",
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		TLSNextProto:      map[string]func(*http.Server, *tls.Conn, http.Handler){},
 	}
 	_ = srv.ListenAndServe()
@@ -359,7 +371,7 @@ func main() {
 				source: `package main
 import "net/http"
 func main() {
-	srv := &http.Server{Addr: ":8443", ReadHeaderTimeout: 10}
+	srv := &http.Server{Addr: ":8443", ReadHeaderTimeout: 10, ReadTimeout: 15, WriteTimeout: 60, IdleTimeout: 120}
 	_ = srv.ListenAndServeTLS("cert.pem", "key.pem")
 }`,
 				wantHits: 1,
@@ -372,7 +384,7 @@ import (
 	"net/http"
 )
 func main() {
-	srv := &http.Server{ReadHeaderTimeout: 10}
+	srv := &http.Server{ReadHeaderTimeout: 10, ReadTimeout: 15, WriteTimeout: 60, IdleTimeout: 120}
 	var ln net.Listener
 	_ = srv.ServeTLS(ln, "cert.pem", "key.pem")
 }`,
@@ -396,7 +408,7 @@ import (
 	"time"
 )
 func main() {
-	srv := &http.Server{Addr: ":8080", ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":8080", ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	srv.TLSConfig = &tls.Config{}
 	_ = srv.ListenAndServe()
 }`,
@@ -408,11 +420,15 @@ func main() {
 import (
 	"crypto/tls"
 	"net/http"
+	"time"
 )
 func main() {
 	srv := &http.Server{
-		Addr:      ":8443",
-		TLSConfig: &tls.Config{},
+		Addr:         ":8443",
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		TLSConfig:    &tls.Config{},
 	}
 	_ = srv.ListenAndServeTLS("cert.pem", "key.pem")
 }`,

@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -22,11 +23,14 @@ import (
 // recordingAuthorizer is a fake Authorizer that records call count and returns
 // a configured error.
 type recordingAuthorizer struct {
+	mu    sync.Mutex
 	err   error
 	calls int
 }
 
 func (a *recordingAuthorizer) Authorize(_ context.Context, _ store.Querier, _, _ string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.calls++
 	return a.err
 }
@@ -34,16 +38,21 @@ func (a *recordingAuthorizer) Authorize(_ context.Context, _ store.Querier, _, _
 // recordingQuota is a fake QuotaReserver that records call count and returns a
 // configured error.
 type recordingQuota struct {
+	mu    sync.Mutex
 	err   error
 	calls int
 }
 
 func (q *recordingQuota) Reserve(_ context.Context, _ *store.Tx, _, _ string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.calls++
 	return q.err
 }
 
 func (q *recordingQuota) ReserveAmount(_ context.Context, _ *store.Tx, _, _ string, _ int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.calls++
 	return q.err
 }
@@ -51,12 +60,15 @@ func (q *recordingQuota) ReserveAmount(_ context.Context, _ *store.Tx, _, _ stri
 // recordingJobs is a fake JobEnqueuer that records call count and returns a
 // configured error.
 type recordingJobs struct {
+	mu     sync.Mutex
 	err    error
 	calls  int
 	inputs []store.EnqueueJobInput
 }
 
 func (j *recordingJobs) Enqueue(_ context.Context, _ *store.Tx, in store.EnqueueJobInput) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	j.calls++
 	j.inputs = append(j.inputs, in)
 	return j.err

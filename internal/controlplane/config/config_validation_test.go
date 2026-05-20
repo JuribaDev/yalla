@@ -187,6 +187,26 @@ func buildConfigValidationScenarios() []configValidationScenario {
 			wantSub: "out of range",
 		},
 		{
+			name:    "http_read_timeout_malformed",
+			mutate:  func(e map[string]string) { e[EnvHTTPReadTimeout] = "soon" },
+			wantSub: EnvHTTPReadTimeout,
+		},
+		{
+			name:    "http_write_timeout_too_small",
+			mutate:  func(e map[string]string) { e[EnvHTTPWriteTimeout] = "0s" },
+			wantSub: EnvHTTPWriteTimeout,
+		},
+		{
+			name:    "http_idle_timeout_too_large",
+			mutate:  func(e map[string]string) { e[EnvHTTPIdleTimeout] = "30m" },
+			wantSub: EnvHTTPIdleTimeout,
+		},
+		{
+			name:    "trusted_proxy_cidr_malformed",
+			mutate:  func(e map[string]string) { e[EnvTrustedProxyCIDRs] = "10.42.0.0/16,not-a-cidr" },
+			wantSub: EnvTrustedProxyCIDRs,
+		},
+		{
 			name:    "backup_status_file_not_absolute",
 			mutate:  func(e map[string]string) { e[EnvBackupStatusFile] = "relative/path.txt" },
 			wantSub: EnvBackupStatusFile,
@@ -235,6 +255,26 @@ func buildConfigValidationScenarios() []configValidationScenario {
 			name:    "rate_limit_disabled_malformed",
 			mutate:  func(e map[string]string) { e[EnvRateLimitDisabled] = "maybe" },
 			wantSub: EnvRateLimitDisabled,
+		},
+		{
+			name:    "rate_limit_backend_invalid",
+			mutate:  func(e map[string]string) { e[EnvRateLimitBackend] = "disk" },
+			wantSub: EnvRateLimitBackend,
+		},
+		{
+			name:    "rate_limit_redis_url_missing",
+			mutate:  func(e map[string]string) { delete(e, EnvRateLimitRedisURL) },
+			wantSub: EnvRateLimitRedisURL,
+		},
+		{
+			name:    "rate_limit_redis_url_bad_scheme",
+			mutate:  func(e map[string]string) { e[EnvRateLimitRedisURL] = "http://redis.internal:6379/0" },
+			wantSub: EnvRateLimitRedisURL,
+		},
+		{
+			name:    "rate_limit_redis_timeout_malformed",
+			mutate:  func(e map[string]string) { e[EnvRateLimitRedisTimeout] = "soon" },
+			wantSub: EnvRateLimitRedisTimeout,
 		},
 		{
 			name:    "rate_limit_int_malformed",

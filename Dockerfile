@@ -54,7 +54,7 @@
 # Dokploy token, and internal worker token are redacted at the
 # structured-logging layer and never appear in logs.
 
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.26.3
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
 
 FROM golang:${GO_VERSION}-bookworm AS builder

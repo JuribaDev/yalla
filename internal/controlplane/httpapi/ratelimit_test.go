@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,21 +197,22 @@ func TestRateLimitRetryAfterFloorsAtOneSecond(t *testing.T) {
 }
 
 // TestRateLimitBuildsRequestFromPrincipalAndIP proves the middleware
-// reads the principal off the request context (organization id, API
-// key id) and the IP off the request (preferring X-Forwarded-For), and
-// passes them as the Request to the limiter.
+// reads the principal off the request context (organization id, API key id)
+// and the IP from the injected trusted-proxy resolver, then passes them as
+// the Request to the limiter.
 func TestRateLimitBuildsRequestFromPrincipalAndIP(t *testing.T) {
 	t.Parallel()
 
 	limiter := &fakeRateLimiter{}
 	limiter.queue(ratelimit.Decision{Allowed: true})
-	h := RateLimit(limiter, nil)(&rateLimitOK{})
+	resolver := NewTrustedProxyClientIPResolver([]netip.Prefix{netip.MustParsePrefix("10.42.0.0/16")})
+	h := RateLimitWithClientIPResolver(limiter, nil, resolver)(&rateLimitOK{})
 
 	principal := policy.Principal{
 		ID: "sa_ci", Kind: domain.KindServiceAccount, OrganizationID: "org_acme",
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/projects", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
+	req.RemoteAddr = "10.42.5.7:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.42, 198.51.100.1")
 	ctx := policy.WithPrincipal(req.Context(), principal)
 	ctx = withAuthMethod(ctx, auth.MethodAPIKey)
@@ -459,42 +461,40 @@ func TestRateLimitMethodSelectsReadOrWriteSpec(t *testing.T) {
 	}
 }
 
-// TestClientIPPrefersForwardingHeaders documents the IP-resolution
-// contract independently of the middleware so a future change to header
-// preferences cannot silently break the limiter's bucket selection.
-func TestClientIPPrefersForwardingHeaders(t *testing.T) {
+// TestClientIPUsesRemoteAddrOnly documents the safe default IP-resolution
+// contract independently of the middleware. Forwarded headers are trusted
+// only by NewTrustedProxyClientIPResolver when the remote peer is trusted.
+func TestClientIPUsesRemoteAddrOnly(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
-		setup   func(*http.Request)
-		wantIP  string
-		wantOK  bool
-		comment string
+		name   string
+		setup  func(*http.Request)
+		wantIP string
 	}{
 		{
-			name: "X-Forwarded-For single hop",
+			name: "X-Forwarded-For ignored by safe default",
 			setup: func(r *http.Request) {
 				r.RemoteAddr = "10.0.0.1:1234"
 				r.Header.Set("X-Forwarded-For", "203.0.113.5")
 			},
-			wantIP: "203.0.113.5",
+			wantIP: "10.0.0.1",
 		},
 		{
-			name: "X-Forwarded-For multi-hop trims to first",
+			name: "X-Forwarded-For multi-hop ignored by safe default",
 			setup: func(r *http.Request) {
 				r.RemoteAddr = "10.0.0.1:1234"
 				r.Header.Set("X-Forwarded-For", "203.0.113.5, 198.51.100.1, 10.0.0.1")
 			},
-			wantIP: "203.0.113.5",
+			wantIP: "10.0.0.1",
 		},
 		{
-			name: "X-Real-IP fallback when X-Forwarded-For absent",
+			name: "X-Real-IP ignored by safe default",
 			setup: func(r *http.Request) {
 				r.RemoteAddr = "10.0.0.1:1234"
 				r.Header.Set("X-Real-IP", "203.0.113.99")
 			},
-			wantIP: "203.0.113.99",
+			wantIP: "10.0.0.1",
 		},
 		{
 			name: "RemoteAddr fallback when no proxy headers",

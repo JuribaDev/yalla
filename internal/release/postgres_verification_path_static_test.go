@@ -13,11 +13,14 @@ func TestPostgresVerificationPathArtifactDocumentsScriptMode(t *testing.T) {
 	for _, want := range []string{
 		"--with-postgres",
 		"YALLA_TEST_DATABASE_URL is required for --with-postgres",
+		"YALLA_TEST_REDIS_URL is required for --with-postgres",
 		"YALLA_POSTGRES_TEST_PARALLELISM",
+		"YALLA_POSTGRES_TEST_TIMEOUT",
 		"go test ./...",
-		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" ./...",
-		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -race ./internal/controlplane/...",
-		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...",
+		"go test -timeout \"$postgres_test_timeout\" -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" ./...",
+		"go test -timeout \"$postgres_test_timeout\" -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -race ./internal/controlplane/...",
+		"go test -timeout \"$postgres_test_timeout\" -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...",
+		"go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter -count=1",
 		"go vet ./...",
 	} {
 		if !strings.Contains(verify, want) {
@@ -38,6 +41,7 @@ func TestPostgresVerificationPathArtifactDocumentsRunbook(t *testing.T) {
 				"Database-backed loop",
 				"docker compose up -d postgres",
 				"YALLA_TEST_DATABASE_URL",
+				"YALLA_TEST_REDIS_URL",
 				"./scripts/verify.sh --with-postgres",
 			},
 		},
@@ -47,6 +51,7 @@ func TestPostgresVerificationPathArtifactDocumentsRunbook(t *testing.T) {
 				"Production Verification Path",
 				"docker compose up -d postgres",
 				"YALLA_TEST_DATABASE_URL",
+				"YALLA_TEST_REDIS_URL",
 				"./scripts/verify.sh --with-postgres",
 			},
 		},

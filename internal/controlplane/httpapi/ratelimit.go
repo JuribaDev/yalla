@@ -5,6 +5,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -60,13 +61,24 @@ type RateLimiter interface {
 // inherits the request_id / correlation_id attached by telemetry.Correlate
 // and carries no secret-shaped value.
 func RateLimit(limiter RateLimiter, logger *slog.Logger) func(http.Handler) http.Handler {
+	return RateLimitWithClientIPResolver(limiter, logger, ClientIP)
+}
+
+// RateLimitWithClientIPResolver builds the rate-limit middleware with an
+// explicit client-IP resolver. Production wiring passes a trusted-proxy
+// resolver; the default RateLimit path keeps the safe RemoteAddr-only
+// behavior for tests and embedders that do not configure trusted proxies.
+func RateLimitWithClientIPResolver(limiter RateLimiter, logger *slog.Logger, resolver ClientIPResolver) func(http.Handler) http.Handler {
 	if limiter == nil {
 		return func(next http.Handler) http.Handler { return next }
+	}
+	if resolver == nil {
+		resolver = ClientIP
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			req := ratelimit.Request{
-				IP:    ClientIP(r),
+				IP:    resolver(r),
 				Write: isMutatingMethod(r.Method),
 			}
 			if method, ok := AuthMethodFromContext(r.Context()); ok && method == auth.MethodInternalWorker {
@@ -107,32 +119,74 @@ func RateLimit(limiter RateLimiter, logger *slog.Logger) func(http.Handler) http
 	}
 }
 
-// ClientIP resolves the client IP for a request. Trusted reverse-proxy
-// headers (X-Forwarded-For, X-Real-IP) win when present so the limiter
-// can distinguish callers behind a load balancer; without them the gate
-// falls back to the request's RemoteAddr. An empty result is acceptable
-// — the limiter skips the IP bucket entirely when no identity is
-// available rather than billing every anonymous caller to a shared empty
-// bucket.
-//
-// The header parsing trims the comma-separated list to the first hop so
-// a forged tail value cannot push the real client identity out of the
-// bucket key.
+// ClientIP resolves the connection-level peer IP for a request. It never
+// trusts forwarded headers; production wiring must opt in by passing
+// NewTrustedProxyClientIPResolver through NewHandler route options.
 func ClientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.Index(v, ","); i >= 0 {
-			return strings.TrimSpace(v[:i])
+	remote := remoteAddrIP(r.RemoteAddr)
+	if remote.IsValid() {
+		return remote.String()
+	}
+	return r.RemoteAddr
+}
+
+// ClientIPResolver extracts the rate-limit client IP from a request.
+type ClientIPResolver func(*http.Request) string
+
+// NewTrustedProxyClientIPResolver returns a resolver that trusts forwarded
+// headers only when the immediate peer is inside one of the supplied CIDRs.
+func NewTrustedProxyClientIPResolver(trusted []netip.Prefix) ClientIPResolver {
+	return func(r *http.Request) string {
+		remote := remoteAddrIP(r.RemoteAddr)
+		if remote.IsValid() && remoteInPrefixes(remote, trusted) {
+			if ip := firstForwardedIP(r.Header.Get("X-Forwarded-For")); ip != "" {
+				return ip
+			}
+			if ip := validHeaderIP(r.Header.Get("X-Real-IP")); ip != "" {
+				return ip
+			}
 		}
-		return strings.TrimSpace(v)
-	}
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return strings.TrimSpace(v)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
+		if remote.IsValid() {
+			return remote.String()
+		}
 		return r.RemoteAddr
 	}
-	return host
+}
+
+func remoteAddrIP(remoteAddr string) netip.Addr {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip, err := netip.ParseAddr(strings.TrimSpace(host))
+	if err != nil {
+		return netip.Addr{}
+	}
+	return ip
+}
+
+func remoteInPrefixes(remote netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(remote) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstForwardedIP(raw string) string {
+	if i := strings.Index(raw, ","); i >= 0 {
+		raw = raw[:i]
+	}
+	return validHeaderIP(raw)
+}
+
+func validHeaderIP(raw string) string {
+	ip, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return ip.String()
 }
 
 // isMutatingMethod reports whether an HTTP method is state-changing so

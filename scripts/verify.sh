@@ -13,8 +13,9 @@
 #   scripts/verify.sh --strict       Treats every missing optional tool as a failure
 #   scripts/verify.sh --quiet        Suppresses per-step banners (CI-friendly)
 #   scripts/verify.sh --with-postgres
-#                                    Requires YALLA_TEST_DATABASE_URL and adds
-#                                    database-backed control-plane checks
+#                                    Requires YALLA_TEST_DATABASE_URL and
+#                                    YALLA_TEST_REDIS_URL; adds external
+#                                    service-backed control-plane checks
 #
 # Exit codes:
 #   0   all run checks passed
@@ -55,15 +56,33 @@ step() {
 
 skipped_tools=()
 required_failed=0
+external_database_url=""
+external_redis_url=""
 
 if [[ "$with_postgres" -eq 1 ]]; then
   : "${YALLA_TEST_DATABASE_URL:?YALLA_TEST_DATABASE_URL is required for --with-postgres}"
+  : "${YALLA_TEST_REDIS_URL:?YALLA_TEST_REDIS_URL is required for --with-postgres}"
+  external_database_url="$YALLA_TEST_DATABASE_URL"
+  external_redis_url="$YALLA_TEST_REDIS_URL"
+  unset YALLA_TEST_DATABASE_URL
+  unset YALLA_TEST_REDIS_URL
   postgres_test_parallelism="${YALLA_POSTGRES_TEST_PARALLELISM:-1}"
+  postgres_test_timeout="${YALLA_POSTGRES_TEST_TIMEOUT:-30m}"
   if ! [[ "$postgres_test_parallelism" =~ ^[1-9][0-9]*$ ]]; then
     echo "verify.sh: YALLA_POSTGRES_TEST_PARALLELISM must be a positive integer" >&2
     exit 2
   fi
+  if [[ -z "$postgres_test_timeout" ]]; then
+    echo "verify.sh: YALLA_POSTGRES_TEST_TIMEOUT must be non-empty" >&2
+    exit 2
+  fi
 fi
+
+with_external_services() {
+  YALLA_TEST_DATABASE_URL="$external_database_url" \
+  YALLA_TEST_REDIS_URL="$external_redis_url" \
+  "$@"
+}
 
 # 1. Required: formatting (gofmt -l should be empty)
 step "gofmt -l ."
@@ -263,18 +282,23 @@ fi
 # loop skips these integration members when the env var is unset; this mode
 # turns that skip into an explicit operator contract.
 if [[ "$with_postgres" -eq 1 ]]; then
-  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} ./... (with Postgres)"
-  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" ./...; then
+  step "go test -timeout ${postgres_test_timeout} -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} ./... (with Postgres)"
+  if ! with_external_services go test -timeout "$postgres_test_timeout" -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" ./...; then
     required_failed=1
   fi
 
-  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -race ./internal/controlplane/... (with Postgres)"
-  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -race ./internal/controlplane/...; then
+  step "go test -timeout ${postgres_test_timeout} -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -race ./internal/controlplane/... (with Postgres)"
+  if ! with_external_services go test -timeout "$postgres_test_timeout" -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -race ./internal/controlplane/...; then
     required_failed=1
   fi
 
-  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/... (with Postgres)"
-  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...; then
+  step "go test -timeout ${postgres_test_timeout} -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/... (with Postgres)"
+  if ! with_external_services go test -timeout "$postgres_test_timeout" -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...; then
+    required_failed=1
+  fi
+
+  step "go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter (with Redis)"
+  if ! with_external_services go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter -count=1; then
     required_failed=1
   fi
 

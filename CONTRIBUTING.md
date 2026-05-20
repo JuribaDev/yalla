@@ -64,6 +64,7 @@ and they must all pass on every commit you propose:
 30. `go test -run TestImportDryRun ./...`
 31. `go test -run TestServiceDesiredState ./...`
 32. `go test -run TestDeploymentLifecycleE2E ./...`
+33. `go test ./internal/controlplane/ratelimit/... -run TestRedisLimiter -count=1`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -572,6 +573,22 @@ Both members are deterministic by design: the engine is a pure
 function from `(principal, action, resource)` to a `Decision`
 value, and no test reaches the process environment, the network,
 a live Postgres, a live Dokploy, or any external service.
+
+Step 33 is the distributed rate-limit gate. It runs with an embedded Redis
+fixture by default and proves two limiter instances share one bucket state,
+do not debit later buckets after an upstream denial, preserve the
+internal-worker exemption, and never return bucket identities.
+
+For external-service verification before a release, run:
+
+```bash
+YALLA_TEST_DATABASE_URL=postgres://... \
+YALLA_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
+scripts/verify.sh --strict --with-postgres
+```
+
+That mode turns both Postgres and Redis from optional local dependencies into
+explicit required inputs.
 
 ## Required Checks Before Every Release
 
