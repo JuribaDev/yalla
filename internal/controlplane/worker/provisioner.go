@@ -10,6 +10,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/jobs"
 	"github.com/JuribaDev/yalla/internal/controlplane/migrateimport"
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
@@ -19,134 +20,134 @@ import (
 
 // JobTypeEnsureDokployOrganization is the durable provisioning job that makes
 // the tenant's Dokploy organization mapping exist.
-const JobTypeEnsureDokployOrganization = "ensure_dokploy_organization"
+const JobTypeEnsureDokployOrganization = jobs.TypeEnsureDokployOrganization
 
 // JobTypeEnsureProject is the durable provisioning job that makes the tenant's
 // Dokploy project mapping exist.
-const JobTypeEnsureProject = "ensure_project"
+const JobTypeEnsureProject = jobs.TypeEnsureProject
 
 // JobTypeEnsureEnvironment is the durable provisioning job that makes the
 // tenant's Dokploy environment mapping exist.
-const JobTypeEnsureEnvironment = "ensure_environment"
+const JobTypeEnsureEnvironment = jobs.TypeEnsureEnvironment
 
 // JobTypeEnsureApplicationService is the durable provisioning job that makes
 // the tenant's Dokploy application mapping exist for an application service.
-const JobTypeEnsureApplicationService = "ensure_application_service"
+const JobTypeEnsureApplicationService = jobs.TypeEnsureApplicationService
 
 // JobTypeEnsureComposeService is the durable provisioning job that makes the
 // tenant's Dokploy compose mapping exist for a compose service.
-const JobTypeEnsureComposeService = "ensure_compose_service"
+const JobTypeEnsureComposeService = jobs.TypeEnsureComposeService
 
 // JobTypeEnsureDatabaseService is the durable provisioning job that makes the
 // tenant's Dokploy database mapping exist for a database service.
-const JobTypeEnsureDatabaseService = "ensure_database_service"
+const JobTypeEnsureDatabaseService = jobs.TypeEnsureDatabaseService
 
 // JobTypeDeployService is the durable provisioning job enqueued by the public
 // deployment endpoints. The persisted API contract historically uses
 // service.deploy; JobTypeDeployServiceAlias accepts the PRD's deploy_service
 // spelling for forward compatibility with manually seeded jobs.
-const JobTypeDeployService = "service.deploy"
+const JobTypeDeployService = jobs.TypeDeployService
 
 // JobTypeDeployServiceAlias is accepted by the worker as an alias for
 // JobTypeDeployService.
-const JobTypeDeployServiceAlias = "deploy_service"
+const JobTypeDeployServiceAlias = jobs.TypeDeployServiceAlias
 
 // JobTypeRestartService is the durable provisioning job enqueued by the public
 // service restart endpoint. JobTypeRestartServiceAlias accepts the PRD's
 // restart_service spelling for forward compatibility with manually seeded jobs.
-const JobTypeRestartService = "service.restart"
+const JobTypeRestartService = jobs.TypeRestartService
 
 // JobTypeRestartServiceAlias is accepted by the worker as an alias for
 // JobTypeRestartService.
-const JobTypeRestartServiceAlias = "restart_service"
+const JobTypeRestartServiceAlias = jobs.TypeRestartServiceAlias
 
 // JobTypeRollbackService is the durable provisioning job enqueued by service
 // rollback workflows. JobTypeRollbackServiceAlias accepts the PRD's
 // rollback_service spelling for compatibility with manually seeded jobs.
-const JobTypeRollbackService = "service.rollback"
+const JobTypeRollbackService = jobs.TypeRollbackService
 
 // JobTypeRollbackServiceAlias is accepted by the worker as an alias for
 // JobTypeRollbackService.
-const JobTypeRollbackServiceAlias = "rollback_service"
+const JobTypeRollbackServiceAlias = jobs.TypeRollbackServiceAlias
 
 // JobTypeStopService is the durable provisioning job enqueued by the public
 // service stop endpoint. JobTypeStopServiceAlias accepts the PRD's stop_service
 // spelling for forward compatibility with manually seeded jobs.
-const JobTypeStopService = "service.stop"
+const JobTypeStopService = jobs.TypeStopService
 
 // JobTypeStopServiceAlias is accepted by the worker as an alias for
 // JobTypeStopService.
-const JobTypeStopServiceAlias = "stop_service"
+const JobTypeStopServiceAlias = jobs.TypeStopServiceAlias
 
 // JobTypeStartService is the durable provisioning job enqueued by the public
 // service start endpoint. JobTypeStartServiceAlias accepts the PRD's
 // start_service spelling for forward compatibility with manually seeded jobs.
-const JobTypeStartService = "service.start"
+const JobTypeStartService = jobs.TypeStartService
 
 // JobTypeStartServiceAlias is accepted by the worker as an alias for
 // JobTypeStartService.
-const JobTypeStartServiceAlias = "start_service"
+const JobTypeStartServiceAlias = jobs.TypeStartServiceAlias
 
 // JobTypeDeleteService is the durable provisioning job enqueued by service
 // deletion workflows. JobTypeDeleteServiceAlias accepts the PRD's
 // delete_service spelling for compatibility with manually seeded jobs.
-const JobTypeDeleteService = "service.delete"
+const JobTypeDeleteService = jobs.TypeDeleteService
 
 // JobTypeDeleteServiceAlias is accepted by the worker as an alias for
 // JobTypeDeleteService.
-const JobTypeDeleteServiceAlias = "delete_service"
+const JobTypeDeleteServiceAlias = jobs.TypeDeleteServiceAlias
 
 // JobTypeDeleteEnvironment is the durable provisioning job enqueued by
 // environment deletion workflows. JobTypeDeleteEnvironmentAlias accepts the
 // PRD's delete_environment spelling for compatibility with manually seeded
 // jobs.
-const JobTypeDeleteEnvironment = "environment.delete"
+const JobTypeDeleteEnvironment = jobs.TypeDeleteEnvironment
 
 // JobTypeDeleteEnvironmentAlias is accepted by the worker as an alias for
 // JobTypeDeleteEnvironment.
-const JobTypeDeleteEnvironmentAlias = "delete_environment"
+const JobTypeDeleteEnvironmentAlias = jobs.TypeDeleteEnvironmentAlias
 
 // JobTypeDeleteProject is the durable provisioning job enqueued by project
 // deletion workflows. JobTypeDeleteProjectAlias accepts the PRD's
 // delete_project spelling for compatibility with manually seeded jobs.
-const JobTypeDeleteProject = "project.delete"
+const JobTypeDeleteProject = jobs.TypeDeleteProject
 
 // JobTypeDeleteProjectAlias is accepted by the worker as an alias for
 // JobTypeDeleteProject.
-const JobTypeDeleteProjectAlias = "delete_project"
+const JobTypeDeleteProjectAlias = jobs.TypeDeleteProjectAlias
 
 // JobTypeSyncDomains is the durable provisioning job that reconciles
 // service_domains desired state into Dokploy domain bindings.
-const JobTypeSyncDomains = "sync_domains"
+const JobTypeSyncDomains = jobs.TypeSyncDomains
 
 // JobTypeSyncVariables is the durable provisioning job that reconciles the
 // effective Yalla variable hierarchy into a Dokploy service environment.
-const JobTypeSyncVariables = "sync_variables"
+const JobTypeSyncVariables = jobs.TypeSyncVariables
 
 // JobTypeReconcileService is the durable provisioning job that converges one
 // service-scoped desired state into Dokploy: service mapping, variables, and
 // domains.
-const JobTypeReconcileService = "reconcile_service"
+const JobTypeReconcileService = jobs.TypeReconcileService
 
 // JobTypeRunBackup is the durable provisioning job that triggers one
 // service_backups policy against the mapped Dokploy service.
-const JobTypeRunBackup = "run_backup"
+const JobTypeRunBackup = jobs.TypeRunBackup
 
 // JobTypeRestoreBackup is the durable provisioning job that restores a service
 // from one service_backups policy against the mapped Dokploy service.
-const JobTypeRestoreBackup = "restore_backup"
+const JobTypeRestoreBackup = jobs.TypeRestoreBackup
 
 // JobTypeCreatePreviewEnvironment is the durable provisioning job that makes
 // a preview_environments clone exist as a Dokploy environment.
-const JobTypeCreatePreviewEnvironment = "create_preview_environment"
+const JobTypeCreatePreviewEnvironment = jobs.TypeCreatePreviewEnvironment
 
 // JobTypeDeletePreviewEnvironment is the durable provisioning job that removes
 // a preview_environments clone from Dokploy and cleans up its Yalla wrapper.
-const JobTypeDeletePreviewEnvironment = "delete_preview_environment"
+const JobTypeDeletePreviewEnvironment = jobs.TypeDeletePreviewEnvironment
 
 // JobTypeImportDokployResource is the durable provisioning job that imports an
 // explicitly assigned Dokploy organization snapshot into Yalla source-of-truth.
-const JobTypeImportDokployResource = "import_dokploy_resource"
+const JobTypeImportDokployResource = jobs.TypeImportDokployResource
 
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
