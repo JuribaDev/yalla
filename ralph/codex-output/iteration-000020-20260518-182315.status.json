@@ -1,0 +1,11 @@
+{
+  "iteration": 20,
+  "status": "completed",
+  "exit_code": 0,
+  "ended_at": "2026-05-18T18:37:19+0300",
+  "pending_before": 192,
+  "pending_after": 191,
+  "progress_made": true,
+  "log_file": "/Users/juribadev/projects/poc/yalla/ralph/codex-output/iteration-000020-20260518-182315.log",
+  "final_file": "/Users/juribadev/projects/poc/yalla/ralph/codex-output/iteration-000020-20260518-182315-final.md"
+}
