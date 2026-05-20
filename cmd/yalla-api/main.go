@@ -15,10 +15,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
 	"github.com/JuribaDev/yalla/internal/controlplane/backoffice"
 	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
+	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
@@ -485,14 +487,26 @@ func main() {
 
 	// Readiness gates the load balancer: /readyz reports 503 until every
 	// startup dependency check passes, so traffic is only routed to a process
-	// that can actually serve it. One gate per dependency the API needs —
-	// database connectivity, migration state, and the job queue — plus the
-	// Dokploy dependency when a Dokploy base URL is configured. The database
-	// gate is backed by a real connectivity probe below; the migration and
-	// queue probes land with their own stories.
+	// that can actually serve it. One gate per dependency the API needs:
+	// database connectivity, migration state, the job queue, and the Dokploy
+	// dependency when a Dokploy base URL is configured.
 	readinessGates := []string{"database", "migrations", "queue"}
+	var dokployChecker func(context.Context) error
 	if cfg.DokployBaseURL != "" {
 		readinessGates = append(readinessGates, "dokploy")
+		dokployHealthClient, err := dokploy.New(dokploy.Config{
+			BaseURL: cfg.DokployBaseURL,
+			Token:   cfg.DokployToken,
+			Logger:  logger,
+		})
+		if err != nil {
+			logger.Error("failed to initialize the Dokploy health client", "error", err.Error())
+			os.Exit(1)
+		}
+		dokployChecker = func(ctx context.Context) error {
+			_, err := dokployHealthClient.GetUserServerMetrics(ctx)
+			return err
+		}
 	}
 	readiness := runtime.NewReadiness(readinessGates...)
 
@@ -551,15 +565,11 @@ func main() {
 	// Run startup checks in the background so the server can answer probes
 	// immediately; /readyz only flips to ready once the checks pass.
 	go func() {
-		if err := runStartupChecks(ctx, pool); err != nil {
-			logger.Error("startup dependency checks failed", "error", err.Error())
+		results := runStartupChecks(ctx, pool, meta, dokployChecker)
+		markStartupReadiness(readiness, readinessGates, results)
+		if pending := readiness.PendingGates(); len(pending) > 0 {
+			logger.Error("startup dependency checks failed", "pending_gates", pending)
 			return
-		}
-		// The database gate is now backed by a real connectivity probe. The
-		// remaining gates stay placeholder marks: the migration-state and queue
-		// probes land with the persistence and worker stories.
-		for _, gate := range readinessGates {
-			readiness.MarkReady(gate)
 		}
 		logger.Info("startup dependency checks passed; api is ready to serve traffic")
 	}()
@@ -723,15 +733,46 @@ func seedAdminDisplayName(email string) string {
 }
 
 // runStartupChecks verifies the dependencies the API needs before it can serve
-// customer traffic. It probes database connectivity through the shared pool;
-// migration-state and queue checks land with the persistence and worker
-// stories. A pool ping error is a connection-level failure and does not echo
-// the connection string, so it is safe for the caller to log.
-func runStartupChecks(ctx context.Context, pool *pgxpool.Pool) error {
+// customer traffic. It reports one result per readiness gate: missing map keys
+// mean that gate passed. A pool ping error is a connection-level failure and
+// does not echo the connection string, so it is safe for the caller to log.
+func runStartupChecks(ctx context.Context, pool *pgxpool.Pool, meta *runtime.Meta, dokployChecker func(context.Context) error) map[string]error {
+	results := make(map[string]error)
 	if err := pool.Ping(ctx); err != nil {
-		return err
+		results["database"] = err
 	}
-	return nil
+	migrator, err := migrate.New(pool, slog.Default())
+	if err != nil {
+		results["migrations"] = err
+	} else if st, err := migrator.Status(ctx); err != nil {
+		results["migrations"] = err
+	} else {
+		if meta != nil {
+			meta.SetMigrationVersion(fmt.Sprintf("%04d", st.Current))
+		}
+		if st.Dirty || len(st.Pending) > 0 {
+			results["migrations"] = apierr.MigrationRequired(fmt.Errorf(
+				"migration current=%d pending=%d dirty=%v", st.Current, len(st.Pending), st.Dirty))
+		}
+	}
+	if err := jobs.CheckQueueReady(ctx, pool); err != nil {
+		results["queue"] = err
+	}
+	if dokployChecker != nil {
+		if err := dokployChecker(ctx); err != nil {
+			results["dokploy"] = err
+		}
+	}
+	return results
+}
+
+func markStartupReadiness(readiness *runtime.Readiness, gates []string, results map[string]error) {
+	if readiness == nil {
+		return
+	}
+	for _, gate := range gates {
+		readiness.Set(gate, results[gate] == nil)
+	}
 }
 
 // buildSecretsProvider chooses the at-rest secret-protection provider
