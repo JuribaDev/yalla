@@ -81,6 +81,10 @@ func (e BillingExport) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
+func (e BillingExport) String() string {
+	return e.LogValue().String()
+}
+
 // BillingExportItem snapshots one usage counter into an export so provider
 // retries submit the same billing basis even if counters are replayed later.
 type BillingExportItem struct {
@@ -371,6 +375,18 @@ func (r *BillingExportRepository) insertOrGet(ctx context.Context, tx *Tx, id st
 }
 
 func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, export BillingExport) error {
+	type counterSnapshot struct {
+		counterID         string
+		key               string
+		unit              string
+		source            string
+		entitlementKey    *string
+		overagePolicyMode *string
+		overageDecision   *string
+		includedQuantity  *float64
+		overageQuantity   *float64
+		quantity          float64
+	}
 	rows, err := tx.Query(ctx,
 		`SELECT id, key, unit, quantity, source, entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity
 		   FROM usage_counters
@@ -383,18 +399,26 @@ func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, exp
 	if err != nil {
 		return apierr.StoreUnavailable(err)
 	}
-	defer rows.Close()
+	snapshots := make([]counterSnapshot, 0)
 	for rows.Next() {
-		var counterID, key, unit, source string
-		var entitlementKey, overagePolicyMode, overageDecision *string
-		var includedQuantity, overageQuantity *float64
-		var quantity float64
-		if err := rows.Scan(&counterID, &key, &unit, &quantity, &source, &entitlementKey, &overagePolicyMode, &overageDecision, &includedQuantity, &overageQuantity); err != nil {
+		var snapshot counterSnapshot
+		if err := rows.Scan(&snapshot.counterID, &snapshot.key, &snapshot.unit, &snapshot.quantity, &snapshot.source, &snapshot.entitlementKey, &snapshot.overagePolicyMode, &snapshot.overageDecision, &snapshot.includedQuantity, &snapshot.overageQuantity); err != nil {
+			rows.Close()
 			return apierr.StoreUnavailable(err)
 		}
-		if math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+		if math.IsNaN(snapshot.quantity) || math.IsInf(snapshot.quantity, 0) {
+			rows.Close()
 			return apierr.Internal(errors.New("store: non-finite billing export item quantity"))
 		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return apierr.StoreUnavailable(err)
+	}
+	rows.Close()
+
+	for _, snapshot := range snapshots {
 		itemID, err := newOpaqueStoreID("bexpi")
 		if err != nil {
 			return apierr.Internal(err)
@@ -405,14 +429,11 @@ func (r *BillingExportRepository) snapshotItems(ctx context.Context, tx *Tx, exp
 			     entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			 ON CONFLICT (organization_id, export_id, counter_id) DO NOTHING`,
-			itemID, export.OrganizationID, export.ID, counterID, key, unit, quantity, source,
-			entitlementKey, overagePolicyMode, overageDecision, includedQuantity, overageQuantity,
+			itemID, export.OrganizationID, export.ID, snapshot.counterID, snapshot.key, snapshot.unit, snapshot.quantity, snapshot.source,
+			snapshot.entitlementKey, snapshot.overagePolicyMode, snapshot.overageDecision, snapshot.includedQuantity, snapshot.overageQuantity,
 		); err != nil {
 			return mapWriteError(err, "snapshot billing export item")
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return apierr.StoreUnavailable(err)
 	}
 	return nil
 }

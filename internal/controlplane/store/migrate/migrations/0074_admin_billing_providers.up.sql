@@ -6,7 +6,7 @@ CREATE DOMAIN billing_provider_type AS text
 
 CREATE TABLE admin_billing_providers (
     id                            text                  PRIMARY KEY CHECK (length(id) > 0),
-    provider_key                  citext                NOT NULL CHECK (provider_key ~ '^[a-z0-9][a-z0-9_]{0,127}$'),
+    provider_key                  citext                NOT NULL CHECK (provider_key ~ '^[a-z0-9][a-z0-9_-]{0,127}$'),
     provider_type                 billing_provider_type NOT NULL,
     display_name                  text                  NOT NULL DEFAULT '' CHECK (length(display_name) <= 200),
     secret_reference              text                  NOT NULL DEFAULT '' CHECK (length(secret_reference) <= 512),

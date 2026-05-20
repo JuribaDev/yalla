@@ -55,6 +55,10 @@ func (svc *AdminSubscriptionService) SetSubscription(ctx context.Context, organi
 		return Subscription{}, apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must not be blank"})
 	}
 	in.OrganizationID = orgID
+	validated, err := buildSubscriptionToCreate(in)
+	if err != nil {
+		return Subscription{}, err
+	}
 
 	var out Subscription
 	err = svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
@@ -68,7 +72,7 @@ func (svc *AdminSubscriptionService) SetSubscription(ctx context.Context, organi
 			return err
 		}
 
-		current, err := svc.subs.CurrentForOrganization(ctx, tx, orgID, time.Now().UTC())
+		current, err := svc.subs.CurrentForOrganization(ctx, tx, orgID, subscriptionLookupTime(validated))
 		var sub Subscription
 		operation := "update"
 		if err == nil {
@@ -87,6 +91,13 @@ func (svc *AdminSubscriptionService) SetSubscription(ctx context.Context, organi
 		return nil
 	})
 	return out, err
+}
+
+func subscriptionLookupTime(sub Subscription) time.Time {
+	if sub.CurrentPeriodStart.IsZero() || !sub.CurrentPeriodEnd.After(sub.CurrentPeriodStart) {
+		return time.Now().UTC()
+	}
+	return sub.CurrentPeriodStart.Add(sub.CurrentPeriodEnd.Sub(sub.CurrentPeriodStart) / 2).UTC()
 }
 
 // UpsertSubscriptionEntitlement creates or replaces one effective-windowed
@@ -151,7 +162,7 @@ func adminSubscriptionAuditEvent(auditCtx AdminPlanAuditContext, sub Subscriptio
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         "admin.subscription.set",
 		ResourceKind:   adminSubscriptionResourceKind,
 		ResourceID:     sub.ID,
@@ -183,7 +194,7 @@ func adminSubscriptionEntitlementAuditEvent(auditCtx AdminPlanAuditContext, ent 
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         "admin.subscription.entitlement.upsert",
 		ResourceKind:   adminSubscriptionEntitlementResourceKind,
 		ResourceID:     ent.ID,

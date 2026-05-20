@@ -422,9 +422,19 @@ func (r *QuotaRepository) ListOrganizationUsage(ctx context.Context, q Querier, 
 		     ORDER BY resource, (scope_kind = 'organization') DESC
 		 ),
 		 usage AS (
-		    SELECT resource, used_value
-		      FROM quota_usage
-		     WHERE organization_id = $1
+		    SELECT resource, SUM(used_value)::bigint AS used_value
+		      FROM (
+		            SELECT resource, used_value
+		              FROM quota_usage
+		             WHERE organization_id = $1
+		            UNION ALL
+		            SELECT key AS resource, COALESCE(round(quantity), 0)::bigint AS used_value
+		              FROM usage_counters
+		             WHERE organization_id = $1
+		               AND period_start <= now()
+		               AND period_end > now()
+		           ) usage_sources
+		     GROUP BY resource
 		 )
 		 SELECT COALESCE(p.resource, u.resource) AS resource,
 		        COALESCE(u.used_value, 0)        AS used_value,
@@ -452,8 +462,12 @@ func (r *QuotaRepository) ListOrganizationUsage(ctx context.Context, q Querier, 
 		if scanErr := rows.Scan(&resource, &used, &limit, &mode, &scopeKind); scanErr != nil {
 			return nil, apierr.StoreUnavailable(scanErr)
 		}
+		quotaResource := QuotaResource(resource)
+		if !quotaResource.Valid() {
+			continue
+		}
 		row := OrganizationResourceUsage{
-			Resource:   QuotaResource(resource),
+			Resource:   quotaResource,
 			UsedValue:  used,
 			LimitValue: limit,
 		}

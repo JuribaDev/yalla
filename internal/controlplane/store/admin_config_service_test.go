@@ -159,8 +159,8 @@ func TestAdminConfigServiceRequiresAuditReasonAndPreservesImmutability(t *testin
 		ActorID:    "usr_admin",
 		ActorKind:  "usr",
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("missing reason code = %s, want %s (err=%v)", ye.Code, yerr.CodeInvalidInput, err)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("missing reason code = %s, want %s (err=%v)", ye.Code, yerr.CodeValidation, err)
 	}
 
 	if _, err := svc.CreateSet(ctx, store.CreateAdminConfigSetInput{Slug: "features-audit", Domain: store.AdminConfigDomainFeatures, Name: "Features Audit"}, adminConfigAuditCtx(org.ID)); err != nil {

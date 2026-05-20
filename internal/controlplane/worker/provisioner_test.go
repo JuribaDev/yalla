@@ -2515,7 +2515,7 @@ func TestCreatePreviewEnvironmentRetryableFailurePersistsRedactedErrorSummary(t 
 		Owner:         "worker-preview-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -2885,7 +2885,7 @@ func TestDeletePreviewEnvironmentRetryableFailurePersistsRedactedErrorSummary(t 
 		Owner:         "worker-delete-preview-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -3202,7 +3202,7 @@ func TestProvisionerEnsuresComposeServiceAndPersistsMapping(t *testing.T) {
 	if refs[0].YallaKind != store.YallaKindService ||
 		refs[0].YallaID != svc.ID ||
 		refs[0].DokployResource != store.DokployResourceCompose ||
-		refs[0].DokployID != "cmp_1" {
+		refs[0].DokployID != "compose_1" {
 		t.Fatalf("unexpected dokploy ref: %+v", refs[0])
 	}
 
@@ -3222,8 +3222,8 @@ func TestProvisionerEnsuresComposeServiceAndPersistsMapping(t *testing.T) {
 		t.Fatalf("after replay dokploy refs count = %d, want 1", len(refs))
 	}
 	reqs = fake.Requests()
-	if len(reqs) != 5 || reqs[4].Method != http.MethodGet || reqs[4].Path != "/api/compose/cmp_1" {
-		t.Fatalf("after replay fake requests = %+v, want fifth GET /api/compose/cmp_1", reqs)
+	if len(reqs) != 5 || reqs[4].Method != http.MethodGet || reqs[4].Path != "/api/compose/compose_1" {
+		t.Fatalf("after replay fake requests = %+v, want fifth GET /api/compose/compose_1", reqs)
 	}
 }
 
@@ -4030,7 +4030,7 @@ func TestReconcileServiceRetryableFailurePersistsRedactedErrorSummary(t *testing
 		Owner:         "worker-reconcile-service-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5361,7 +5361,7 @@ func TestDeleteServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 		Owner:         "worker-delete-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5441,7 +5441,7 @@ func TestDeleteEnvironmentRetryableFailurePersistsRedactedErrorSummary(t *testin
 		Owner:         "worker-delete-environment-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5520,7 +5520,7 @@ func TestDeleteProjectRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 		Owner:         "worker-delete-project-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5601,7 +5601,7 @@ func TestRestartServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T
 		Owner:         "worker-restart-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5653,6 +5653,7 @@ func TestRestoreBackupRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
 	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
 	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	backup = markWorkerServiceBackupSucceeded(ctx, t, dataStore, svc, backup.ID)
 
 	fake := dokployfake.New()
 	defer fake.Close()
@@ -5685,7 +5686,7 @@ func TestRestoreBackupRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 		Owner:         "worker-restore-backup-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -5994,7 +5995,7 @@ func TestRollbackServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.
 		Owner:         "worker-rollback-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -6300,7 +6301,7 @@ func TestStopServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
 		Owner:         "worker-stop-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -6609,7 +6610,7 @@ func TestStartServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T) 
 		Owner:         "worker-start-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -6778,7 +6779,7 @@ func TestEnsureProjectRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 		Owner:         "worker-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -6909,7 +6910,7 @@ func TestEnsureEnvironmentRetryableFailurePersistsRedactedErrorSummary(t *testin
 		Owner:         "worker-env-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -7134,7 +7135,7 @@ func TestEnsureApplicationServiceRetryableFailurePersistsRedactedErrorSummary(t 
 		Owner:         "worker-app-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -7222,7 +7223,7 @@ func TestSyncDomainsRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
 		Owner:         "worker-domains-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -7309,7 +7310,7 @@ func TestEnsureComposeServiceRetryableFailurePersistsRedactedErrorSummary(t *tes
 		Owner:         "worker-compose-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -7396,7 +7397,7 @@ func TestEnsureDatabaseServiceRetryableFailurePersistsRedactedErrorSummary(t *te
 		Owner:         "worker-database-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
-		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+		Now:           func() time.Time { return time.Now().UTC().Add(time.Hour) },
 	})
 	if err != nil {
 		t.Fatalf("NewStoreClaimer: %v", err)
@@ -8381,8 +8382,9 @@ func (canceledClient) RemoveEnvironment(context.Context, dokploy.RemoveEnvironme
 func newWorkerDokployClient(t *testing.T, fake *dokployfake.Server) *dokploy.Client {
 	t.Helper()
 	client, err := dokploy.New(dokploy.Config{
-		BaseURL: fake.URL(),
-		Token:   fake.Token(),
+		BaseURL:    fake.URL(),
+		Token:      fake.Token(),
+		MaxRetries: -1,
 	})
 	if err != nil {
 		t.Fatalf("dokploy.New: %v", err)

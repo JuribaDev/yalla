@@ -21,7 +21,7 @@ func TestAdminOveragePolicyServicePrecedenceEffectiveTimeAndAudit(t *testing.T) 
 	svc := newAdminOveragePolicyServiceForTest(t, s)
 	plans := store.NewPricingPlanRepository()
 	plan := seededPlan(ctx, t, s, plans, "business")
-	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 	auditCtx := store.AdminOveragePolicyAuditContext{
 		ActorOrgID:    actorOrg.ID,
 		ActorID:       "usr_admin_overage_policy",
@@ -89,7 +89,7 @@ func TestAdminOveragePolicyServicePrecedenceEffectiveTimeAndAudit(t *testing.T) 
 		Scope:          store.OveragePolicyScopeGlobal,
 		EntitlementKey: "http_bandwidth_total",
 		Mode:           store.OveragePolicyModeBlock,
-		EffectiveAt:    now.Add(-24 * time.Hour),
+		EffectiveAt:    time.Now().UTC().Add(-time.Hour),
 	}, auditCtx); err == nil {
 		t.Fatal("retroactive restrictive block policy error = nil, want validation")
 	}

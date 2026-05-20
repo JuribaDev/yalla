@@ -127,7 +127,7 @@ func TestBillingProviderRepositoryValidationAndStripePlaceholder(t *testing.T) {
 	repo := store.NewBillingProviderConfigRepository()
 
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		_, err := repo.Upsert(ctx, tx, "bad-key", store.UpsertBillingProviderInput{
+		_, err := repo.Upsert(ctx, tx, "bad key!", store.UpsertBillingProviderInput{
 			ProviderType: store.BillingProviderTypeStripe,
 			Enabled:      true,
 		}, store.BillingProviderCredential{})

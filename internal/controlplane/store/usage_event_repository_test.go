@@ -79,6 +79,9 @@ func TestUsageEventRepositoryAppendIdempotentRedactedAndPeriodAssigned(t *testin
 		IdempotencyKey: "traefik:svc-window-1",
 		OccurredAt:     time.Date(2026, 5, 19, 12, 34, 0, 0, time.UTC),
 		Metadata: map[string]string{
+			"database_url":     "postgres://secret:secret@db.internal:5432/app",
+			"metric_key":       "active_services",
+			"tls_key":          "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----",
 			"upstream_request": "Authorization: Bearer yk_live_secret_token",
 			"api_key":          "yk_live_secret_token",
 			"route":            "/healthz?token=yk_live_secret_token",
@@ -108,6 +111,15 @@ func TestUsageEventRepositoryAppendIdempotentRedactedAndPeriodAssigned(t *testin
 	}
 	if first.Metadata["api_key"] != output.Sentinel {
 		t.Fatalf("api_key metadata = %q, want sentinel for secret-shaped key", first.Metadata["api_key"])
+	}
+	if first.Metadata["database_url"] != output.Sentinel {
+		t.Fatalf("database_url metadata = %q, want sentinel for secret-shaped key", first.Metadata["database_url"])
+	}
+	if first.Metadata["tls_key"] != output.Sentinel {
+		t.Fatalf("tls_key metadata = %q, want sentinel for secret-shaped key", first.Metadata["tls_key"])
+	}
+	if first.Metadata["metric_key"] != "active_services" {
+		t.Fatalf("metric_key metadata = %q, want non-secret metric key preserved", first.Metadata["metric_key"])
 	}
 	if strings.Contains(first.Metadata["route"], "yk_live_secret_token") {
 		t.Fatalf("route metadata leaked token: %q", first.Metadata["route"])

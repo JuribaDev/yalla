@@ -300,9 +300,12 @@ func TestStoreClaimerDeadLettersAfterBudget(t *testing.T) {
 	org := seedQueueOrg(t, db, f, "Acme")
 	in := queueJobFixture(org.ID, "idem-deadletter")
 	in.MaxAttempts = 1
-	in.ProjectID = "proj_deadletter_safe"
-	in.EnvironmentID = "env_deadletter_safe"
-	in.ServiceID = "svc_deadletter_safe"
+	project := insertWorkerProject(ctx, t, s, store.Organization{ID: org.ID}, "deadletter")
+	env := insertWorkerEnvironment(ctx, t, s, project, "deadletter")
+	service := insertWorkerService(ctx, t, s, env, "deadletter", store.ServiceKindApplication)
+	in.ProjectID = project.ID
+	in.EnvironmentID = env.ID
+	in.ServiceID = service.ID
 	stored := enqueueJob(ctx, t, s, repo, in)
 
 	metrics := telemetry.NewDeadLetterAlertMetrics()
@@ -427,8 +430,10 @@ func TestStoreClaimerStaleLeaseOutcomeReturnsJobNotClaimed(t *testing.T) {
 	ctx := context.Background()
 
 	org := seedQueueOrg(t, db, f, "Acme")
-	stored := enqueueJob(ctx, t, s, repo, queueJobFixture(org.ID, "idem-stale-lease"))
 	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+	in := queueJobFixture(org.ID, "idem-stale-lease")
+	in.NextRunAt = now
+	stored := enqueueJob(ctx, t, s, repo, in)
 
 	first, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
 		Store: s, Owner: "worker-stale-a",

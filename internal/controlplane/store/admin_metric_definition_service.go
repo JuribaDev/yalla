@@ -154,7 +154,7 @@ func adminMetricDefinitionAuditEvent(auditCtx AdminMetricDefinitionAuditContext,
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminMetricDefinitionResourceKind,
 		ResourceID:     def.ID,

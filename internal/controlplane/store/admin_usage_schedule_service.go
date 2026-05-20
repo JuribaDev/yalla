@@ -155,7 +155,7 @@ func adminUsageAggregationScheduleAuditEvent(auditCtx AdminUsageAggregationSched
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminUsageAggregationScheduleResourceKind,
 		ResourceID:     schedule.ID,

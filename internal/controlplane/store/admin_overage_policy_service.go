@@ -136,7 +136,7 @@ func adminOveragePolicyAuditEvent(auditCtx AdminOveragePolicyAuditContext, polic
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         "admin.overage_policy.upsert",
 		ResourceKind:   adminOveragePolicyResourceKind,
 		ResourceID:     policy.ID,

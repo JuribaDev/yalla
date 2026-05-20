@@ -803,7 +803,7 @@ func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentVa
 	var violations []apierr.FieldViolation
 
 	orgID := strings.TrimSpace(in.OrganizationID)
-	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+	if !hasKindPrefix(orgID, domain.KindOrganization) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "organization_id",
 			Reason: "must be a valid organization id",
@@ -811,7 +811,7 @@ func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentVa
 	}
 
 	sourceID := strings.TrimSpace(in.SourceEnvironmentID)
-	if id, err := domain.ParseID(sourceID); err != nil || id.Kind() != domain.KindEnvironment {
+	if !hasKindPrefix(sourceID, domain.KindEnvironment) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "source_environment_id",
 			Reason: "must be a valid environment id",
@@ -819,7 +819,7 @@ func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentVa
 	}
 
 	newID := strings.TrimSpace(in.NewEnvironmentID)
-	if id, err := domain.ParseID(newID); err != nil || id.Kind() != domain.KindEnvironment {
+	if !hasKindPrefix(newID, domain.KindEnvironment) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "environment_id",
 			Reason: "must be a valid environment id",
@@ -936,7 +936,7 @@ func validateCreateEnvironmentInput(in CreateEnvironmentInput) (Environment, err
 	var violations []apierr.FieldViolation
 
 	orgID := strings.TrimSpace(in.OrganizationID)
-	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+	if !hasKindPrefix(orgID, domain.KindOrganization) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "organization_id",
 			Reason: "must be a valid organization id",
@@ -944,7 +944,7 @@ func validateCreateEnvironmentInput(in CreateEnvironmentInput) (Environment, err
 	}
 
 	projectID := strings.TrimSpace(in.ProjectID)
-	if id, err := domain.ParseID(projectID); err != nil || id.Kind() != domain.KindProject {
+	if !hasKindPrefix(projectID, domain.KindProject) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "project_id",
 			Reason: "must be a valid project id",
@@ -952,7 +952,7 @@ func validateCreateEnvironmentInput(in CreateEnvironmentInput) (Environment, err
 	}
 
 	environmentID := strings.TrimSpace(in.EnvironmentID)
-	if id, err := domain.ParseID(environmentID); err != nil || id.Kind() != domain.KindEnvironment {
+	if !hasKindPrefix(environmentID, domain.KindEnvironment) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "environment_id",
 			Reason: "must be a valid environment id",

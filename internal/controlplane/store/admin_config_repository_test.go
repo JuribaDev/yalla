@@ -1,8 +1,9 @@
 package store_test
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestAdminConfigRepositoryDraftPublishArchiveRollbackAndActiveRuntime(t *tes
 	}); err != nil {
 		t.Fatalf("CreateDraft: %v", err)
 	}
-	if draft.Version != 1 || draft.Status != store.AdminConfigStatusDraft || !bytes.Equal(draft.Payload, draftPayload) {
+	if draft.Version != 1 || draft.Status != store.AdminConfigStatusDraft || !jsonEqual(draft.Payload, draftPayload) {
 		t.Fatalf("draft = %+v, want version 1 draft with payload", draft)
 	}
 
@@ -150,7 +151,7 @@ func TestAdminConfigRepositoryDraftPublishArchiveRollbackAndActiveRuntime(t *tes
 	if rollback.Version != 3 || rollback.Status != store.AdminConfigStatusPublished || rollback.RollbackOfVersionID == nil || *rollback.RollbackOfVersionID != futurePublished.ID {
 		t.Fatalf("rollback = %+v, want published version 3 pointing at rolled-back version", rollback)
 	}
-	if !bytes.Equal(rollback.Payload, published.Payload) {
+	if !jsonEqual(rollback.Payload, published.Payload) {
 		t.Fatalf("rollback payload = %s, want %s", rollback.Payload, published.Payload)
 	}
 
@@ -227,8 +228,8 @@ func TestAdminConfigRepositoryValidationAndNotFound(t *testing.T) {
 		})
 		return err
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("invalid CreateSet err code = %s, want %s (err=%v)", ye.Code, yerr.CodeInvalidInput, err)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("invalid CreateSet err code = %s, want %s (err=%v)", ye.Code, yerr.CodeValidation, err)
 	}
 
 	err = s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
@@ -252,6 +253,17 @@ func TestAdminConfigRepositoryValidationAndNotFound(t *testing.T) {
 	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
 		t.Fatalf("missing Publish err code = %s, want %s (err=%v)", ye.Code, yerr.CodeNotFound, err)
 	}
+}
+
+func jsonEqual(a, b []byte) bool {
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
 }
 
 func readAdminConfigRevision(t *testing.T, ctx context.Context, s *store.Store, repo *store.AdminConfigRepository, setID string) int64 {

@@ -86,6 +86,35 @@ func TestRedactor_QueryStringTokens(t *testing.T) {
 	}
 }
 
+func TestRedactor_KeyValueSecrets(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	cases := map[string]string{
+		"reason secret=manual-secret-token":       "reason secret=" + Sentinel,
+		"retry token=live-token-value; safe=keep": "retry token=" + Sentinel + "; safe=keep",
+		"dsn=postgres://user:pass@db/service":     "dsn=" + Sentinel,
+		"metric_key=requests_total":               "metric_key=requests_total",
+	}
+	for input, want := range cases {
+		if got := r.Redact(input); got != want {
+			t.Fatalf("Redact(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestRedactor_BareCredentialLiterals(t *testing.T) {
+	t.Parallel()
+	r := NewRedactor()
+	input := "provider note sk_live_invoice_reopen_secret and token yallaabcdefghijklmnopqrstuv"
+	got := r.Redact(input)
+	if strings.Contains(got, "sk_live_invoice") || strings.Contains(got, "yallaabcdefghijkl") {
+		t.Fatalf("bare credential leaked: %q", got)
+	}
+	if strings.Count(got, Sentinel) != 2 {
+		t.Fatalf("redacted sentinel count = %d, want 2 in %q", strings.Count(got, Sentinel), got)
+	}
+}
+
 func TestRedactor_PreservesNonSecretQueryParams(t *testing.T) {
 	t.Parallel()
 	r := NewRedactor()

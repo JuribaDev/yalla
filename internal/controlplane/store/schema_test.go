@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
@@ -44,6 +45,9 @@ func seedProject(t *testing.T, db *testutil.DB, f *testutil.Factory, org testuti
 func seedEnvironment(t *testing.T, db *testutil.DB, f *testutil.Factory, proj testutil.Project, label string) testutil.Environment {
 	t.Helper()
 	env := f.Environment(proj, label)
+	if slug := strings.TrimSpace(strings.ToLower(label)); slug != "" {
+		env.Slug = slug
+	}
 	if _, err := db.Exec(context.Background(),
 		`INSERT INTO environments (id, organization_id, project_id, slug, display_name)
 		 VALUES ($1, $2, $3, $4, $5)`,

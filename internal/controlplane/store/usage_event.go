@@ -330,11 +330,33 @@ func redactUsageEventMetadata(in map[string]string) map[string]string {
 }
 
 func usageMetadataKeyIsSecret(key string) bool {
-	key = strings.ToLower(key)
-	for _, marker := range []string{"token", "secret", "password", "credential", "cookie", "api_key", "apikey", "authorization"} {
-		if strings.Contains(key, marker) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	normalized := strings.NewReplacer("-", "_", ".", "_").Replace(key)
+	for _, marker := range []string{
+		"token",
+		"secret",
+		"password",
+		"credential",
+		"cookie",
+		"api_key",
+		"apikey",
+		"authorization",
+		"private_key",
+		"tls_key",
+		"database_url",
+		"connection_string",
+		"connection_uri",
+		"postgres_url",
+		"postgresql_url",
+		"mysql_url",
+		"redis_url",
+	} {
+		if strings.Contains(key, marker) || strings.Contains(normalized, marker) {
 			return true
 		}
+	}
+	if normalized == "dsn" || strings.HasSuffix(normalized, "_dsn") {
+		return true
 	}
 	return false
 }

@@ -224,7 +224,7 @@ func adminBillingProviderAuditEvent(auditCtx AdminBillingProviderAuditContext, p
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminBillingProviderResourceKind,
 		ResourceID:     provider.ID,

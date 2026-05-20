@@ -9,6 +9,15 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 )
 
+func limitByResource(limits []store.EffectiveQuotaLimit, resource store.QuotaResource) (store.EffectiveQuotaLimit, bool) {
+	for _, limit := range limits {
+		if limit.Resource == resource {
+			return limit, true
+		}
+	}
+	return store.EffectiveQuotaLimit{}, false
+}
+
 // Integration tests for LimitsReader and QuotaRepository.ListEffectiveLimits —
 // the persistence half of GET /v1/organizations/{org_id}/limits (BE-0094).
 // They run against an isolated, freshly migrated Postgres database and skip
@@ -235,10 +244,10 @@ func TestLimitsReaderUsesCurrentSubscriptionEntitlementsWithUsageAndResetPeriod(
 	if err != nil {
 		t.Fatalf("ListEffectiveLimits: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1; got = %+v", len(got), got)
+	limit, ok := limitByResource(got, store.QuotaResourceProjects)
+	if !ok {
+		t.Fatalf("limits missing projects entry; got = %+v", got)
 	}
-	limit := got[0]
 	if limit.Resource != store.QuotaResourceProjects || limit.LimitValue != 10 || limit.UsedValue != 8 || limit.Scope != store.QuotaScopeSubscriptionOverride {
 		t.Fatalf("entitlement-backed limit = %+v, want projects 8/10 subscription_override", limit)
 	}

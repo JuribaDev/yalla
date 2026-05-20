@@ -27,22 +27,20 @@ func (p *Provisioner) runImportDokployResource(ctx context.Context, job store.Pr
 	if err != nil {
 		return err
 	}
-	orgID, parseErr := domain.ParseID(org.ID)
-	if parseErr != nil || orgID.Kind() != domain.KindOrganization {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "organization_id",
-			Reason: "must be a valid organization id",
-		}))
+	orgID, err := parseMapperID(org.ID, domain.KindOrganization, "organization_id")
+	if err != nil {
+		return err
 	}
 
 	repo := &importRepository{
-		store:          p.store,
-		organizations:  p.organizations,
-		projects:       p.projects,
-		environments:   p.environments,
-		services:       p.services,
-		refs:           p.refs,
-		organizationID: org.ID,
+		store:                    p.store,
+		organizations:            p.organizations,
+		projects:                 p.projects,
+		environments:             p.environments,
+		services:                 p.services,
+		refs:                     p.refs,
+		organizationID:           org.ID,
+		assignmentOrganizationID: orgID,
 	}
 	importer, err := migrateimport.New(migrateimport.Config{
 		Scanner:    p.importScanner,
@@ -108,40 +106,39 @@ func (p *Provisioner) loadImportOrganizationTarget(ctx context.Context, job stor
 			Reason: "must match persisted organization",
 		}))
 	}
-	if job.DesiredVersion != 0 && org.Version != job.DesiredVersion {
+	if org.Version != job.DesiredVersion {
 		return store.Organization{}, Terminal(apierr.Conflict("desired state is stale"))
 	}
 	return org, nil
 }
 
 type importRepository struct {
-	store          *store.Store
-	organizations  *store.OrganizationRepository
-	projects       *store.ProjectRepository
-	environments   *store.EnvironmentRepository
-	services       *store.ServiceRepository
-	refs           *store.DokployRefRepository
-	organizationID string
+	store                    *store.Store
+	organizations            *store.OrganizationRepository
+	projects                 *store.ProjectRepository
+	environments             *store.EnvironmentRepository
+	services                 *store.ServiceRepository
+	refs                     *store.DokployRefRepository
+	organizationID           string
+	assignmentOrganizationID domain.ID
 }
 
 func (r *importRepository) FindOrganization(ctx context.Context, id domain.ID) (migrateimport.ExistingOrganization, error) {
-	if string(id) != r.organizationID {
+	if !r.sameOrganizationID(id) {
 		return migrateimport.ExistingOrganization{}, apierr.NotFound("organization", string(id))
 	}
-	var org store.Organization
 	err := r.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
-		var getErr error
-		org, getErr = r.organizations.Get(ctx, q, string(id))
+		_, getErr := r.organizations.Get(ctx, q, r.organizationID)
 		return getErr
 	})
 	if err != nil {
 		return migrateimport.ExistingOrganization{}, err
 	}
-	return migrateimport.ExistingOrganization{ID: domain.ID(org.ID)}, nil
+	return migrateimport.ExistingOrganization{ID: id}, nil
 }
 
 func (r *importRepository) FindProjectByDokployID(ctx context.Context, organizationID domain.ID, dokployID string) (migrateimport.ExistingProject, error) {
-	if string(organizationID) != r.organizationID {
+	if !r.sameOrganizationID(organizationID) {
 		return migrateimport.ExistingProject{}, apierr.NotFound("project", dokployID)
 	}
 	var ref store.DokployRef
@@ -162,7 +159,7 @@ func (r *importRepository) FindProjectByDokployID(ctx context.Context, organizat
 }
 
 func (r *importRepository) FindProjectBySlug(ctx context.Context, organizationID domain.ID, slug string) (migrateimport.ExistingProject, error) {
-	if string(organizationID) != r.organizationID {
+	if !r.sameOrganizationID(organizationID) {
 		return migrateimport.ExistingProject{}, apierr.NotFound("project", slug)
 	}
 	var projects []store.Project
@@ -186,7 +183,7 @@ func (r *importRepository) FindProjectBySlug(ctx context.Context, organizationID
 }
 
 func (r *importRepository) CreateProject(ctx context.Context, in migrateimport.CreateProjectInput) (domain.ID, error) {
-	if string(in.OrganizationID) != r.organizationID {
+	if !r.sameOrganizationID(in.OrganizationID) {
 		return "", apierr.NotFound("organization", string(in.OrganizationID))
 	}
 	id, err := domain.NewID(domain.KindProject)
@@ -216,6 +213,10 @@ func (r *importRepository) CreateProject(ctx context.Context, in migrateimport.C
 		return "", err
 	}
 	return id, nil
+}
+
+func (r *importRepository) sameOrganizationID(id domain.ID) bool {
+	return string(id) == r.organizationID || string(id) == string(r.assignmentOrganizationID)
 }
 
 func (r *importRepository) FindEnvironmentByDokployID(ctx context.Context, projectID domain.ID, dokployID string) (migrateimport.ExistingEnvironment, error) {

@@ -313,7 +313,7 @@ func adminAttributionRuleAuditEvent(auditCtx AdminAttributionRuleAuditContext, r
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminAttributionRuleResourceKind,
 		ResourceID:     rule.ID,

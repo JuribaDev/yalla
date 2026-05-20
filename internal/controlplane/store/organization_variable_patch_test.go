@@ -92,7 +92,7 @@ func TestOrganizationVariableServicePatchUpdatesValueAndIsSecret(t *testing.T) {
 	if len(events) < 2 {
 		t.Fatalf("audit events = %d, want at least two (seed Replace + PATCH)", len(events))
 	}
-	ev := events[len(events)-1]
+	ev := events[0]
 	if ev.Action != "env.write" {
 		t.Errorf("audit action = %q, want env.write", ev.Action)
 	}
@@ -155,7 +155,7 @@ func TestOrganizationVariableServicePatchValueOnlyPreservesIsSecret(t *testing.T
 		t.Errorf("updated.is_secret = false, want true (an omitted field must be preserved)")
 	}
 	events := listAuditEvents(t, s, org.ID)
-	ev := events[len(events)-1]
+	ev := events[0]
 	if got := ev.Metadata["updated_fields"]; got != "value" {
 		t.Errorf("audit metadata.updated_fields = %q, want \"value\"", got)
 	}
@@ -200,7 +200,7 @@ func TestOrganizationVariableServicePatchIsSecretOnlyPreservesValue(t *testing.T
 		t.Errorf("updated.is_secret = %v, want true", updated.IsSecret)
 	}
 	events := listAuditEvents(t, s, org.ID)
-	ev := events[len(events)-1]
+	ev := events[0]
 	if got := ev.Metadata["updated_fields"]; got != "is_secret" {
 		t.Errorf("audit metadata.updated_fields = %q, want \"is_secret\"", got)
 	}

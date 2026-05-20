@@ -268,7 +268,7 @@ func (r *InvoiceSnapshotRepository) ReopenForCorrection(ctx context.Context, tx 
 	_, err = NewAuditRepository().Append(ctx, tx, AuditEvent{
 		OrganizationID: input.OrganizationID,
 		ActorID:        input.ActorID,
-		ActorKind:      input.ActorKind,
+		ActorKind:      auditEventActorKind(input.ActorKind),
 		Action:         "billing.invoice_snapshot.reopen",
 		ResourceKind:   "invoice_snapshot",
 		ResourceID:     updated.ID,
@@ -451,6 +451,20 @@ func (r *InvoiceSnapshotRepository) lockLatest(ctx context.Context, q Querier, o
 }
 
 func (r *InvoiceSnapshotRepository) snapshotItems(ctx context.Context, tx *Tx, snapshot InvoiceSnapshot) error {
+	type counterSnapshot struct {
+		counterID          string
+		key                string
+		unit               string
+		source             string
+		counterQuantity    float64
+		adjustmentQuantity float64
+		aggregationVersion int
+		entitlementKey     *string
+		overagePolicyMode  *string
+		overageDecision    *string
+		includedQuantity   *float64
+		overageQuantity    *float64
+	}
 	rows, err := tx.Query(ctx,
 		`SELECT c.id, c.key, c.unit, c.source, c.quantity,
 		        COALESCE(SUM(a.delta_quantity), 0)::double precision AS adjustment_quantity,
@@ -472,24 +486,31 @@ func (r *InvoiceSnapshotRepository) snapshotItems(ctx context.Context, tx *Tx, s
 	if err != nil {
 		return apierr.StoreUnavailable(err)
 	}
-	defer rows.Close()
+	snapshots := make([]counterSnapshot, 0)
 	for rows.Next() {
-		var counterID, key, unit, source string
-		var counterQuantity, adjustmentQuantity float64
-		var aggregationVersion int
-		var entitlementKey, overagePolicyMode, overageDecision *string
-		var includedQuantity, overageQuantity *float64
-		if err := rows.Scan(&counterID, &key, &unit, &source, &counterQuantity, &adjustmentQuantity, &aggregationVersion, &entitlementKey, &overagePolicyMode, &overageDecision, &includedQuantity, &overageQuantity); err != nil {
+		var snapshot counterSnapshot
+		if err := rows.Scan(&snapshot.counterID, &snapshot.key, &snapshot.unit, &snapshot.source, &snapshot.counterQuantity, &snapshot.adjustmentQuantity, &snapshot.aggregationVersion, &snapshot.entitlementKey, &snapshot.overagePolicyMode, &snapshot.overageDecision, &snapshot.includedQuantity, &snapshot.overageQuantity); err != nil {
+			rows.Close()
 			return apierr.StoreUnavailable(err)
 		}
-		if nonFinite(counterQuantity) || nonFinite(adjustmentQuantity) {
+		if nonFinite(snapshot.counterQuantity) || nonFinite(snapshot.adjustmentQuantity) {
+			rows.Close()
 			return apierr.Internal(errors.New("store: non-finite invoice snapshot quantity"))
 		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return apierr.StoreUnavailable(err)
+	}
+	rows.Close()
+
+	for _, snapshotItem := range snapshots {
 		itemID, err := newOpaqueStoreID("invi")
 		if err != nil {
 			return apierr.Internal(err)
 		}
-		finalQuantity := counterQuantity + adjustmentQuantity
+		finalQuantity := snapshotItem.counterQuantity + snapshotItem.adjustmentQuantity
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO invoice_snapshot_items
 			    (id, organization_id, snapshot_id, counter_id, key, unit, source,
@@ -497,15 +518,12 @@ func (r *InvoiceSnapshotRepository) snapshotItems(ctx context.Context, tx *Tx, s
 			     entitlement_key, overage_policy_mode, overage_decision, included_quantity, overage_quantity)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			 ON CONFLICT (organization_id, snapshot_id, counter_id) DO NOTHING`,
-			itemID, snapshot.OrganizationID, snapshot.ID, counterID, key, unit, source,
-			counterQuantity, adjustmentQuantity, finalQuantity, aggregationVersion,
-			entitlementKey, overagePolicyMode, overageDecision, includedQuantity, overageQuantity,
+			itemID, snapshot.OrganizationID, snapshot.ID, snapshotItem.counterID, snapshotItem.key, snapshotItem.unit, snapshotItem.source,
+			snapshotItem.counterQuantity, snapshotItem.adjustmentQuantity, finalQuantity, snapshotItem.aggregationVersion,
+			snapshotItem.entitlementKey, snapshotItem.overagePolicyMode, snapshotItem.overageDecision, snapshotItem.includedQuantity, snapshotItem.overageQuantity,
 		); err != nil {
 			return mapWriteError(err, "snapshot invoice item")
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return apierr.StoreUnavailable(err)
 	}
 	return nil
 }

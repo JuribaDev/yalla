@@ -58,6 +58,11 @@ required_failed=0
 
 if [[ "$with_postgres" -eq 1 ]]; then
   : "${YALLA_TEST_DATABASE_URL:?YALLA_TEST_DATABASE_URL is required for --with-postgres}"
+  postgres_test_parallelism="${YALLA_POSTGRES_TEST_PARALLELISM:-1}"
+  if ! [[ "$postgres_test_parallelism" =~ ^[1-9][0-9]*$ ]]; then
+    echo "verify.sh: YALLA_POSTGRES_TEST_PARALLELISM must be a positive integer" >&2
+    exit 2
+  fi
 fi
 
 # 1. Required: formatting (gofmt -l should be empty)
@@ -258,18 +263,18 @@ fi
 # loop skips these integration members when the env var is unset; this mode
 # turns that skip into an explicit operator contract.
 if [[ "$with_postgres" -eq 1 ]]; then
-  step "go test ./... (with Postgres)"
-  if ! go test ./...; then
+  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} ./... (with Postgres)"
+  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" ./...; then
     required_failed=1
   fi
 
-  step "go test -race ./internal/controlplane/... (with Postgres)"
-  if ! go test -race ./internal/controlplane/...; then
+  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -race ./internal/controlplane/... (with Postgres)"
+  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -race ./internal/controlplane/...; then
     required_failed=1
   fi
 
-  step "go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/... (with Postgres)"
-  if ! go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...; then
+  step "go test -p ${postgres_test_parallelism} -parallel ${postgres_test_parallelism} -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/... (with Postgres)"
+  if ! go test -p "$postgres_test_parallelism" -parallel "$postgres_test_parallelism" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...; then
     required_failed=1
   fi
 

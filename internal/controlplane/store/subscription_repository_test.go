@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,7 +46,18 @@ func seededPlan(ctx context.Context, t *testing.T, s *store.Store, repo *store.P
 		plan, err = repo.GetBySlugVersion(ctx, q, slug, store.BillingPeriodMonthly, 1)
 		return err
 	}); err != nil {
-		t.Fatalf("GetBySlugVersion(%q): %v", slug, err)
+		if yerr.From(err).Code != yerr.CodeNotFound {
+			t.Fatalf("GetBySlugVersion(%q): %v", slug, err)
+		}
+		name := strings.ReplaceAll(slug, "-", " ")
+		return createPlanOrFail(ctx, t, s, repo, store.CreatePlanInput{
+			Slug:          slug,
+			Name:          name,
+			Status:        store.PlanStatusActive,
+			BillingPeriod: store.BillingPeriodMonthly,
+			DisplayOrder:  90,
+			Version:       1,
+		})
 	}
 	return plan
 }

@@ -149,6 +149,8 @@ func buildAggregateUsageCountersInput(in AggregateUsageCountersInput) (Aggregate
 		PeriodEnd:          in.PeriodEnd.UTC(),
 		AggregatedAt:       in.AggregatedAt.UTC(),
 		AggregationVersion: in.AggregationVersion,
+		RequestID:          strings.TrimSpace(in.RequestID),
+		CorrelationID:      strings.TrimSpace(in.CorrelationID),
 	}
 	var violations []apierr.FieldViolation
 	if out.OrganizationID == "" {

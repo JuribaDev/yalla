@@ -1,3 +1,7 @@
+ALTER TABLE services
+    ADD CONSTRAINT services_hierarchy_identity_key
+    UNIQUE (organization_id, project_id, environment_id, id);
+
 ALTER TABLE usage_events
     ADD COLUMN project_id text,
     ADD COLUMN environment_id text,

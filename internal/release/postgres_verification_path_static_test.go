@@ -13,9 +13,11 @@ func TestPostgresVerificationPathArtifactDocumentsScriptMode(t *testing.T) {
 	for _, want := range []string{
 		"--with-postgres",
 		"YALLA_TEST_DATABASE_URL is required for --with-postgres",
+		"YALLA_POSTGRES_TEST_PARALLELISM",
 		"go test ./...",
-		"go test -race ./internal/controlplane/...",
-		"go test -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...",
+		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" ./...",
+		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -race ./internal/controlplane/...",
+		"go test -p \"$postgres_test_parallelism\" -parallel \"$postgres_test_parallelism\" -run 'TestMigrations|TestQuotaConcurrency|TestTenantIsolation' ./internal/controlplane/...",
 		"go vet ./...",
 	} {
 		if !strings.Contains(verify, want) {

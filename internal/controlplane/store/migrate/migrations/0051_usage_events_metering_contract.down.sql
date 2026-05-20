@@ -33,3 +33,6 @@ ALTER TABLE usage_events
     DROP COLUMN IF EXISTS service_id,
     DROP COLUMN IF EXISTS environment_id,
     DROP COLUMN IF EXISTS project_id;
+
+ALTER TABLE services
+    DROP CONSTRAINT IF EXISTS services_hierarchy_identity_key;

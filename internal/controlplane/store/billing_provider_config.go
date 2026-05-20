@@ -123,7 +123,7 @@ func NewBillingProviderConfigRepository() *BillingProviderConfigRepository {
 
 const billingProviderColumns = `id, provider_key, provider_type, display_name, secret_reference, credential_provider, credential_key_id, credential_ciphertext, export_cadence_seconds, retry_max_attempts, retry_initial_backoff_seconds, dry_run, metadata, enabled, revision, created_at, updated_at`
 
-var billingProviderKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,127}$`)
+var billingProviderKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 
 // Upsert creates or replaces the non-secret configuration. Credential columns
 // change only when credential.Touched is true.

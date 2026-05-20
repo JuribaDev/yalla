@@ -258,7 +258,7 @@ func adminPlanAuditEvent(auditCtx AdminPlanAuditContext, action string, plan Pla
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminPlanResourceKind,
 		ResourceID:     plan.ID,
@@ -293,7 +293,7 @@ func adminPlanEntitlementAuditEvent(auditCtx AdminPlanAuditContext, action strin
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminPlanEntitlementResourceKind,
 		ResourceID:     plan.ID + ":" + ent.EntitlementKey,

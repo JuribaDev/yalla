@@ -831,7 +831,7 @@ func buildAPIKeyToCreate(in CreateAPIKeyInput, now time.Time) (APIKey, error) {
 	var violations []apierr.FieldViolation
 
 	orgID := strings.TrimSpace(in.OrganizationID)
-	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+	if !hasKindPrefix(orgID, domain.KindOrganization) {
 		violations = append(violations, apierr.FieldViolation{
 			Field:  "organization_id",
 			Reason: "must be a valid organization id",
@@ -874,7 +874,7 @@ func buildAPIKeyToCreate(in CreateAPIKeyInput, now time.Time) (APIKey, error) {
 
 	serviceAccountID := strings.TrimSpace(in.ServiceAccountID)
 	if serviceAccountID != "" {
-		if id, err := domain.ParseID(serviceAccountID); err != nil || id.Kind() != domain.KindServiceAccount {
+		if !hasKindPrefix(serviceAccountID, domain.KindServiceAccount) {
 			violations = append(violations, apierr.FieldViolation{
 				Field:  "service_account_id",
 				Reason: "must be a valid service account id",
@@ -884,7 +884,7 @@ func buildAPIKeyToCreate(in CreateAPIKeyInput, now time.Time) (APIKey, error) {
 
 	createdBy := strings.TrimSpace(in.CreatedBy)
 	if createdBy != "" {
-		if id, err := domain.ParseID(createdBy); err != nil || id.Kind() != domain.KindUser {
+		if !hasKindPrefix(createdBy, domain.KindUser) {
 			violations = append(violations, apierr.FieldViolation{
 				Field:  "created_by",
 				Reason: "must be a valid user id",

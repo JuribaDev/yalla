@@ -419,7 +419,7 @@ func (svc *AdminConfigService) AuditAdminConfigDenied(ctx context.Context, audit
 		_, err := svc.audit.Append(ctx, tx, AuditEvent{
 			OrganizationID: auditCtx.ActorOrgID,
 			ActorID:        auditCtx.ActorID,
-			ActorKind:      auditCtx.ActorKind,
+			ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 			Action:         action,
 			ResourceKind:   adminConfigResourceKind,
 			ResourceID:     strings.TrimSpace(resourceID),
@@ -577,7 +577,7 @@ func adminConfigAuditEvent(auditCtx AdminConfigAuditContext, action, resourceID 
 	return AuditEvent{
 		OrganizationID: auditCtx.ActorOrgID,
 		ActorID:        auditCtx.ActorID,
-		ActorKind:      auditCtx.ActorKind,
+		ActorKind:      auditEventActorKind(auditCtx.ActorKind),
 		Action:         action,
 		ResourceKind:   adminConfigResourceKind,
 		ResourceID:     resourceID,

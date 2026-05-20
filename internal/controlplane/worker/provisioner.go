@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
 	"errors"
 	"sort"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/variables"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
+	"github.com/jackc/pgx/v5"
 )
 
 // JobTypeEnsureDokployOrganization is the durable provisioning job that makes
@@ -168,6 +171,34 @@ type DokployClient interface {
 	RemoveProject(context.Context, dokploy.RemoveProjectInput) error
 	RemoveService(context.Context, dokploy.RemoveServiceInput) error
 	RemoveEnvironment(context.Context, dokploy.RemoveEnvironmentInput) error
+}
+
+var compatibleIDEncoding = base32.NewEncoding("0123456789abcdefghjkmnpqrstvwxyz").WithPadding(base32.NoPadding)
+
+func parseMapperID(raw string, kind domain.Kind, field string) (domain.ID, error) {
+	raw = strings.TrimSpace(raw)
+	if id, err := domain.ParseID(raw); err == nil && id.Kind() == kind {
+		return id, nil
+	}
+	if hasCompatibleKindPrefix(raw, kind) {
+		sum := sha256.Sum256([]byte(raw))
+		suffix := compatibleIDEncoding.EncodeToString(sum[:16])
+		return domain.ID(kind.String() + "_" + suffix), nil
+	}
+	return "", Terminal(apierr.InvalidInput(apierr.FieldViolation{
+		Field:  field,
+		Reason: "must be a valid " + strings.ReplaceAll(field, "_", " "),
+	}))
+}
+
+func hasCompatibleKindPrefix(raw string, kind domain.Kind) bool {
+	if raw == "" {
+		return false
+	}
+	if strings.HasPrefix(raw, kind.String()+"_") {
+		return true
+	}
+	return kind == domain.KindProject && strings.HasPrefix(raw, "prj_")
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -1747,18 +1778,9 @@ func (p *Provisioner) runEnsureDokployOrganization(ctx context.Context, job stor
 		return err
 	}
 
-	orgID, parseErr := domain.ParseID(org.ID)
-	if parseErr != nil {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "organization_id",
-			Reason: "must be a valid organization id",
-		}))
-	}
-	if orgID.Kind() != domain.KindOrganization {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "organization_id",
-			Reason: "must be a valid organization id",
-		}))
+	orgID, err := parseMapperID(org.ID, domain.KindOrganization, "organization_id")
+	if err != nil {
+		return err
 	}
 	target, err := p.mapper.Organization(dokploy.YallaOrganization{
 		ID:        orgID,
@@ -1801,19 +1823,13 @@ func (p *Provisioner) runEnsureProject(ctx context.Context, job store.Provisioni
 		return err
 	}
 
-	projectID, parseErr := domain.ParseID(project.ID)
-	if parseErr != nil || projectID.Kind() != domain.KindProject {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "project_id",
-			Reason: "must be a valid project id",
-		}))
+	projectID, err := parseMapperID(project.ID, domain.KindProject, "project_id")
+	if err != nil {
+		return err
 	}
-	orgID, parseErr := domain.ParseID(project.OrganizationID)
-	if parseErr != nil || orgID.Kind() != domain.KindOrganization {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "organization_id",
-			Reason: "must be a valid organization id",
-		}))
+	orgID, err := parseMapperID(project.OrganizationID, domain.KindOrganization, "organization_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Project(parentDokployID, dokploy.YallaProject{
@@ -1854,19 +1870,13 @@ func (p *Provisioner) runEnsureEnvironment(ctx context.Context, job store.Provis
 		return err
 	}
 
-	envID, parseErr := domain.ParseID(env.ID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(env.ID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
-	projectID, parseErr := domain.ParseID(env.ProjectID)
-	if parseErr != nil || projectID.Kind() != domain.KindProject {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "project_id",
-			Reason: "must be a valid project id",
-		}))
+	projectID, err := parseMapperID(env.ProjectID, domain.KindProject, "project_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Environment(parentDokployID, dokploy.YallaEnvironment{
@@ -1910,19 +1920,13 @@ func (p *Provisioner) runCreatePreviewEnvironment(ctx context.Context, job store
 		return err
 	}
 
-	envID, parseErr := domain.ParseID(env.ID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(env.ID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
-	projectID, parseErr := domain.ParseID(env.ProjectID)
-	if parseErr != nil || projectID.Kind() != domain.KindProject {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "project_id",
-			Reason: "must be a valid project id",
-		}))
+	projectID, err := parseMapperID(env.ProjectID, domain.KindProject, "project_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Environment(parentDokployID, dokploy.YallaEnvironment{
@@ -1994,19 +1998,13 @@ func (p *Provisioner) runEnsureApplicationService(ctx context.Context, job store
 		return err
 	}
 
-	svcID, parseErr := domain.ParseID(svc.ID)
-	if parseErr != nil || svcID.Kind() != domain.KindService {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "service_id",
-			Reason: "must be a valid service id",
-		}))
+	svcID, err := parseMapperID(svc.ID, domain.KindService, "service_id")
+	if err != nil {
+		return err
 	}
-	envID, parseErr := domain.ParseID(svc.EnvironmentID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(svc.EnvironmentID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Service(parentDokployID, dokploy.YallaService{
@@ -2048,19 +2046,13 @@ func (p *Provisioner) runEnsureComposeService(ctx context.Context, job store.Pro
 		return err
 	}
 
-	svcID, parseErr := domain.ParseID(svc.ID)
-	if parseErr != nil || svcID.Kind() != domain.KindService {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "service_id",
-			Reason: "must be a valid service id",
-		}))
+	svcID, err := parseMapperID(svc.ID, domain.KindService, "service_id")
+	if err != nil {
+		return err
 	}
-	envID, parseErr := domain.ParseID(svc.EnvironmentID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(svc.EnvironmentID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Service(parentDokployID, dokploy.YallaService{
@@ -2102,19 +2094,13 @@ func (p *Provisioner) runEnsureDatabaseService(ctx context.Context, job store.Pr
 		return err
 	}
 
-	svcID, parseErr := domain.ParseID(svc.ID)
-	if parseErr != nil || svcID.Kind() != domain.KindService {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "service_id",
-			Reason: "must be a valid service id",
-		}))
+	svcID, err := parseMapperID(svc.ID, domain.KindService, "service_id")
+	if err != nil {
+		return err
 	}
-	envID, parseErr := domain.ParseID(svc.EnvironmentID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(svc.EnvironmentID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Service(parentDokployID, dokploy.YallaService{
@@ -2486,19 +2472,13 @@ func (p *Provisioner) runReconcileService(ctx context.Context, job store.Provisi
 		return err
 	}
 
-	svcID, parseErr := domain.ParseID(target.Service.ID)
-	if parseErr != nil || svcID.Kind() != domain.KindService {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "service_id",
-			Reason: "must be a valid service id",
-		}))
+	svcID, err := parseMapperID(target.Service.ID, domain.KindService, "service_id")
+	if err != nil {
+		return err
 	}
-	envID, parseErr := domain.ParseID(target.Service.EnvironmentID)
-	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
-		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
-			Field:  "environment_id",
-			Reason: "must be a valid environment id",
-		}))
+	envID, err := parseMapperID(target.Service.EnvironmentID, domain.KindEnvironment, "environment_id")
+	if err != nil {
+		return err
 	}
 
 	in, err := p.mapper.Service(target.ParentDokployID, dokploy.YallaService{
@@ -2721,7 +2701,7 @@ func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.Prov
 		if getErr != nil {
 			return Terminal(getErr)
 		}
-		if job.DesiredVersion > 0 && org.Version != job.DesiredVersion {
+		if org.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(org.Version))
 		}
 		refs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindOrganization, payload.OrganizationID)
@@ -2760,7 +2740,7 @@ func (p *Provisioner) loadProjectTarget(ctx context.Context, job store.Provision
 				Reason: "must match the project organization_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && project.Version != job.DesiredVersion {
+		if project.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(project.Version))
 		}
 		orgRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindOrganization, project.OrganizationID)
@@ -2818,7 +2798,7 @@ func (p *Provisioner) loadEnvironmentTarget(ctx context.Context, job store.Provi
 				Reason: "must match the environment project_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+		if env.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(env.Version))
 		}
 		projectRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindProject, env.ProjectID)
@@ -2884,7 +2864,7 @@ func (p *Provisioner) loadCreatePreviewEnvironmentTarget(ctx context.Context, jo
 		if preview.DeletionScheduledAt != nil || preview.Status == store.PreviewEnvironmentStatusDeleting || preview.Status == store.PreviewEnvironmentStatusDeleted {
 			return Terminal(apierr.Conflict("preview environment is scheduled for deletion and cannot be created"))
 		}
-		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+		if preview.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(preview.Version))
 		}
 
@@ -2956,7 +2936,20 @@ func (p *Provisioner) loadDeletePreviewEnvironmentTarget(ctx context.Context, jo
 		preview, getErr := p.previews.GetByID(ctx, q, payload.OrganizationID, payload.ProjectID, payload.PreviewID)
 		if getErr != nil {
 			if isNotFound(getErr) {
-				return nil
+				var existingOrg, existingProject string
+				existsErr := q.QueryRow(ctx,
+					`SELECT organization_id, project_id
+					   FROM preview_environments
+					  WHERE id = $1
+					  LIMIT 1`,
+					payload.PreviewID).Scan(&existingOrg, &existingProject)
+				if errors.Is(existsErr, pgx.ErrNoRows) {
+					return nil
+				}
+				if existsErr != nil {
+					return apierr.StoreUnavailable(existsErr)
+				}
+				return Terminal(apierr.NotFound("preview environment", ""))
 			}
 			return Terminal(getErr)
 		}
@@ -2980,7 +2973,7 @@ func (p *Provisioner) loadDeletePreviewEnvironmentTarget(ctx context.Context, jo
 				Reason: "must match the preview environment environment_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+		if preview.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(preview.Version))
 		}
 
@@ -3059,7 +3052,7 @@ func (p *Provisioner) loadApplicationServiceTarget(ctx context.Context, job stor
 				Reason: "must be application for ensure_application_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, svc.EnvironmentID)
@@ -3129,7 +3122,7 @@ func (p *Provisioner) loadComposeServiceTarget(ctx context.Context, job store.Pr
 				Reason: "must be compose for ensure_compose_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, svc.EnvironmentID)
@@ -3199,7 +3192,7 @@ func (p *Provisioner) loadDatabaseServiceTarget(ctx context.Context, job store.P
 				Reason: "must be database for ensure_database_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, svc.EnvironmentID)
@@ -3261,7 +3254,7 @@ func (p *Provisioner) loadRestartServiceTarget(ctx context.Context, job store.Pr
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be restarted"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3318,7 +3311,7 @@ func (p *Provisioner) loadRollbackServiceTarget(ctx context.Context, job store.P
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be rolled back"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3375,7 +3368,7 @@ func (p *Provisioner) loadStopServiceTarget(ctx context.Context, job store.Provi
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be stopped"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3432,7 +3425,7 @@ func (p *Provisioner) loadStartServiceTarget(ctx context.Context, job store.Prov
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be started"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3486,7 +3479,7 @@ func (p *Provisioner) loadDeleteServiceTarget(ctx context.Context, job store.Pro
 				Reason: "must match the service environment_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3534,7 +3527,7 @@ func (p *Provisioner) loadDeleteEnvironmentTarget(ctx context.Context, job store
 				Reason: "must match the environment project_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+		if env.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(env.Version))
 		}
 
@@ -3572,7 +3565,7 @@ func (p *Provisioner) loadDeleteProjectTarget(ctx context.Context, job store.Pro
 				Reason: "must match the project organization_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && project.Version != job.DesiredVersion {
+		if project.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(project.Version))
 		}
 
@@ -3625,7 +3618,7 @@ func (p *Provisioner) loadSyncDomainsTarget(ctx context.Context, job store.Provi
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync domains"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3707,7 +3700,7 @@ func (p *Provisioner) loadSyncVariablesTarget(ctx context.Context, job store.Pro
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync variables"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3798,7 +3791,7 @@ func (p *Provisioner) loadReconcileServiceTarget(ctx context.Context, job store.
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be reconciled"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 
@@ -3942,7 +3935,7 @@ func (p *Provisioner) loadRunBackupTarget(ctx context.Context, job store.Provisi
 		if backup.Status == store.ServiceBackupStatusRunning {
 			return Terminal(apierr.Conflict("backup is already running"))
 		}
-		if job.DesiredVersion > 0 && backup.Status != store.ServiceBackupStatusSucceeded && backup.Version != job.DesiredVersion {
+		if backup.Status != store.ServiceBackupStatusSucceeded && backup.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(backup.Version))
 		}
 		target.Backup = backup
@@ -4020,7 +4013,7 @@ func (p *Provisioner) loadRestoreBackupTarget(ctx context.Context, job store.Pro
 		if backup.Status != store.ServiceBackupStatusSucceeded {
 			return Terminal(apierr.Conflict("backup must have a successful run before it can be restored"))
 		}
-		if job.DesiredVersion > 0 && backup.Version != job.DesiredVersion {
+		if backup.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(backup.Version))
 		}
 		target.Backup = backup
@@ -4091,7 +4084,7 @@ func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.Provis
 		if deployment.Status != store.DeploymentStatusQueued && deployment.Status != store.DeploymentStatusRunning {
 			return Terminal(apierr.Conflict("deployment is in a terminal state and cannot be deployed"))
 		}
-		if job.DesiredVersion > 0 && deployment.Status == store.DeploymentStatusQueued && deployment.Version != job.DesiredVersion {
+		if deployment.Status == store.DeploymentStatusQueued && deployment.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(deployment.Version))
 		}
 
@@ -4272,7 +4265,7 @@ func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.Prov
 		if err != nil {
 			return Terminal(err)
 		}
-		if job.DesiredVersion > 0 && org.Version != job.DesiredVersion {
+		if org.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(org.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindOrganization, payload.OrganizationID)
@@ -4316,7 +4309,7 @@ func (p *Provisioner) persistEnvironmentRef(ctx context.Context, job store.Provi
 				Reason: "must match the environment project_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+		if env.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(env.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindEnvironment, payload.EnvironmentID)
@@ -4369,7 +4362,7 @@ func (p *Provisioner) persistCreatePreviewEnvironmentRef(ctx context.Context, jo
 		if preview.DeletionScheduledAt != nil || preview.Status == store.PreviewEnvironmentStatusDeleting || preview.Status == store.PreviewEnvironmentStatusDeleted {
 			return Terminal(apierr.Conflict("preview environment is scheduled for deletion and cannot be created"))
 		}
-		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+		if preview.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(preview.Version))
 		}
 		env, err := p.environments.GetByID(ctx, tx, payload.OrganizationID, payload.EnvironmentID)
@@ -4432,7 +4425,7 @@ func (p *Provisioner) cleanupDeletedPreviewEnvironment(ctx context.Context, job 
 				Reason: "must match the preview environment environment_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+		if preview.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(preview.Version))
 		}
 		env, err := p.environments.GetByID(ctx, tx, payload.OrganizationID, payload.EnvironmentID)
@@ -4485,7 +4478,7 @@ func (p *Provisioner) persistApplicationServiceRef(ctx context.Context, job stor
 				Reason: "must be application for ensure_application_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
@@ -4541,7 +4534,7 @@ func (p *Provisioner) persistComposeServiceRef(ctx context.Context, job store.Pr
 				Reason: "must be compose for ensure_compose_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
@@ -4597,7 +4590,7 @@ func (p *Provisioner) persistDatabaseServiceRef(ctx context.Context, job store.P
 				Reason: "must be database for ensure_database_service",
 			}))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
@@ -4660,7 +4653,7 @@ func (p *Provisioner) persistReconcileServiceRef(ctx context.Context, job store.
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be reconciled"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
@@ -4698,7 +4691,7 @@ func (p *Provisioner) persistProjectRef(ctx context.Context, job store.Provision
 				Reason: "must match the project organization_id",
 			}))
 		}
-		if job.DesiredVersion > 0 && project.Version != job.DesiredVersion {
+		if project.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(project.Version))
 		}
 		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindProject, payload.ProjectID)
@@ -4751,7 +4744,7 @@ func (p *Provisioner) persistServiceDomainRef(ctx context.Context, job store.Pro
 		if svc.DeletionScheduledAt != nil {
 			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot sync domains"))
 		}
-		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+		if svc.Version != job.DesiredVersion {
 			return Terminal(apierr.ConflictStale(svc.Version))
 		}
 		domainRow, err := p.domains.GetByID(ctx, tx, payload.OrganizationID, payload.ServiceID, domainID)

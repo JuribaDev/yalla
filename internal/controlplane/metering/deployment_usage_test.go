@@ -191,7 +191,7 @@ func seedMeteringHierarchy(t *testing.T, db *testutil.DB, f *testutil.Factory) m
 	if _, err := db.Exec(ctx, `INSERT INTO projects (id, organization_id, slug, display_name, status) VALUES ($1, $2, $3, $4, 'active')`, project.ID, org.ID, project.Slug, project.Name); err != nil {
 		t.Fatalf("insert project: %v", err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO environments (id, organization_id, project_id, slug, display_name, kind, status) VALUES ($1, $2, $3, $4, $5, 'production', 'active')`, env.ID, org.ID, project.ID, env.Slug, env.Name); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO environments (id, organization_id, project_id, slug, display_name, kind, status) VALUES ($1, $2, $3, $4, $5, $6, 'active')`, env.ID, org.ID, project.ID, env.Slug, env.Name, store.EnvironmentKindStandard); err != nil {
 		t.Fatalf("insert environment: %v", err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO services (id, organization_id, project_id, environment_id, slug, display_name, kind, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')`, svc.ID, org.ID, project.ID, env.ID, svc.Slug, svc.Name, svc.Kind); err != nil {

@@ -183,7 +183,7 @@ func (r *ProjectRepository) Get(ctx context.Context, q Querier, organizationID, 
 		organizationID, projectID)
 	p, err := scanProject(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Project{}, apierr.NotFound("project", projectID)
+		return Project{}, apierr.NotFound("project", "")
 	}
 	if err != nil {
 		return Project{}, apierr.StoreUnavailable(err)
@@ -349,7 +349,7 @@ func (r *ProjectRepository) UpdateDisplayName(ctx context.Context, tx *Tx, organ
 	updated, err := scanProject(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if ifMatchVersion == nil {
-			return Project{}, apierr.NotFound("project", projectID)
+			return Project{}, apierr.NotFound("project", "")
 		}
 		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
 	}
@@ -398,7 +398,7 @@ func (r *ProjectRepository) Update(ctx context.Context, tx *Tx, p Project, ifMat
 	updated, err := scanProject(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if ifMatchVersion == nil {
-			return Project{}, apierr.NotFound("project", p.ID)
+			return Project{}, apierr.NotFound("project", "")
 		}
 		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, p.OrganizationID, p.ID)
 	}
@@ -430,7 +430,7 @@ func (r *ProjectRepository) Transition(ctx context.Context, tx *Tx, in ProjectTr
 		  FOR UPDATE`,
 		orgID, projectID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Project{}, ProjectEvent{}, apierr.NotFound("project", projectID)
+		return Project{}, ProjectEvent{}, apierr.NotFound("project", "")
 	}
 	if err != nil {
 		return Project{}, ProjectEvent{}, apierr.StoreUnavailable(err)
@@ -533,7 +533,7 @@ func (r *ProjectRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organi
 	updated, err := scanProject(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if ifMatchVersion == nil {
-			return Project{}, apierr.NotFound("project", projectID)
+			return Project{}, apierr.NotFound("project", "")
 		}
 		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
 	}
@@ -587,7 +587,7 @@ func (r *ProjectRepository) Restore(ctx context.Context, tx *Tx, organizationID,
 	updated, err := scanProject(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if ifMatchVersion == nil {
-			return Project{}, apierr.NotFound("project", projectID)
+			return Project{}, apierr.NotFound("project", "")
 		}
 		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
 	}

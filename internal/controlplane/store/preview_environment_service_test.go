@@ -306,7 +306,7 @@ func TestPreviewEnvironmentServiceScheduleDeletionWritesJobAndAudit(t *testing.T
 	if len(events) != 2 {
 		t.Fatalf("audit events = %d, want create + delete", len(events))
 	}
-	deleteEvent := events[1]
+	deleteEvent := events[0]
 	if deleteEvent.Action != "preview.delete" || deleteEvent.ResourceID != created.ID || deleteEvent.RequestID != "req_preview_delete" {
 		t.Errorf("delete audit event = %+v, want preview.delete for scheduled preview", deleteEvent)
 	}

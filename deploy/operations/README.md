@@ -58,6 +58,11 @@ export YALLA_TEST_DATABASE_URL='postgres://yalla:yalla@127.0.0.1:5432/yalla_test
 The DSN must target local test infrastructure only. The script fails fast when
 `YALLA_TEST_DATABASE_URL` is unset, then runs the normal verification gate plus
 the Postgres-backed control-plane commands pinned in `ralph/VERIFICATION.md`.
+Those Postgres-backed Go test commands use package parallelism `-p 1` and test
+function parallelism `-parallel 1` by default to avoid local database
+connection exhaustion; raise
+`YALLA_POSTGRES_TEST_PARALLELISM` only for a test database sized for the higher
+fan-out.
 
 ## Database Backup
 
