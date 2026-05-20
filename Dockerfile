@@ -31,8 +31,10 @@
 #     -e YALLA_PUBLIC_URL=https://api.example.com \
 #     -e YALLA_DATABASE_URL=... \
 #     -e YALLA_SIGNING_KEYS=... \
+#     -e YALLA_SECRET_KEYS=... \
 #     -e YALLA_DOKPLOY_BASE_URL=... \
 #     -e YALLA_DOKPLOY_TOKEN=... \
+#     -e YALLA_INTERNAL_WORKER_TOKEN=... \
 #     -p 8080:8080 yalla-api:dev
 #
 # Health / readiness
@@ -48,8 +50,9 @@
 # Logs
 # ----
 # yalla-api writes structured JSON to stdout, one record per line. Every record
-# carries service=yalla-api. The DSN, signing keys, and Dokploy token are
-# redacted at the structured-logging layer and never appear in logs.
+# carries service=yalla-api. The DSN, signing keys, secret-encryption keys,
+# Dokploy token, and internal worker token are redacted at the
+# structured-logging layer and never appear in logs.
 
 ARG GO_VERSION=1.23
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot

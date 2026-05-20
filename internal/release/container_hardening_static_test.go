@@ -561,8 +561,11 @@ func TestWorkerDockerfileDocumentsOperationsContract(t *testing.T) {
 		"yalla-worker production container",
 		"docker build",
 		"YALLA_DATABASE_URL",
+		"YALLA_SIGNING_KEYS",
+		"YALLA_SECRET_KEYS",
 		"YALLA_DOKPLOY_BASE_URL",
 		"YALLA_DOKPLOY_TOKEN",
+		"YALLA_INTERNAL_WORKER_TOKEN",
 		"Health / readiness",
 		"no HTTP listener",
 		"structured JSON to stdout",
@@ -1330,14 +1333,15 @@ func minimalCanonicalWorkerDockerfile() string {
 
 func minimalCanonicalComposeServices() map[string]composeService {
 	env := map[string]string{
-		"YALLA_PROFILE":          "local",
-		"YALLA_API_ADDR":         "0.0.0.0:8080",
-		"YALLA_PUBLIC_URL":       "http://localhost:8080",
-		"YALLA_DATABASE_URL":     "postgres://yalla:${YALLA_POSTGRES_PASSWORD:?set}@postgres:5432/yalla?sslmode=disable",
-		"YALLA_SIGNING_KEYS":     "${YALLA_SIGNING_KEYS:?set}",
-		"YALLA_SECRET_KEYS":      "${YALLA_SECRET_KEYS:?set}",
-		"YALLA_DOKPLOY_BASE_URL": "${YALLA_DOKPLOY_BASE_URL:?set}",
-		"YALLA_DOKPLOY_TOKEN":    "${YALLA_DOKPLOY_TOKEN:?set}",
+		"YALLA_PROFILE":               "local",
+		"YALLA_API_ADDR":              "0.0.0.0:8080",
+		"YALLA_PUBLIC_URL":            "http://localhost:8080",
+		"YALLA_DATABASE_URL":          "postgres://yalla:${YALLA_POSTGRES_PASSWORD:?set}@postgres:5432/yalla?sslmode=disable",
+		"YALLA_SIGNING_KEYS":          "${YALLA_SIGNING_KEYS:?set}",
+		"YALLA_SECRET_KEYS":           "${YALLA_SECRET_KEYS:?set}",
+		"YALLA_DOKPLOY_BASE_URL":      "${YALLA_DOKPLOY_BASE_URL:?set}",
+		"YALLA_DOKPLOY_TOKEN":         "${YALLA_DOKPLOY_TOKEN:?set}",
+		"YALLA_INTERNAL_WORKER_TOKEN": "${YALLA_INTERNAL_WORKER_TOKEN:?set}",
 	}
 	apiEnv := map[string]string{}
 	for k, v := range env {

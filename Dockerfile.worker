@@ -28,8 +28,11 @@
 #   docker run --rm --read-only --cap-drop=ALL \
 #     -e YALLA_PROFILE=production \
 #     -e YALLA_DATABASE_URL=... \
+#     -e YALLA_SIGNING_KEYS=... \
+#     -e YALLA_SECRET_KEYS=... \
 #     -e YALLA_DOKPLOY_BASE_URL=... \
 #     -e YALLA_DOKPLOY_TOKEN=... \
+#     -e YALLA_INTERNAL_WORKER_TOKEN=... \
 #     yalla-worker:dev
 #
 # Health / readiness
@@ -47,7 +50,8 @@
 # Logs
 # ----
 # yalla-worker writes structured JSON to stdout, one record per line. Every
-# record carries service=yalla-worker. Database URLs, Dokploy tokens, API keys,
+# record carries service=yalla-worker. Database URLs, signing keys,
+# secret-encryption keys, Dokploy tokens, internal worker tokens, API keys,
 # cookies, and rendered environment variable values are redacted and never appear in logs.
 
 ARG GO_VERSION=1.26.3

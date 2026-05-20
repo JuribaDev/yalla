@@ -15,6 +15,7 @@
 #   export YALLA_SECRET_KEYS="$(openssl rand -hex 32)"
 #   export YALLA_DOKPLOY_BASE_URL="https://dokploy.internal.example"
 #   export YALLA_DOKPLOY_TOKEN="set-this-in-your-shell"
+#   export YALLA_INTERNAL_WORKER_TOKEN="$(openssl rand -base64 48)"
 #   docker compose --profile control-plane up --build
 #   curl -fsS http://localhost:8080/healthz
 #   curl -fsS http://localhost:8080/readyz
@@ -64,6 +65,7 @@ services:
       YALLA_SECRET_KEYS: "${YALLA_SECRET_KEYS:?set YALLA_SECRET_KEYS in your shell}"
       YALLA_DOKPLOY_BASE_URL: "${YALLA_DOKPLOY_BASE_URL:?set YALLA_DOKPLOY_BASE_URL in your shell}"
       YALLA_DOKPLOY_TOKEN: "${YALLA_DOKPLOY_TOKEN:?set YALLA_DOKPLOY_TOKEN in your shell}"
+      YALLA_INTERNAL_WORKER_TOKEN: "${YALLA_INTERNAL_WORKER_TOKEN:?set YALLA_INTERNAL_WORKER_TOKEN in your shell}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,6 +100,7 @@ services:
       YALLA_SECRET_KEYS: "${YALLA_SECRET_KEYS:?set YALLA_SECRET_KEYS in your shell}"
       YALLA_DOKPLOY_BASE_URL: "${YALLA_DOKPLOY_BASE_URL:?set YALLA_DOKPLOY_BASE_URL in your shell}"
       YALLA_DOKPLOY_TOKEN: "${YALLA_DOKPLOY_TOKEN:?set YALLA_DOKPLOY_TOKEN in your shell}"
+      YALLA_INTERNAL_WORKER_TOKEN: "${YALLA_INTERNAL_WORKER_TOKEN:?set YALLA_INTERNAL_WORKER_TOKEN in your shell}"
     depends_on:
       postgres:
         condition: service_healthy
