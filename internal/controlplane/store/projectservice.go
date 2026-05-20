@@ -54,7 +54,17 @@ type QuotaReserver interface {
 // the system can never persist a resource without its provisioning job, or a
 // job without its resource.
 type JobEnqueuer interface {
-	Enqueue(ctx context.Context, tx *Tx, organizationID, jobKind, resourceID string) error
+	Enqueue(ctx context.Context, tx *Tx, in EnqueueJobInput) error
+}
+
+// EnqueueJobInput describes the durable provisioning job a store unit of work
+// needs to append atomically with its desired-state write.
+type EnqueueJobInput struct {
+	OrganizationID string
+	JobKind        string
+	ResourceID     string
+	RequestID      string
+	CorrelationID  string
 }
 
 // The action, job kind, and quota resource a project creation composes
@@ -264,7 +274,13 @@ func (svc *ProjectService) Create(ctx context.Context, in CreateProjectInput) (P
 		if err != nil {
 			return err
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, project.OrganizationID, projectProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: project.OrganizationID,
+			JobKind:        projectProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		if _, err := svc.audit.Append(ctx, tx, event); err != nil {

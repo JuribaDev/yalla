@@ -161,7 +161,13 @@ func (svc *PreviewEnvironmentService) Create(ctx context.Context, in CreatePrevi
 		if err != nil {
 			return err
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, validated.OrganizationID, previewCreateJob, preview.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: validated.OrganizationID,
+			JobKind:        previewCreateJob,
+			ResourceID:     preview.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		if _, err := svc.audit.Append(ctx, tx, AuditEvent{
@@ -262,7 +268,13 @@ func (svc *PreviewEnvironmentService) ScheduleDeletion(ctx context.Context, in D
 		if err != nil {
 			return err
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, validated.OrganizationID, previewDeleteJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: validated.OrganizationID,
+			JobKind:        previewDeleteJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 

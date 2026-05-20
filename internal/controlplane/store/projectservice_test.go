@@ -51,12 +51,14 @@ func (q *recordingQuota) ReserveAmount(_ context.Context, _ *store.Tx, _, _ stri
 // recordingJobs is a fake JobEnqueuer that records call count and returns a
 // configured error.
 type recordingJobs struct {
-	err   error
-	calls int
+	err    error
+	calls  int
+	inputs []store.EnqueueJobInput
 }
 
-func (j *recordingJobs) Enqueue(_ context.Context, _ *store.Tx, _, _, _ string) error {
+func (j *recordingJobs) Enqueue(_ context.Context, _ *store.Tx, in store.EnqueueJobInput) error {
 	j.calls++
+	j.inputs = append(j.inputs, in)
 	return j.err
 }
 

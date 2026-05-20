@@ -383,7 +383,13 @@ func (svc *EnvironmentService) Create(ctx context.Context, in CreateEnvironmentI
 		if err != nil {
 			return err
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, environment.OrganizationID, environmentProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: environment.OrganizationID,
+			JobKind:        environmentProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
@@ -725,7 +731,13 @@ func (svc *EnvironmentService) Clone(ctx context.Context, in CloneEnvironmentInp
 		if insErr != nil {
 			return insErr
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, validated.OrganizationID, environmentProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: validated.OrganizationID,
+			JobKind:        environmentProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{

@@ -243,7 +243,13 @@ func (svc *DeploymentService) Create(ctx context.Context, in CreateDeploymentInp
 		// (organization_id, idempotency_key) collides with the
 		// equivalent job idempotency key, so a duplicate job is
 		// structurally impossible even under retry.
-		if err := svc.jobs.Enqueue(ctx, tx, deployment.OrganizationID, deploymentProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: deployment.OrganizationID,
+			JobKind:        deploymentProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{
@@ -747,7 +753,13 @@ func (svc *DeploymentService) Rollback(ctx context.Context, in RollbackDeploymen
 		// UNIQUE (organization_id, idempotency_key) collides with the
 		// equivalent job idempotency key, so a duplicate job is
 		// structurally impossible even under retry.
-		if err := svc.jobs.Enqueue(ctx, tx, deployment.OrganizationID, deploymentProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: deployment.OrganizationID,
+			JobKind:        deploymentProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{

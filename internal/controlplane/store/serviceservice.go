@@ -469,7 +469,13 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		if err != nil {
 			return err
 		}
-		if err := svc.jobs.Enqueue(ctx, tx, service.OrganizationID, serviceProvisionJob, row.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: service.OrganizationID,
+			JobKind:        serviceProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{
@@ -1270,7 +1276,13 @@ func (svc *ServiceService) Restart(ctx context.Context, in RestartServiceInput) 
 		// with the in-tx authorize. Every JobEnqueuer adapter pins the
 		// job's organization_id to the service's tenant, so a job
 		// cannot reference another tenant's service.
-		if err := svc.jobs.Enqueue(ctx, tx, parent.OrganizationID, serviceRestartJob, parent.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: parent.OrganizationID,
+			JobKind:        serviceRestartJob,
+			ResourceID:     parent.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{
@@ -1446,7 +1458,13 @@ func (svc *ServiceService) Stop(ctx context.Context, in StopServiceInput) (Servi
 		// with the in-tx authorize. Every JobEnqueuer adapter pins the
 		// job's organization_id to the service's tenant, so a job
 		// cannot reference another tenant's service.
-		if err := svc.jobs.Enqueue(ctx, tx, parent.OrganizationID, serviceStopJob, parent.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: parent.OrganizationID,
+			JobKind:        serviceStopJob,
+			ResourceID:     parent.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{
@@ -1613,7 +1631,13 @@ func (svc *ServiceService) Start(ctx context.Context, in StartServiceInput) (Ser
 		// with the in-tx authorize. Every JobEnqueuer adapter pins the
 		// job's organization_id to the service's tenant, so a job
 		// cannot reference another tenant's service.
-		if err := svc.jobs.Enqueue(ctx, tx, parent.OrganizationID, serviceStartJob, parent.ID); err != nil {
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: parent.OrganizationID,
+			JobKind:        serviceStartJob,
+			ResourceID:     parent.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{

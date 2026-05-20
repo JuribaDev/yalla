@@ -361,7 +361,7 @@ func (nopQuotaReserver) ReserveAmount(context.Context, *Tx, string, string, int6
 
 type nopJobEnqueuer struct{}
 
-func (nopJobEnqueuer) Enqueue(context.Context, *Tx, string, string, string) error { return nil }
+func (nopJobEnqueuer) Enqueue(context.Context, *Tx, EnqueueJobInput) error { return nil }
 
 type nopAuditAppender struct{}
 

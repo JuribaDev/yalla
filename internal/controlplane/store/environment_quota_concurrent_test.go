@@ -37,7 +37,7 @@ type atomicJobs struct {
 	calls atomic.Int64
 }
 
-func (j *atomicJobs) Enqueue(_ context.Context, _ *store.Tx, _, _, _ string) error {
+func (j *atomicJobs) Enqueue(_ context.Context, _ *store.Tx, _ store.EnqueueJobInput) error {
 	j.calls.Add(1)
 	return nil
 }

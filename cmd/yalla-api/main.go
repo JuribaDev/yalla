@@ -813,7 +813,7 @@ func (alwaysAllowAuthorizer) Authorize(context.Context, store.Querier, string, s
 // the provisioning side will be reconciled when the worker lands.
 type noopJobEnqueuer struct{}
 
-func (noopJobEnqueuer) Enqueue(context.Context, *store.Tx, string, string, string) error { return nil }
+func (noopJobEnqueuer) Enqueue(context.Context, *store.Tx, store.EnqueueJobInput) error { return nil }
 
 // rateLimitConfigFromAppConfig adapts the resolved config.RateLimit
 // struct onto the ratelimit.Config the limiter consumes. The translation
