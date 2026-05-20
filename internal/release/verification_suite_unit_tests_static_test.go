@@ -169,11 +169,6 @@ var allowedPackagesWithoutUnitTests = map[string]string{
 		"flag parsing, and exit-code contract are covered by " +
 		"internal/cli/*_test.go and exercised end-to-end by " +
 		"internal/release/release_test.go via the distribution matrix.",
-	"cmd/yalla-api": "Process wiring for the Yalla Control Plane HTTP API. " +
-		"Boot, signal handling, and binary identity are exercised by " +
-		"internal/release/release_test.go; every behaviour the process " +
-		"exposes is unit-tested in internal/controlplane/{httpapi,auth," +
-		"policy,store,...}/*_test.go.",
 	"cmd/yalla-worker": "Thin worker entrypoint (~67 lines); the run loop, " +
 		"lease management, and shutdown contract are covered by " +
 		"internal/controlplane/worker/*_test.go.",

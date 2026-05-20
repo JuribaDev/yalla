@@ -22,6 +22,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/entitlements"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
+	"github.com/JuribaDev/yalla/internal/controlplane/jobs"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/quota"
 	"github.com/JuribaDev/yalla/internal/controlplane/ratelimit"
@@ -157,7 +158,8 @@ func main() {
 		logger.Error("failed to initialize the quota checker", "error", err.Error())
 		os.Exit(1)
 	}
-	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, noopJobEnqueuer{}, auditRepo)
+	jobEnqueuer := jobs.NewEnqueuer()
+	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, jobEnqueuer, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
 		os.Exit(1)
@@ -235,11 +237,11 @@ func main() {
 	// RequireAuth middleware is the authoritative gate for action
 	// project.create; the in-transaction Authorizer is still a redundant
 	// placeholder until the policy.Engine-driven store adapter lands. The
-	// quota port is the entitlement-aware checker; jobs still use the no-op
-	// enqueuer until durable provisioning is wired for this path.
+	// quota port is the entitlement-aware checker, and the job port persists
+	// the durable provisioning work in the same transaction as desired state.
 	projectAuthz := alwaysAllowAuthorizer{}
 	projectQuota := quotaChecker
-	projectJobs := noopJobEnqueuer{}
+	projectJobs := jobEnqueuer
 	projectService, err := store.NewProjectService(dataStore, store.NewProjectRepository(), projectAuthz, projectQuota, projectJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the project service", "error", err.Error())
@@ -275,11 +277,11 @@ func main() {
 	// environment.create; the in-transaction Authorizer is a redundant check
 	// whose real adapter (a policy.Engine-driven port that reads grant rows
 	// from the same *Tx as the desired-state write) lands later. Quota is the
-	// entitlement-aware checker; jobs still use the no-op enqueuer until
-	// durable provisioning is wired for this path.
+	// entitlement-aware checker, and jobs are durably enqueued with the
+	// desired-state write.
 	environmentAuthz := alwaysAllowAuthorizer{}
 	environmentQuota := quotaChecker
-	environmentJobs := noopJobEnqueuer{}
+	environmentJobs := jobEnqueuer
 	environmentService, err := store.NewEnvironmentService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), environmentAuthz, environmentQuota, environmentJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the environment service", "error", err.Error())
@@ -321,11 +323,11 @@ func main() {
 	// action service.create; the in-transaction Authorizer is a
 	// redundant check whose real adapter (a policy.Engine-driven port
 	// that reads grant rows from the same *Tx as the desired-state
-	// write) lands later. Quota is the entitlement-aware checker; jobs still
-	// use the no-op enqueuer until durable provisioning is wired for this path.
+	// write) lands later. Quota is the entitlement-aware checker; jobs are
+	// persisted by the durable provisioning enqueuer.
 	serviceAuthz := alwaysAllowAuthorizer{}
 	serviceQuota := quotaChecker
-	serviceJobs := noopJobEnqueuer{}
+	serviceJobs := jobEnqueuer
 	serviceService, err := store.NewServiceService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), store.NewServiceRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the service service", "error", err.Error())
@@ -804,16 +806,6 @@ type alwaysAllowAuthorizer struct{}
 func (alwaysAllowAuthorizer) Authorize(context.Context, store.Querier, string, string) error {
 	return nil
 }
-
-// noopJobEnqueuer is a placeholder store.JobEnqueuer for the project
-// creation unit of work. The real adapter mints a durable provisioning job
-// row through store.JobRepository.Insert with a per-request idempotency key
-// and lands with the project provisioning worker story. Until then, this
-// placeholder records nothing — the desired-state row still commits, and
-// the provisioning side will be reconciled when the worker lands.
-type noopJobEnqueuer struct{}
-
-func (noopJobEnqueuer) Enqueue(context.Context, *store.Tx, store.EnqueueJobInput) error { return nil }
 
 // rateLimitConfigFromAppConfig adapts the resolved config.RateLimit
 // struct onto the ratelimit.Config the limiter consumes. The translation
