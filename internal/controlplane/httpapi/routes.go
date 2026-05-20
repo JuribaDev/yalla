@@ -124,6 +124,65 @@ type backupHealthPayload struct {
 	Detail        string `json:"detail,omitempty"`
 }
 
+func healthzHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Liveness: the process is running and can serve HTTP. It does not
+		// depend on downstream dependencies — that is /readyz.
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), healthzPayload{Status: "ok"})
+	}
+}
+
+func versionHandler(build runtime.BuildInfo, meta runtime.MetaReporter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		migrationVersion := runtime.MigrationVersionUnknown
+		if meta != nil {
+			migrationVersion = meta.MigrationVersion()
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), versionPayload{
+			Version:          build.Version,
+			Commit:           build.Commit,
+			Date:             build.Date,
+			APISchemaVersion: runtime.APISchemaVersion,
+			MigrationVersion: migrationVersion,
+		})
+	}
+}
+
+const scalarAPIReferenceHTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Yalla Control Plane API Reference</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.35.3"></script>
+    <script>
+      Scalar.createApiReference('#app', {
+        url: '/openapi.json',
+        pageTitle: 'Yalla Control Plane API Reference',
+        hideDownloadButton: false,
+        hideModels: false,
+        theme: 'default',
+      })
+    </script>
+  </body>
+</html>
+`
+
+func scalarAPIReferenceHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src data: https:; font-src data: https://cdn.jsdelivr.net https://fonts.scalar.com; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(scalarAPIReferenceHTML))
+	}
+}
+
 // newRouteTable returns every API route paired with its OpenAPI metadata. The
 // /openapi.json route is intentionally absent — its handler is built from the
 // document these routes describe, so openAPIDocument folds it back in (see
@@ -347,11 +406,19 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Tags:               []string{tagOperations},
 				SuccessDescription: "The process is alive and serving HTTP.",
 			},
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				// Liveness: the process is running and can serve HTTP. It does
-				// not depend on downstream dependencies — that is /readyz.
-				apienvelope.WriteData(w, http.StatusOK, requestID(r), healthzPayload{Status: "ok"})
+			handler: healthzHandler(),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/healthz",
+				OperationID:        "getV1Healthz",
+				Summary:            "Versioned liveness probe",
+				Description:        "Reports process liveness for frontend and external consumers that use the /v1 API base URL. It does not touch downstream dependencies; readiness is reported by /v1/readyz.",
+				Tags:               []string{tagOperations},
+				SuccessDescription: "The process is alive and serving HTTP.",
 			},
+			handler: healthzHandler(),
 		},
 		{
 			endpoint: openapi.Endpoint{
@@ -409,6 +476,18 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		{
 			endpoint: openapi.Endpoint{
 				Method:             http.MethodGet,
+				Path:               "/v1/readyz",
+				OperationID:        "getV1Readyz",
+				Summary:            "Versioned readiness probe",
+				Description:        "Reports whether every startup dependency check has passed for frontend and external consumers that use the /v1 API base URL. Returns 200 with per-check status once ready, or 503 with a yalla.error.v1 envelope naming pending checks until then.",
+				Tags:               []string{tagOperations},
+				SuccessDescription: "Every startup dependency check has passed; the data block reports each check.",
+			},
+			handler: readyzHandler(readiness, readinessMetrics),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
 				Path:               "/healthz/backup",
 				OperationID:        "getHealthzBackup",
 				Summary:            "Database backup health probe",
@@ -428,19 +507,33 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				Tags:               []string{tagMeta},
 				SuccessDescription: "The build and contract identity of the running process.",
 			},
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				migrationVersion := runtime.MigrationVersionUnknown
-				if meta != nil {
-					migrationVersion = meta.MigrationVersion()
-				}
-				apienvelope.WriteData(w, http.StatusOK, requestID(r), versionPayload{
-					Version:          build.Version,
-					Commit:           build.Commit,
-					Date:             build.Date,
-					APISchemaVersion: runtime.APISchemaVersion,
-					MigrationVersion: migrationVersion,
-				})
+			handler: versionHandler(build, meta),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/version",
+				OperationID:        "getV1Version",
+				Summary:            "Versioned build and contract version",
+				Description:        "Returns the running process identity for frontend and external consumers that use the /v1 API base URL: build version, source commit, build date, stable API schema version, and applied database migration version.",
+				Tags:               []string{tagMeta},
+				SuccessDescription: "The build and contract identity of the running process.",
 			},
+			handler: versionHandler(build, meta),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/reference",
+				OperationID:        "getAPIReference",
+				Summary:            "Scalar API reference",
+				Description:        "Serves the browser-based Scalar API Reference UI backed by the same public /openapi.json document used by tooling and frontend handoff consumers.",
+				Tags:               []string{tagMeta},
+				SuccessDescription: "The Scalar API Reference HTML page.",
+				SuccessSchema:      openapi.SchemaHTMLDocument,
+				SuccessContentType: "text/html",
+			},
+			handler: scalarAPIReferenceHandler(),
 		},
 		{
 			endpoint: openapi.Endpoint{

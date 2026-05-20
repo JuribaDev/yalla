@@ -103,6 +103,159 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 	}
 }
 
+func TestHandlerServesVersionedFrontendHandoffProbeEndpoints(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(runtime.BuildInfo{
+		Version: "1.2.3",
+		Commit:  "abc123",
+		Date:    "2026-05-14T00:00:00Z",
+	}, nil, nil, nil)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantData   map[string]string
+	}{
+		{
+			name:       "versioned health",
+			path:       "/v1/healthz",
+			wantStatus: http.StatusOK,
+			wantData: map[string]string{
+				"status": "ok",
+			},
+		},
+		{
+			name:       "versioned version",
+			path:       "/v1/version",
+			wantStatus: http.StatusOK,
+			wantData: map[string]string{
+				"version":            "1.2.3",
+				"commit":             "abc123",
+				"date":               "2026-05-14T00:00:00Z",
+				"api_schema_version": "yalla.api.v1",
+				"migration_version":  "unknown",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("content-type = %q, want application/json", got)
+			}
+
+			var env struct {
+				SchemaVersion string            `json:"schema_version"`
+				OK            bool              `json:"ok"`
+				Data          map[string]string `json:"data"`
+				RequestID     string            `json:"request_id"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if env.SchemaVersion != "yalla.output.v1" {
+				t.Errorf("schema_version = %q, want yalla.output.v1", env.SchemaVersion)
+			}
+			if !env.OK {
+				t.Errorf("ok = false, want true")
+			}
+			if env.RequestID == "" {
+				t.Errorf("request_id is empty, want telemetry-correlated id")
+			}
+			for key, want := range tt.wantData {
+				if got := env.Data[key]; got != want {
+					t.Errorf("data[%q] = %q, want %q", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestVersionedFrontendHandoffReadyzReflectsReadinessTransitions(t *testing.T) {
+	t.Parallel()
+
+	readiness := runtime.NewReadiness("migrations")
+	handler := newTestHandler(runtime.BuildInfo{}, readiness, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/readyz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unready status = %d, want %d; body %s",
+			rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var errEnv struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Error         struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errEnv); err != nil {
+		t.Fatalf("decode unready response: %v", err)
+	}
+	if errEnv.SchemaVersion != "yalla.error.v1" {
+		t.Errorf("schema_version = %q, want yalla.error.v1", errEnv.SchemaVersion)
+	}
+	if errEnv.OK {
+		t.Errorf("ok = true, want false")
+	}
+	if errEnv.Error.Code != "E_SERVER" {
+		t.Errorf("error.code = %q, want E_SERVER", errEnv.Error.Code)
+	}
+	if errEnv.RequestID == "" {
+		t.Errorf("request_id is empty, want telemetry-correlated id")
+	}
+
+	readiness.MarkReady("migrations")
+	req = httptest.NewRequest(http.MethodGet, "/v1/readyz", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready status = %d, want %d; body %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var okEnv struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Data          struct {
+			Status string          `json:"status"`
+			Checks map[string]bool `json:"checks"`
+		} `json:"data"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okEnv); err != nil {
+		t.Fatalf("decode ready response: %v", err)
+	}
+	if okEnv.SchemaVersion != "yalla.output.v1" || !okEnv.OK {
+		t.Errorf("ready envelope = %+v, want yalla.output.v1 ok=true", okEnv)
+	}
+	if okEnv.RequestID == "" {
+		t.Errorf("request_id is empty, want telemetry-correlated id")
+	}
+	if okEnv.Data.Status != "ready" {
+		t.Errorf("data.status = %q, want ready", okEnv.Data.Status)
+	}
+	if !okEnv.Data.Checks["migrations"] {
+		t.Errorf("data.checks[migrations] = false, want true once the gate passes")
+	}
+}
+
 func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -576,6 +729,49 @@ func TestHandlerServesOpenAPIDocument(t *testing.T) {
 	for _, want := range []string{"/healthz", "/healthz/backup", "/readyz", "/version", "/openapi.json"} {
 		if _, ok := doc.Paths[want]; !ok {
 			t.Errorf("openapi paths missing %q", want)
+		}
+	}
+}
+
+func TestHandlerServesScalarAPIReference(t *testing.T) {
+	t.Parallel()
+
+	handler := newTestHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/reference", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content-type = %q, want text/html; charset=utf-8", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://cdn.jsdelivr.net") ||
+		!strings.Contains(csp, "https://fonts.scalar.com") ||
+		!strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("Content-Security-Policy = %q, want Scalar CDNs and same-origin OpenAPI fetch", csp)
+	}
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Yalla Control Plane API Reference",
+		"https://cdn.jsdelivr.net/npm/@scalar/api-reference@",
+		"Scalar.createApiReference",
+		"url: '/openapi.json'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Scalar reference HTML missing %q; body: %s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"yka_", "Authorization", "YALLA_DOKPLOY_TOKEN"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Scalar reference HTML leaks forbidden token-shaped text %q", forbidden)
 		}
 	}
 }

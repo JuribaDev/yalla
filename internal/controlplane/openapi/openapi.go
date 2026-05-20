@@ -44,6 +44,7 @@ const (
 	SchemaErrorEnvelope   = "ErrorEnvelope"
 	SchemaErrorBody       = "ErrorBody"
 	SchemaOpenAPIDocument = "OpenAPIDocument"
+	SchemaHTMLDocument    = "HTMLDocument"
 )
 
 func schemaRef(name string) string { return "#/components/schemas/" + name }
@@ -71,6 +72,7 @@ type Endpoint struct {
 	SuccessStatus      int         // Documented success status; 0 => 200.
 	SuccessDescription string      // Description of the success response.
 	SuccessSchema      string      // Success body component schema; "" => SuccessEnvelope.
+	SuccessContentType string      // Success media type; "" => application/json.
 }
 
 // PathParam describes one {placeholder} segment of an Endpoint's path. Every
@@ -289,7 +291,7 @@ func operationFor(ep Endpoint) Operation {
 		Parameters:     pathParameters(ep.PathParams),
 		RequiredAction: ep.RequiredAction,
 		Responses: Responses{
-			strconv.Itoa(status): jsonResponse(successDesc, successSchema),
+			strconv.Itoa(status): contentResponse(successDesc, successSchema, ep.SuccessContentType),
 			"default":            jsonResponse("Error response using the stable yalla.error.v1 envelope.", SchemaErrorEnvelope),
 		},
 	}
@@ -319,10 +321,19 @@ func pathParameters(params []PathParam) []Parameter {
 // jsonResponse builds an application/json response referencing a component
 // schema by name.
 func jsonResponse(description, schemaName string) Response {
+	return contentResponse(description, schemaName, "application/json")
+}
+
+// contentResponse builds a response for the given media type referencing a
+// component schema by name.
+func contentResponse(description, schemaName, mediaType string) Response {
+	if mediaType == "" {
+		mediaType = "application/json"
+	}
 	return Response{
 		Description: description,
 		Content: ContentMap{
-			"application/json": Media{Schema: Schema{Ref: schemaRef(schemaName)}},
+			mediaType: Media{Schema: Schema{Ref: schemaRef(schemaName)}},
 		},
 	}
 }
@@ -395,6 +406,10 @@ func standardSchemas() SchemaMap {
 		SchemaOpenAPIDocument: {
 			Type:        "object",
 			Description: "An OpenAPI 3.1 document. Free-form; consult the OpenAPI specification for its shape.",
+		},
+		SchemaHTMLDocument: {
+			Type:        "string",
+			Description: "An HTML document served directly to browsers.",
 		},
 	}
 }
