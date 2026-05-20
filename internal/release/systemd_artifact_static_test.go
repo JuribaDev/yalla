@@ -81,6 +81,7 @@ func TestSystemdArtifactKeepsSecretsRuntimeOnly(t *testing.T) {
 		"YALLA_SIGNING_KEYS=<redacted:signing-keys>",
 		"YALLA_SECRET_KEYS=<redacted:secret-keys>",
 		"YALLA_DOKPLOY_TOKEN=<redacted:dokploy-token>",
+		"YALLA_INTERNAL_WORKER_TOKEN=<redacted:internal-worker-token>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("deploy/systemd/control-plane.env.example missing redacted placeholder %q", want)

@@ -474,8 +474,9 @@ func main() {
 		os.Exit(1)
 	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
-		Store:       credentials,
-		SigningKeys: cfg.SigningKeys,
+		Store:               credentials,
+		SigningKeys:         cfg.SigningKeys,
+		InternalWorkerToken: cfg.InternalWorkerToken,
 	})
 	if err != nil {
 		logger.Error("failed to initialize the authenticator", "error", err.Error())

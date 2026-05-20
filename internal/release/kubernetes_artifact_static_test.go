@@ -39,6 +39,7 @@ func TestKubernetesArtifactDefinesAPIAndWorkerWorkloads(t *testing.T) {
 func TestKubernetesArtifactKeepsSecretsRuntimeOnly(t *testing.T) {
 	objects := readKubernetesObjects(t, filepath.Join(projectRoot(t), kubernetesManifestPath))
 	secretNames := map[string]bool{}
+	internalWorkerTokenEnv := map[string]bool{}
 	for _, obj := range objects {
 		if obj.Kind == "Secret" {
 			t.Fatalf("%s must not check in Secret objects; bind an operator-created secret by name instead", kubernetesManifestPath)
@@ -50,6 +51,9 @@ func TestKubernetesArtifactKeepsSecretsRuntimeOnly(t *testing.T) {
 		for _, c := range kubeList(t, podSpec["containers"]) {
 			for _, env := range kubeList(t, c["env"]) {
 				name := kubeString(t, env["name"], "env.name")
+				if name == "YALLA_INTERNAL_WORKER_TOKEN" {
+					internalWorkerTokenEnv[obj.Metadata.Name] = true
+				}
 				if isSecretShapedEnvName(name) {
 					if _, ok := env["value"]; ok {
 						t.Fatalf("%s deployment %s env %s uses literal value; use secretKeyRef", kubernetesManifestPath, obj.Metadata.Name, name)
@@ -67,6 +71,11 @@ func TestKubernetesArtifactKeepsSecretsRuntimeOnly(t *testing.T) {
 	}
 	if !secretNames["yalla-control-plane-secrets"] {
 		t.Fatalf("%s must bind secret-shaped config from yalla-control-plane-secrets, got %v", kubernetesManifestPath, keysOf(secretNames))
+	}
+	for _, deployment := range []string{"yalla-api", "yalla-worker"} {
+		if !internalWorkerTokenEnv[deployment] {
+			t.Fatalf("%s deployment %s must bind YALLA_INTERNAL_WORKER_TOKEN from yalla-control-plane-secrets", kubernetesManifestPath, deployment)
+		}
 	}
 }
 

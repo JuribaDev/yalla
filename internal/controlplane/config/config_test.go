@@ -17,16 +17,17 @@ import (
 // failure paths.
 func strictEnv() map[string]string {
 	return map[string]string{
-		EnvProfile:        "production",
-		EnvAPIAddr:        ":9090",
-		EnvPublicURL:      "https://api.yalla.example",
-		EnvDatabaseURL:    "postgres://yalla:s3cr3t@db.internal:5432/yalla",
-		EnvSigningKeys:    "primary-signing-key-aaaa,rotated-signing-key-bb",
-		EnvSecretKeys:     "0011223344556677889900112233445566778899001122334455667788990011,aabbccddeeff00112233445566778899aabbccddeeff001122334455667788aa",
-		EnvDokployBaseURL: "https://dokploy.internal",
-		EnvDokployToken:   "dokploy-service-token-zzzz",
-		EnvLogLevel:       "info",
-		EnvFeatureFlags:   "billing,preview=false",
+		EnvProfile:             "production",
+		EnvAPIAddr:             ":9090",
+		EnvPublicURL:           "https://api.yalla.example",
+		EnvDatabaseURL:         "postgres://yalla:s3cr3t@db.internal:5432/yalla",
+		EnvSigningKeys:         "primary-signing-key-aaaa,rotated-signing-key-bb",
+		EnvSecretKeys:          "0011223344556677889900112233445566778899001122334455667788990011,aabbccddeeff00112233445566778899aabbccddeeff001122334455667788aa",
+		EnvDokployBaseURL:      "https://dokploy.internal",
+		EnvDokployToken:        "dokploy-service-token-zzzz",
+		EnvInternalWorkerToken: "internal-worker-token-0123456789abcdef",
+		EnvLogLevel:            "info",
+		EnvFeatureFlags:        "billing,preview=false",
 	}
 }
 
@@ -51,6 +52,9 @@ func TestLoadSuccessProduction(t *testing.T) {
 	}
 	if got := cfg.ActiveSigningKey(); got != "primary-signing-key-aaaa" {
 		t.Errorf("active signing key = %q", got)
+	}
+	if cfg.InternalWorkerToken != "internal-worker-token-0123456789abcdef" {
+		t.Errorf("internal worker token = %q, want configured fixture", cfg.InternalWorkerToken)
 	}
 	if len(cfg.SigningKeys) != 2 {
 		t.Errorf("signing keys = %d, want 2", len(cfg.SigningKeys))
@@ -108,6 +112,9 @@ func TestLoadLocalAndTestAllowMissingSecrets(t *testing.T) {
 			if cfg.DokployToken != "" {
 				t.Errorf("expected empty dokploy token in %s profile", profile)
 			}
+			if cfg.InternalWorkerToken != "" {
+				t.Errorf("expected empty internal worker token in %s profile", profile)
+			}
 		})
 	}
 }
@@ -156,6 +163,11 @@ func TestLoadValidationFailures(t *testing.T) {
 			wantSub: "too short",
 		},
 		{
+			name:    "short internal worker token",
+			mutate:  func(e map[string]string) { e[EnvInternalWorkerToken] = "tooshort" },
+			wantSub: EnvInternalWorkerToken,
+		},
+		{
 			name:    "bad feature flag value",
 			mutate:  func(e map[string]string) { e[EnvFeatureFlags] = "billing=maybe" },
 			wantSub: EnvFeatureFlags,
@@ -185,6 +197,7 @@ func TestLoadValidationFailures(t *testing.T) {
 			mutate: func(e map[string]string) {
 				delete(e, EnvDatabaseURL)
 				delete(e, EnvDokployToken)
+				delete(e, EnvInternalWorkerToken)
 			},
 			wantSub: "requires",
 		},
@@ -252,6 +265,9 @@ func TestRedactedHidesSecrets(t *testing.T) {
 	if strings.Contains(r.DokployToken, "dokploy-service-token") {
 		t.Errorf("redacted dokploy token leaked secret: %q", r.DokployToken)
 	}
+	if strings.Contains(r.InternalWorkerToken, "internal-worker-token") {
+		t.Errorf("redacted internal worker token leaked secret: %q", r.InternalWorkerToken)
+	}
 	if r.SigningKeysConfigured != 2 {
 		t.Errorf("signing keys configured = %d, want 2", r.SigningKeysConfigured)
 	}
@@ -261,7 +277,7 @@ func TestRedactedHidesSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal redacted config: %v", err)
 	}
-	for _, secret := range []string{"s3cr3t", "primary-signing-key", "rotated-signing-key", "dokploy-service-token"} {
+	for _, secret := range []string{"s3cr3t", "primary-signing-key", "rotated-signing-key", "dokploy-service-token", "internal-worker-token"} {
 		if bytes.Contains(blob, []byte(secret)) {
 			t.Errorf("redacted JSON leaked %q: %s", secret, blob)
 		}
@@ -283,7 +299,7 @@ func TestLogValueRedactsSecrets(t *testing.T) {
 	logger.Info("startup", slog.Any("config", cfg))
 
 	out := buf.String()
-	for _, secret := range []string{"s3cr3t", "primary-signing-key", "rotated-signing-key", "dokploy-service-token"} {
+	for _, secret := range []string{"s3cr3t", "primary-signing-key", "rotated-signing-key", "dokploy-service-token", "internal-worker-token"} {
 		if strings.Contains(out, secret) {
 			t.Errorf("slog output leaked %q: %s", secret, out)
 		}
@@ -302,7 +318,7 @@ func TestStringRedactsSecrets(t *testing.T) {
 		t.Fatalf("Load returned error: %v", err)
 	}
 	s := cfg.String()
-	for _, secret := range []string{"s3cr3t", "primary-signing-key", "dokploy-service-token"} {
+	for _, secret := range []string{"s3cr3t", "primary-signing-key", "dokploy-service-token", "internal-worker-token"} {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)
 		}

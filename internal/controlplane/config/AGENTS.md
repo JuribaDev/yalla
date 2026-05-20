@@ -18,11 +18,11 @@ worker (`cmd/yalla-worker`).
 - Every validation failure is a typed `yerr.CodeConfig` error and **must never
   echo a secret value**. `DatabaseURL` errors describe the fault without
   printing the DSN; signing-key errors reference an index, not the key.
-- Secrets are `DatabaseURL`, `SigningKeys`, and `DokployToken`. Never log or
-  format them directly — use `Redacted()`, `LogValue()` (slog.LogValuer), or
-  `String()` (fmt.Stringer), all of which scrub credentials. There are tests
-  asserting no secret leaks through any of these paths; keep them green when
-  adding fields.
+- Secrets are `DatabaseURL`, `SigningKeys`, `SecretKeys`, `DokployToken`, and
+  `InternalWorkerToken`. Never log or format them directly — use `Redacted()`,
+  `LogValue()` (slog.LogValuer), or `String()` (fmt.Stringer), all of which
+  scrub credentials. There are tests asserting no secret leaks through any of
+  these paths; keep them green when adding fields.
 - When you add a config field: add its `Env*` constant, wire it in `Load`,
   add format/required validation in `Validate`, extend `RedactedConfig` +
   `LogValue` + `String` if it is a secret, and add success + failure tests.

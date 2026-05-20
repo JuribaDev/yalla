@@ -20,11 +20,12 @@
 //  3. The stable CodeConfig error classification for every validation
 //     failure, so a misconfigured process exits deterministically.
 //
-// Secrets — the Postgres DSN, signing keys, and the Dokploy service token —
-// must never reach logs, errors, audit metadata, or test output. The Config
-// type implements slog.LogValuer and fmt.Stringer with redacted views so an
-// accidental structured-log or %v never leaks a credential. Validation
-// errors describe which field failed without echoing its value.
+// Secrets — the Postgres DSN, signing keys, secret-encryption keys, the
+// Dokploy service token, and the internal worker token — must never reach
+// logs, errors, audit metadata, or test output. The Config type implements
+// slog.LogValuer and fmt.Stringer with redacted views so an accidental
+// structured-log or %v never leaks a credential. Validation errors describe
+// which field failed without echoing its value.
 package config
 
 import (
@@ -74,6 +75,11 @@ const (
 	// worker. Treated as a secret: never logged and never exposed to
 	// customer-facing endpoints.
 	EnvDokployToken = "YALLA_DOKPLOY_TOKEN"
+	// EnvInternalWorkerToken is the shared secret accepted by the API for
+	// private worker callbacks. It must match the worker's configured value.
+	// Treated as a secret: never logged and never exposed to customer-facing
+	// endpoints.
+	EnvInternalWorkerToken = "YALLA_INTERNAL_WORKER_TOKEN"
 	// EnvShutdownTimeout bounds how long a backend process waits to drain
 	// in-flight HTTP requests and release in-flight job leases during a
 	// graceful shutdown. Accepts any Go duration string (e.g. "15s", "1m").
@@ -174,9 +180,9 @@ func (p Profile) Valid() bool {
 // and worker binaries. It is immutable from a caller's perspective: load it
 // once at startup and pass it by pointer.
 //
-// The DatabaseURL, SigningKeys, SecretKeys, and DokployToken fields are
-// secrets. Never log, format, or serialise them directly; use Redacted,
-// LogValue, or String, all of which scrub credentials.
+// The DatabaseURL, SigningKeys, SecretKeys, DokployToken, and
+// InternalWorkerToken fields are secrets. Never log, format, or serialise them
+// directly; use Redacted, LogValue, or String, all of which scrub credentials.
 type Config struct {
 	// Profile is the resolved deployment profile.
 	Profile Profile
@@ -200,6 +206,9 @@ type Config struct {
 	DokployBaseURL string
 	// DokployToken is the privileged Dokploy service token. Secret.
 	DokployToken string
+	// InternalWorkerToken is the shared secret accepted by the API for
+	// private worker callbacks. Secret.
+	InternalWorkerToken string
 	// ShutdownTimeout bounds graceful shutdown: the HTTP server stops
 	// accepting connections and drains in-flight requests within this
 	// window, and the worker releases in-flight job leases within it.
@@ -326,6 +335,7 @@ type RedactedConfig struct {
 	SecretKeysConfigured  int             `json:"secret_keys_configured"`
 	DokployBaseURL        string          `json:"dokploy_base_url"`
 	DokployToken          string          `json:"dokploy_token"`
+	InternalWorkerToken   string          `json:"internal_worker_token"`
 	ShutdownTimeout       string          `json:"shutdown_timeout"`
 	BackupStatusFile      string          `json:"backup_status_file"`
 	BackupMaxAge          string          `json:"backup_max_age"`
@@ -361,6 +371,7 @@ func (c *Config) Redacted() RedactedConfig {
 		SecretKeysConfigured:  len(c.SecretKeys),
 		DokployBaseURL:        c.DokployBaseURL,
 		DokployToken:          redact(c.DokployToken),
+		InternalWorkerToken:   redact(c.InternalWorkerToken),
 		ShutdownTimeout:       c.ShutdownTimeout.String(),
 		BackupStatusFile:      c.BackupStatusFile,
 		BackupMaxAge:          c.BackupMaxAge.String(),
@@ -394,6 +405,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Int("secret_keys_configured", r.SecretKeysConfigured),
 		slog.String("dokploy_base_url", r.DokployBaseURL),
 		slog.String("dokploy_token", r.DokployToken),
+		slog.String("internal_worker_token", r.InternalWorkerToken),
 		slog.String("shutdown_timeout", r.ShutdownTimeout),
 		slog.String("backup_status_file", r.BackupStatusFile),
 		slog.String("backup_max_age", r.BackupMaxAge),
@@ -440,9 +452,9 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d secret_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d secret_keys_configured:%d dokploy_base_url:%s dokploy_token:%s internal_worker_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
 		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured, r.SecretKeysConfigured,
-		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.BackupStatusFile, r.BackupMaxAge,
+		r.DokployBaseURL, r.DokployToken, r.InternalWorkerToken, r.ShutdownTimeout, r.BackupStatusFile, r.BackupMaxAge,
 		r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
 	)
 }

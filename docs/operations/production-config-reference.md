@@ -95,6 +95,16 @@ starts without real credentials.
   customer-facing endpoints. Example placeholder:
   `YALLA_DOKPLOY_TOKEN=<redacted:YALLA_DOKPLOY_TOKEN>`
 
+### `YALLA_INTERNAL_WORKER_TOKEN`
+- **Required for:** `staging`, `production`
+- **Validation:** At least 32 characters.
+- **Description:** Shared secret accepted by `yalla-api` for private internal
+  worker callbacks. Configure the same value for `yalla-api` and
+  `yalla-worker`.
+- **Security:** Treated as a secret. Never logged and never exposed to
+  customer-facing endpoints. Example placeholder:
+  `YALLA_INTERNAL_WORKER_TOKEN=<redacted:YALLA_INTERNAL_WORKER_TOKEN>`
+
 ## Optional environment variables
 
 ### `YALLA_SHUTDOWN_TIMEOUT`
@@ -182,7 +192,7 @@ with a typed `E_CONFIG` error and a deterministic message that names the field
 without echoing its value. Examples:
 
 ```
-profile "production" requires YALLA_DATABASE_URL, YALLA_DOKPLOY_BASE_URL, YALLA_DOKPLOY_TOKEN, YALLA_PUBLIC_URL, YALLA_SECRET_KEYS, YALLA_SIGNING_KEYS
+profile "production" requires YALLA_DATABASE_URL, YALLA_DOKPLOY_BASE_URL, YALLA_DOKPLOY_TOKEN, YALLA_INTERNAL_WORKER_TOKEN, YALLA_PUBLIC_URL, YALLA_SECRET_KEYS, YALLA_SIGNING_KEYS
 invalid YALLA_API_ADDR "bad-address": missing port in address
 invalid YALLA_SHUTDOWN_TIMEOUT 500ms is out of range (want between 1s and 5m)
 ```
@@ -209,12 +219,7 @@ durable job state, worker metrics, dead-letter alerts, and structured JSON logs.
 
 ## Redaction rules
 
-Logs, errors, audit metadata, and dry-run output must redact tokens, cookies,
-API keys, database URLs, Dokploy tokens, signing keys, secret-encryption keys,
-rendered environment variable values, request bodies, and response bodies. The
-rule is explicit: tokens, cookies, API keys, database URLs, Dokploy tokens must
-never appear in any diagnostic output. Signing keys, secret-encryption keys,
-and Rendered environment variable values are equally restricted.
+Logs, errors, audit metadata, and dry-run output must redact tokens, cookies, API keys, database URLs, Dokploy tokens, internal worker tokens, signing keys, secret-encryption keys, rendered environment variable values, request bodies, and response bodies. The rule is explicit: tokens, cookies, API keys, database URLs, Dokploy tokens, and internal worker tokens must never appear in any diagnostic output. Signing keys, secret-encryption keys, and Rendered environment variable values are equally restricted.
 
 The `Config` type implements `slog.LogValuer` and `fmt.Stringer` with redacted
 views so an accidental structured-log or `%v` print never leaks a credential.

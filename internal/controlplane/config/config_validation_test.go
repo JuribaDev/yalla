@@ -25,10 +25,11 @@ import (
 //     The API binary (`cmd/yalla-api`) and the worker binary
 //     (`cmd/yalla-worker`) both call `config.LoadFromEnv` once at
 //     startup; a regression that silently accepted a malformed
-//     YALLA_DATABASE_URL, a non-hex YALLA_SECRET_KEYS entry, an
-//     out-of-range YALLA_SHUTDOWN_TIMEOUT, or a strict profile with
-//     a missing operational field would let a misconfigured process
-//     enter the request path. The coverage member walks a scenario
+//     YALLA_DATABASE_URL, a short YALLA_INTERNAL_WORKER_TOKEN, a
+//     non-hex YALLA_SECRET_KEYS entry, an out-of-range
+//     YALLA_SHUTDOWN_TIMEOUT, or a strict profile with a missing
+//     operational field would let a misconfigured process enter the
+//     request path. The coverage member walks a scenario
 //     table built from every documented rule and asserts each
 //     produces a typed `*yerr.Error` with `Code == CodeConfig`, an
 //     error message that names the offending field, and an error
@@ -96,8 +97,8 @@ type configValidationScenario struct {
 //
 //   - profile, log level, listen addr, public URL, dokploy URL,
 //     database scheme (Validate)
-//   - signing-key minimum length, secret-key hex length, secret-key
-//     non-hex characters (Validate)
+//   - signing-key minimum length, internal-worker-token minimum length,
+//     secret-key hex length, secret-key non-hex characters (Validate)
 //   - shutdown timeout malformed / too small / too large (Validate)
 //   - backup status file must be absolute, backup max age must be
 //     non-negative (Validate)
@@ -106,7 +107,8 @@ type configValidationScenario struct {
 //   - feature flag value malformed and feature flag name empty
 //     (Validate)
 //   - strict-profile presence checks for PublicURL, DatabaseURL,
-//     SigningKeys, SecretKeys, DokployBaseURL, DokployToken
+//     SigningKeys, SecretKeys, DokployBaseURL, DokployToken,
+//     InternalWorkerToken
 //     (requireStrictFields)
 //
 // The scenarios are deliberately distinct so a future regression
@@ -149,6 +151,11 @@ func buildConfigValidationScenarios() []configValidationScenario {
 			name:    "short_signing_key",
 			mutate:  func(e map[string]string) { e[EnvSigningKeys] = "tooshort" },
 			wantSub: "too short",
+		},
+		{
+			name:    "short_internal_worker_token",
+			mutate:  func(e map[string]string) { e[EnvInternalWorkerToken] = "tooshort" },
+			wantSub: EnvInternalWorkerToken,
 		},
 		{
 			name: "wrong_length_secret_key",
@@ -264,6 +271,11 @@ func buildConfigValidationScenarios() []configValidationScenario {
 			mutate:  func(e map[string]string) { delete(e, EnvDokployToken) },
 			wantSub: "requires",
 		},
+		{
+			name:    "strict_missing_internal_worker_token",
+			mutate:  func(e map[string]string) { delete(e, EnvInternalWorkerToken) },
+			wantSub: "requires",
+		},
 	}
 }
 
@@ -271,9 +283,9 @@ func buildConfigValidationScenarios() []configValidationScenario {
 // env with every secret-bearing field rewritten to embed the
 // `configValidationSecretMarker` literal. The marker is the redaction
 // canary every error string MUST avoid; a regression that started
-// formatting the offending DSN, signing key, secret key, or Dokploy
-// token into the validation error would echo the marker and fail the
-// redaction predicate before reaching production.
+// formatting the offending DSN, signing key, secret key, Dokploy token,
+// or internal worker token into the validation error would echo the marker
+// and fail the redaction predicate before reaching production.
 func configValidationMarkedEnv() map[string]string {
 	env := strictEnv()
 	env[EnvDatabaseURL] = "postgres://yalla:" + configValidationSecretMarker + "@db.internal:5432/yalla"
@@ -282,9 +294,10 @@ func configValidationMarkedEnv() map[string]string {
 	// strategy (a sentinel hex literal) so the wrong-length / non-hex
 	// scenarios that swap the value with non-hex content carry no real
 	// AES key material into the assertion. The marker stays in the
-	// signing key + DSN + Dokploy token positions which are the most
-	// common leak sites.
+	// signing key + DSN + Dokploy token + internal worker token
+	// positions which are the most common leak sites.
 	env[EnvDokployToken] = configValidationSecretMarker + "-dokploy-token-zzzz"
+	env[EnvInternalWorkerToken] = configValidationSecretMarker + "-internal-worker-token-zzzz"
 	return env
 }
 

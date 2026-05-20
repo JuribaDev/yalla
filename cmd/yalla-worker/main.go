@@ -59,6 +59,11 @@ func main() {
 			"error", "YALLA_DOKPLOY_BASE_URL and YALLA_DOKPLOY_TOKEN are required to run the control-plane worker")
 		os.Exit(1)
 	}
+	if cfg.InternalWorkerToken == "" {
+		logger.Error("invalid backend configuration",
+			"error", "YALLA_INTERNAL_WORKER_TOKEN is required to run the control-plane worker")
+		os.Exit(1)
+	}
 
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {

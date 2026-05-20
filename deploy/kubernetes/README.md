@@ -15,14 +15,17 @@ one-off operator command before applying the workloads:
 kubectl -n yalla-control-plane create secret generic yalla-control-plane-secrets \
   --from-literal=YALLA_DATABASE_URL='<redacted>' \
   --from-literal=YALLA_SIGNING_KEYS='<redacted>' \
+  --from-literal=YALLA_SECRET_KEYS='<redacted>' \
   --from-literal=YALLA_DOKPLOY_BASE_URL='<redacted>' \
   --from-literal=YALLA_DOKPLOY_TOKEN='<redacted>' \
+  --from-literal=YALLA_INTERNAL_WORKER_TOKEN='<redacted>' \
   --dry-run=client -o yaml
 ```
 
 Do not commit the rendered Secret. The checked-in Deployment binds those
-keys by `secretKeyRef` at runtime so database URLs, signing material, and
-Dokploy credentials are never baked into images or files.
+keys by `secretKeyRef` at runtime so database URLs, signing material,
+secret-encryption keys, Dokploy credentials, and internal worker callback
+tokens are never baked into images or files.
 
 ## Verification
 

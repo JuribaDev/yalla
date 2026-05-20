@@ -21,6 +21,7 @@ func TestConfigExamplesArtifactDefinesProductionRuntimeContract(t *testing.T) {
 		"YALLA_SECRET_KEYS=<redacted:secret-keys>",
 		"YALLA_DOKPLOY_BASE_URL=https://dokploy.internal.example.com",
 		"YALLA_DOKPLOY_TOKEN=<redacted:dokploy-token>",
+		"YALLA_INTERNAL_WORKER_TOKEN=<redacted:internal-worker-token>",
 		"YALLA_BACKUP_STATUS_FILE=/var/lib/yalla/backup.status",
 		"YALLA_BACKUP_MAX_AGE=26h",
 		"YALLA_LOG_LEVEL=info",

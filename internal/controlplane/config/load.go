@@ -101,6 +101,11 @@ var defaultsByProfile = map[Profile]profileDefaults{
 // would produce weak signatures, so it is rejected outright.
 const minSigningKeyLen = 16
 
+// minInternalWorkerTokenLen is the shortest internal worker token Load
+// accepts. The token gates private worker callbacks, so accepting placeholder-
+// sized values would silently weaken the API's internal-only boundary.
+const minInternalWorkerTokenLen = 32
+
 // secretKeyHexLen is the required hex-encoded length of a YALLA_SECRET_KEYS
 // entry. Each key seals through AES-256-GCM, which requires exactly 32 raw
 // bytes — 64 hex characters. A shorter or longer entry is almost always a
@@ -165,20 +170,21 @@ func Load(lookup LookupFunc) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Profile:          profile,
-		APIAddr:          valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
-		PublicURL:        valueOr(lookup, EnvPublicURL, defaults.publicURL),
-		DatabaseURL:      valueOr(lookup, EnvDatabaseURL, ""),
-		SigningKeys:      splitList(valueOr(lookup, EnvSigningKeys, "")),
-		SecretKeys:       splitList(valueOr(lookup, EnvSecretKeys, "")),
-		DokployBaseURL:   valueOr(lookup, EnvDokployBaseURL, ""),
-		DokployToken:     valueOr(lookup, EnvDokployToken, ""),
-		ShutdownTimeout:  shutdownTimeout,
-		BackupStatusFile: strings.TrimSpace(valueOr(lookup, EnvBackupStatusFile, "")),
-		BackupMaxAge:     backupMaxAge,
-		LogLevel:         logLevel,
-		FeatureFlags:     flags,
-		RateLimit:        rateLimit,
+		Profile:             profile,
+		APIAddr:             valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
+		PublicURL:           valueOr(lookup, EnvPublicURL, defaults.publicURL),
+		DatabaseURL:         valueOr(lookup, EnvDatabaseURL, ""),
+		SigningKeys:         splitList(valueOr(lookup, EnvSigningKeys, "")),
+		SecretKeys:          splitList(valueOr(lookup, EnvSecretKeys, "")),
+		DokployBaseURL:      valueOr(lookup, EnvDokployBaseURL, ""),
+		DokployToken:        valueOr(lookup, EnvDokployToken, ""),
+		InternalWorkerToken: valueOr(lookup, EnvInternalWorkerToken, ""),
+		ShutdownTimeout:     shutdownTimeout,
+		BackupStatusFile:    strings.TrimSpace(valueOr(lookup, EnvBackupStatusFile, "")),
+		BackupMaxAge:        backupMaxAge,
+		LogLevel:            logLevel,
+		FeatureFlags:        flags,
+		RateLimit:           rateLimit,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -232,6 +238,11 @@ func (c *Config) Validate() error {
 				EnvSigningKeys, i+1, minSigningKeyLen)
 		}
 	}
+	if c.InternalWorkerToken != "" && len(c.InternalWorkerToken) < minInternalWorkerTokenLen {
+		return yerr.Newf(yerr.CodeConfig,
+			"%s is too short (need at least %d characters)",
+			EnvInternalWorkerToken, minInternalWorkerTokenLen)
+	}
 	for i, key := range c.SecretKeys {
 		if len(key) != secretKeyHexLen {
 			return yerr.Newf(yerr.CodeConfig,
@@ -276,9 +287,9 @@ func (c *Config) Validate() error {
 // requireStrictFields enforces that every operational field needed to serve
 // real traffic is present. It runs only for staging and production so a
 // developer running the local profile is never blocked by a missing
-// Dokploy token.
+// Dokploy token, or internal worker token.
 func (c *Config) requireStrictFields() error {
-	missing := make([]string, 0, 4)
+	missing := make([]string, 0, 7)
 	if c.PublicURL == "" {
 		missing = append(missing, EnvPublicURL)
 	}
@@ -296,6 +307,9 @@ func (c *Config) requireStrictFields() error {
 	}
 	if c.DokployToken == "" {
 		missing = append(missing, EnvDokployToken)
+	}
+	if c.InternalWorkerToken == "" {
+		missing = append(missing, EnvInternalWorkerToken)
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)

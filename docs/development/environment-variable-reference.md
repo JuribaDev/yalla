@@ -35,8 +35,9 @@ Customer / Agent / CI
 ```
 
 Customers must never receive Dokploy API tokens. Secrets — the Postgres DSN,
-signing keys, secret-encryption keys, and the Dokploy service token — must never
-reach logs, errors, audit metadata, or test output.
+signing keys, secret-encryption keys, the Dokploy service token, and the
+internal worker token — must never reach logs, errors, audit metadata, or test
+output.
 
 ## Profiles
 
@@ -111,6 +112,15 @@ provisioning.
 - **Security:** Treated as a secret. Never logged and never exposed to
 customer-facing endpoints. Example placeholder:
 `YALLA_DOKPLOY_TOKEN=<redacted:YALLA_DOKPLOY_TOKEN>`
+
+### `YALLA_INTERNAL_WORKER_TOKEN`
+- **Required for:** `staging`, `production`
+- **Validation:** At least 32 characters.
+- **Description:** Shared secret accepted by `yalla-api` for private internal
+worker callbacks. Configure the same value for `yalla-api` and `yalla-worker`.
+- **Security:** Treated as a secret. Never logged and never exposed to
+customer-facing endpoints. Example placeholder:
+`YALLA_INTERNAL_WORKER_TOKEN=<redacted:YALLA_INTERNAL_WORKER_TOKEN>`
 
 ## Optional environment variables
 
@@ -199,7 +209,7 @@ with a typed `E_CONFIG` error and a deterministic message that names the field
 without echoing its value. Examples:
 
 ```text
-profile "production" requires YALLA_DATABASE_URL, YALLA_DOKPLOY_BASE_URL, YALLA_DOKPLOY_TOKEN, YALLA_PUBLIC_URL, YALLA_SECRET_KEYS, YALLA_SIGNING_KEYS
+profile "production" requires YALLA_DATABASE_URL, YALLA_DOKPLOY_BASE_URL, YALLA_DOKPLOY_TOKEN, YALLA_INTERNAL_WORKER_TOKEN, YALLA_PUBLIC_URL, YALLA_SECRET_KEYS, YALLA_SIGNING_KEYS
 invalid YALLA_API_ADDR "bad-address": missing port in address
 invalid YALLA_SHUTDOWN_TIMEOUT 500ms is out of range (want between 1s and 5m)
 ```
@@ -222,6 +232,7 @@ export YALLA_SIGNING_KEYS=<redacted:signing-keys>
 export YALLA_SECRET_KEYS=<redacted:secret-keys>
 export YALLA_DOKPLOY_BASE_URL=https://dokploy.internal.example
 export YALLA_DOKPLOY_TOKEN=<redacted:dokploy-token>
+export YALLA_INTERNAL_WORKER_TOKEN=<redacted:internal-worker-token>
 ```
 
 Run the API:
@@ -287,8 +298,4 @@ This must never run against production.
 
 ## Redaction contract
 
-The backend must redact tokens, cookies, API keys, database URLs, Dokploy tokens, signing keys, secret-encryption keys, and rendered environment variable values in logs, errors, audit metadata, and test output. Signing keys, secret-encryption keys, and Rendered environment variable values must never reach stdout. Secret-shaped values that are configured collapse to a presence indicator; unset values stay empty.
-The backend must redact tokens, cookies, API keys, database URLs, Dokploy
-tokens, signing keys, secret-encryption keys, and rendered environment variable
-values in logs, errors, audit metadata, and test output. Secret-shaped values
-that are configured collapse to a presence indicator; unset values stay empty.
+The backend must redact tokens, cookies, API keys, database URLs, Dokploy tokens, internal worker tokens, signing keys, secret-encryption keys, and rendered environment variable values in logs, errors, audit metadata, and test output. Signing keys, secret-encryption keys, and Rendered environment variable values must never reach stdout. Secret-shaped values that are configured collapse to a presence indicator; unset values stay empty.

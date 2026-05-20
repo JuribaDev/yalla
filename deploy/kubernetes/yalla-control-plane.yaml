@@ -119,6 +119,11 @@ spec:
                 secretKeyRef:
                   name: yalla-control-plane-secrets
                   key: YALLA_SIGNING_KEYS
+            - name: YALLA_SECRET_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: yalla-control-plane-secrets
+                  key: YALLA_SECRET_KEYS
             - name: YALLA_DOKPLOY_BASE_URL
               valueFrom:
                 secretKeyRef:
@@ -129,6 +134,11 @@ spec:
                 secretKeyRef:
                   name: yalla-control-plane-secrets
                   key: YALLA_DOKPLOY_TOKEN
+            - name: YALLA_INTERNAL_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: yalla-control-plane-secrets
+                  key: YALLA_INTERNAL_WORKER_TOKEN
           livenessProbe:
             httpGet:
               path: /healthz
@@ -225,6 +235,16 @@ spec:
                 secretKeyRef:
                   name: yalla-control-plane-secrets
                   key: YALLA_DATABASE_URL
+            - name: YALLA_SIGNING_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: yalla-control-plane-secrets
+                  key: YALLA_SIGNING_KEYS
+            - name: YALLA_SECRET_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: yalla-control-plane-secrets
+                  key: YALLA_SECRET_KEYS
             - name: YALLA_DOKPLOY_BASE_URL
               valueFrom:
                 secretKeyRef:
@@ -235,6 +255,11 @@ spec:
                 secretKeyRef:
                   name: yalla-control-plane-secrets
                   key: YALLA_DOKPLOY_TOKEN
+            - name: YALLA_INTERNAL_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: yalla-control-plane-secrets
+                  key: YALLA_INTERNAL_WORKER_TOKEN
           resources:
             requests:
               cpu: 100m
