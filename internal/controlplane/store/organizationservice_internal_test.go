@@ -205,6 +205,7 @@ func TestNewOrganizationServiceRejectsNilDependencies(t *testing.T) {
 	t.Parallel()
 
 	repo := NewOrganizationRepository()
+	jobs := nopJobEnqueuer{}
 	audit := NewAuditRepository()
 	store := &Store{}
 
@@ -212,18 +213,20 @@ func TestNewOrganizationServiceRejectsNilDependencies(t *testing.T) {
 		name  string
 		store *Store
 		repo  *OrganizationRepository
+		jobs  JobEnqueuer
 		audit AuditAppender
 	}{
-		{"nil store", nil, repo, audit},
-		{"nil repository", store, nil, audit},
-		{"nil audit appender", store, repo, nil},
+		{"nil store", nil, repo, jobs, audit},
+		{"nil repository", store, nil, jobs, audit},
+		{"nil job enqueuer", store, repo, nil, audit},
+		{"nil audit appender", store, repo, jobs, nil},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := NewOrganizationService(tc.store, tc.repo, tc.audit); err == nil {
+			if _, err := NewOrganizationService(tc.store, tc.repo, tc.jobs, tc.audit); err == nil {
 				t.Errorf("NewOrganizationService(%s) error = nil, want a construction error", tc.name)
 			}
 		})

@@ -22,6 +22,10 @@ const (
 	organizationCreateAction = "organization.create"
 	organizationUpdateAction = "organization.update"
 	organizationDeleteAction = "organization.delete"
+	// organizationProvisionJob is the durable-job kind enqueued when a new
+	// Yalla organization needs a Dokploy organization mapping. It is kept as a
+	// plain string so the store layer stays decoupled from the jobs package.
+	organizationProvisionJob = "ensure_dokploy_organization"
 	// organizationDisplayNameMaxLen bounds a human-authored organization
 	// display name, in runes. It is the same order of magnitude as every other
 	// display-name bound in the system and exists so an unbounded string can
@@ -108,44 +112,44 @@ type AuditAppender interface {
 }
 
 // OrganizationService is the unit-of-work orchestrator for creating, updating,
-// and scheduling the deletion of organizations. Create, Update, and
-// ScheduleDeletion each compose — in a fixed order, inside one transaction —
-// the desired-state write and the immutable audit record. Because both steps
-// share the *Tx opened by Store.Write, a failure in either rolls the other
-// back: an organization is never persisted, never mutated, and never marked for
-// teardown without its audit event.
-//
-// It enqueues no provisioning job: an organization is the tenant root of
-// Yalla's source-of-truth hierarchy, and the worker that mirrors it into
-// Dokploy — and the worker that performs the destructive teardown of a
-// scheduled organization — are driven by later stories.
+// and scheduling the deletion of organizations. Create composes — in a fixed
+// order, inside one transaction — the desired-state write, the durable
+// provisioning job, and the immutable audit record. Update and
+// ScheduleDeletion compose the desired-state mutation and audit record the
+// same way. Because every step shares the *Tx opened by Store.Write, a failure
+// in any step rolls the others back: an organization is never persisted without
+// its provisioning intent and audit trail.
 type OrganizationService struct {
 	store *Store
 	orgs  *OrganizationRepository
+	jobs  JobEnqueuer
 	audit AuditAppender
 }
 
 // NewOrganizationService wires an OrganizationService from its dependencies. It
 // returns a typed error if any dependency is nil, so a misconfigured service
 // fails at construction rather than on its first request.
-func NewOrganizationService(s *Store, orgs *OrganizationRepository, audit AuditAppender) (*OrganizationService, error) {
+func NewOrganizationService(s *Store, orgs *OrganizationRepository, jobs JobEnqueuer, audit AuditAppender) (*OrganizationService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
 	case orgs == nil:
 		return nil, errors.New("store: nil organization repository")
+	case jobs == nil:
+		return nil, errors.New("store: nil job enqueuer")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
-	return &OrganizationService{store: s, orgs: orgs, audit: audit}, nil
+	return &OrganizationService{store: s, orgs: orgs, jobs: jobs, audit: audit}, nil
 }
 
 // Create validates in, then runs the create-organization unit of work inside
-// one transaction: write the organization row, append the audit event.
-// Validation runs before the transaction is opened, so an invalid request
-// never touches the database. A slug that collides with an existing
-// organization rolls the whole transaction back as a typed Conflict, so a
-// duplicate organization and an orphaned audit record are both impossible.
+// one transaction: write the organization row, enqueue the provisioning job,
+// append the audit event. Validation runs before the transaction is opened, so
+// an invalid request never touches the database. A slug that collides with an
+// existing organization rolls the whole transaction back as a typed Conflict,
+// so a duplicate organization, orphaned provisioning job, and orphaned audit
+// record are all impossible.
 func (svc *OrganizationService) Create(ctx context.Context, in CreateOrganizationInput) (Organization, error) {
 	org, err := buildOrganizationToCreate(in)
 	if err != nil {
@@ -183,6 +187,15 @@ func (svc *OrganizationService) Create(ctx context.Context, in CreateOrganizatio
 		row, insErr := svc.orgs.Insert(ctx, tx, org)
 		if insErr != nil {
 			return insErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: row.ID,
+			JobKind:        organizationProvisionJob,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
 		}
 		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
 			return audErr

@@ -177,9 +177,6 @@ var allowedPackagesWithoutUnitTests = map[string]string{
 	"cmd/yalla-worker": "Thin worker entrypoint (~67 lines); the run loop, " +
 		"lease management, and shutdown contract are covered by " +
 		"internal/controlplane/worker/*_test.go.",
-	"internal/controlplane/jobs": "Package-level doc placeholder (doc.go only, " +
-		"no executable code). The real job machinery lives in " +
-		"internal/controlplane/worker and internal/controlplane/store.",
 }
 
 // goSourceDirsIgnoredPrefixes is the closed set of repo-relative path

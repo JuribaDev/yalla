@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	controljobs "github.com/JuribaDev/yalla/internal/controlplane/jobs"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -18,7 +19,12 @@ import (
 
 func newOrganizationService(t *testing.T, s *store.Store) *store.OrganizationService {
 	t.Helper()
-	svc, err := store.NewOrganizationService(s, store.NewOrganizationRepository(), store.NewAuditRepository())
+	return newOrganizationServiceWithJobs(t, s, &recordingJobs{})
+}
+
+func newOrganizationServiceWithJobs(t *testing.T, s *store.Store, jobs *recordingJobs) *store.OrganizationService {
+	t.Helper()
+	svc, err := store.NewOrganizationService(s, store.NewOrganizationRepository(), jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewOrganizationService: %v", err)
 	}
@@ -46,7 +52,8 @@ func TestOrganizationServiceCreate(t *testing.T) {
 	ctx := context.Background()
 
 	actor := seedOrg(t, db, f, "actor-co")
-	svc := newOrganizationService(t, s)
+	jobs := &recordingJobs{}
+	svc := newOrganizationServiceWithJobs(t, s, jobs)
 
 	created, err := svc.Create(ctx, store.CreateOrganizationInput{
 		Slug:          "acme",
@@ -65,6 +72,22 @@ func TestOrganizationServiceCreate(t *testing.T) {
 	}
 	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Error("Create did not return the database-assigned timestamps")
+	}
+	if jobs.calls != 1 {
+		t.Fatalf("job enqueue calls = %d, want 1", jobs.calls)
+	}
+	if len(jobs.inputs) != 1 {
+		t.Fatalf("job enqueue inputs = %d, want 1", len(jobs.inputs))
+	}
+	job := jobs.inputs[0]
+	if job.OrganizationID != created.ID || job.ResourceID != created.ID {
+		t.Errorf("job target = org:%q resource:%q, want created organization %q", job.OrganizationID, job.ResourceID, created.ID)
+	}
+	if job.JobKind != controljobs.TypeEnsureDokployOrganization {
+		t.Errorf("job kind = %q, want %q", job.JobKind, controljobs.TypeEnsureDokployOrganization)
+	}
+	if job.RequestID != "req_test" || job.CorrelationID != "corr_test" {
+		t.Errorf("job correlation = %q/%q, want req_test/corr_test", job.RequestID, job.CorrelationID)
 	}
 
 	// The organization row is the source of truth: it must be readable back.

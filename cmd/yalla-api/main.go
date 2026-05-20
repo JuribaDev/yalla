@@ -157,7 +157,7 @@ func main() {
 		logger.Error("failed to initialize the quota checker", "error", err.Error())
 		os.Exit(1)
 	}
-	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, auditRepo)
+	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, noopJobEnqueuer{}, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
 		os.Exit(1)
