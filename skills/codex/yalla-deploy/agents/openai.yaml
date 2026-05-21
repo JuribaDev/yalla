@@ -1,0 +1,7 @@
+name: yalla-deploy
+title: Yalla Deploy
+description: Deploy and operate projects, environments, services, builds, databases, backups, and rollbacks through the yalla CLI.
+interface:
+  display_name: "Yalla Deploy"
+  short_description: "Deploy and operate Yalla resources with the yalla CLI"
+  default_prompt: "Use $yalla-deploy to deploy, redeploy, promote, roll back, operate, scale, back up, restore, or verify a Yalla service."

@@ -85,6 +85,11 @@ with_external_services() {
 }
 
 # 1. Required: formatting (gofmt -l should be empty)
+step "verify yalla skills"
+if ! scripts/verify-yalla-skills.sh; then
+  required_failed=1
+fi
+
 step "gofmt -l ."
 unformatted="$(gofmt -l .)"
 if [[ -n "$unformatted" ]]; then

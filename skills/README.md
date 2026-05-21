@@ -11,18 +11,15 @@ which yalla calls to run.
 
 ```
 skills/
-├── claude/                     # Skills authored for Claude (Anthropic).
-│   └── yalla-dokploy-deploy/   # The flagship deploy-and-manage skill.
-│       ├── SKILL.md            # Trigger metadata + the operator playbook.
-│       ├── references/         # Topic-scoped recipes the agent reads lazily.
-│       │   ├── drop-deploy.md  # …e.g. the multipart upload workflow.
-│       │   ├── lifecycle.md
-│       │   └── …
-│       ├── scripts/            # Helpers the skill may execute (no network).
-│       ├── fixtures/           # Stable inputs the evals reference (if any).
-│       └── evals/evals.json    # The test set used to validate the skill.
-└── codex/                      # Skills authored for OpenAI Codex.
-    └── yalla-dokploy-deploy/   # Codex variant of the deploy-and-manage skill.
+├── claude/
+│   └── yalla-deploy/
+│       ├── SKILL.md
+│       ├── references/
+│       ├── scripts/
+│       ├── fixtures/
+│       └── evals/evals.json
+└── codex/
+    └── yalla-deploy/
         ├── SKILL.md
         ├── agents/openai.yaml
         ├── references/
@@ -43,18 +40,16 @@ directory:
 
 ```sh
 # Symlink — easiest if you want repo edits to apply instantly.
-ln -snf "$(pwd)/skills/claude/yalla-dokploy-deploy" \
-  ~/.claude/skills/yalla-dokploy-deploy
+ln -snf "$(pwd)/skills/claude/yalla-deploy" ~/.claude/skills/yalla-deploy
 
 # Or copy if you prefer a snapshot:
-cp -r skills/claude/yalla-dokploy-deploy ~/.claude/skills/
+cp -r skills/claude/yalla-deploy ~/.claude/skills/
 ```
 
 For Codex, copy or symlink the skill into the Codex skills directory:
 
 ```sh
-ln -snf "$(pwd)/skills/codex/yalla-dokploy-deploy" \
-  ~/.codex/skills/yalla-dokploy-deploy
+ln -snf "$(pwd)/skills/codex/yalla-deploy" ~/.codex/skills/yalla-deploy
 ```
 
 For any other runtime, follow that runtime's skill-loading convention.

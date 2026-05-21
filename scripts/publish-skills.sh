@@ -30,13 +30,14 @@ set -euo pipefail
 # --- Config ---------------------------------------------------------------
 DIST_REMOTE="https://github.com/JuribaDev/yalla-skills.git"
 DIST_SLUG="JuribaDev/yalla-skills"
-CLAUDE_SRC_REL="skills/claude/yalla-dokploy-deploy"
-CODEX_SRC_REL="skills/codex/yalla-dokploy-deploy"
-CLAUDE_DEST_REL="plugins/yalla-dokploy-deploy/skills/yalla-dokploy-deploy"
-CODEX_DEST_REL="codex/yalla-dokploy-deploy"
+CLAUDE_SRC_REL="skills/claude/yalla-deploy"
+CODEX_SRC_REL="skills/codex/yalla-deploy"
+CLAUDE_DEST_REL="plugins/yalla-deploy/skills/yalla-deploy"
+CODEX_DEST_REL="codex/yalla-deploy"
+PLUGIN_ROOT_REL="plugins/yalla-deploy"
 # Files in the dist repo whose `version` field tracks the release:
 MARKETPLACE_REL=".claude-plugin/marketplace.json"
-PLUGIN_JSON_REL="plugins/yalla-dokploy-deploy/.claude-plugin/plugin.json"
+PLUGIN_JSON_REL="plugins/yalla-deploy/.claude-plugin/plugin.json"
 
 # --- Args -----------------------------------------------------------------
 VERSION=""
@@ -99,6 +100,17 @@ else
   echo "publish-skills: using existing checkout at $DIST_DIR"
 fi
 
+# --- Migrate dist metadata into the current public layout ------------------
+mkdir -p "$DIST_DIR/$PLUGIN_ROOT_REL/.claude-plugin"
+if [[ ! -f "$DIST_DIR/$PLUGIN_JSON_REL" ]]; then
+  existing_plugin_json="$(find "$DIST_DIR/plugins" -path '*/.claude-plugin/plugin.json' -type f -print -quit 2>/dev/null || true)"
+  if [[ -n "$existing_plugin_json" ]]; then
+    cp "$existing_plugin_json" "$DIST_DIR/$PLUGIN_JSON_REL"
+  else
+    printf '{}\n' > "$DIST_DIR/$PLUGIN_JSON_REL"
+  fi
+fi
+
 # --- Transform: rsync the two variants into their published locations -----
 # --delete keeps the dist tree in lockstep with source (removed source files
 # disappear downstream). --exclude evals/ keeps the dev-only eval corpus out of
@@ -115,25 +127,102 @@ mkdir -p "$DIST_DIR/$CODEX_DEST_REL"
 rsync -a --delete --exclude 'evals/' \
   "$REPO_ROOT/$CODEX_SRC_REL/" "$DIST_DIR/$CODEX_DEST_REL/"
 
+# Remove superseded generated skill directories so the public dist tree exposes
+# only the current skill name.
+find "$DIST_DIR/plugins" -mindepth 1 -maxdepth 1 -type d ! -name "$(basename "$PLUGIN_ROOT_REL")" -exec rm -rf {} +
+find "$DIST_DIR/codex" -mindepth 1 -maxdepth 1 -type d ! -name "$(basename "$CODEX_DEST_REL")" -exec rm -rf {} +
+
 # --- Stamp the version into the metadata files ----------------------------
-# Edits only the `version` fields; leaves the rest of each JSON intact.
+# Also rewrites marketplace metadata because the public skill name changed.
 python3 - "$DIST_DIR" "$VERSION_NUM" "$MARKETPLACE_REL" "$PLUGIN_JSON_REL" <<'PY'
 import json, sys
 dist, version, mp_rel, plugin_rel = sys.argv[1:5]
 
 mp_path = f"{dist}/{mp_rel}"
-with open(mp_path) as f: mp = json.load(f)
-mp.setdefault("metadata", {})["version"] = version
-for p in mp.get("plugins", []):
-    p["version"] = version
+with open(mp_path) as f:
+    mp = json.load(f)
+owner = mp.get("owner", {"name": "JuribaDev", "url": "https://github.com/JuribaDev"})
+mp["name"] = "yalla-skills"
+mp["owner"] = owner
+mp["metadata"] = {
+    "description": "Skills for AI agents that deploy and operate Yalla projects, environments, services, builds, databases, backups, and rollbacks through the yalla CLI.",
+    "version": version,
+    "homepage": "https://github.com/JuribaDev/yalla-skills",
+}
+mp["plugins"] = [
+    {
+        "name": "yalla-deploy",
+        "description": "Deploy and operate Yalla projects, environments, services, builds, databases, backups, restores, promotions, rollbacks, and teardown workflows through the yalla CLI.",
+        "version": version,
+        "author": owner,
+        "source": "./plugins/yalla-deploy",
+        "homepage": "https://github.com/JuribaDev/yalla-skills",
+        "license": "MIT",
+    }
+]
 with open(mp_path, "w") as f:
     json.dump(mp, f, indent=2, ensure_ascii=False); f.write("\n")
 
 plugin_path = f"{dist}/{plugin_rel}"
-with open(plugin_path) as f: plugin = json.load(f)
-plugin["version"] = version
+try:
+    with open(plugin_path) as f:
+        plugin = json.load(f)
+except json.JSONDecodeError:
+    plugin = {}
+plugin.update({
+    "name": "yalla-deploy",
+    "version": version,
+    "description": "Deploy and operate projects, environments, services, builds, databases, backups, restores, promotions, rollbacks, and teardown workflows through the yalla CLI.",
+    "author": owner,
+    "homepage": "https://github.com/JuribaDev/yalla-skills",
+    "license": "MIT",
+    "keywords": ["yalla", "deploy", "ci-cd", "self-hosted", "compose", "docker", "skill"],
+})
 with open(plugin_path, "w") as f:
     json.dump(plugin, f, indent=2, ensure_ascii=False); f.write("\n")
+
+readme = f"""# yalla-skills
+
+AI-agent skills for [yalla](https://github.com/JuribaDev/yalla).
+
+This repository is a Claude Code plugin marketplace plus standalone variants for
+other agents. The current public skill is `yalla-deploy`.
+
+## Install
+
+```sh
+/plugin marketplace add JuribaDev/yalla-skills
+/plugin install yalla-deploy@yalla-skills
+```
+
+## Codex
+
+```sh
+mkdir -p ~/.codex/skills
+git clone --depth 1 https://github.com/JuribaDev/yalla-skills /tmp/yalla-skills-checkout
+cp -R /tmp/yalla-skills-checkout/codex/yalla-deploy ~/.codex/skills/
+rm -rf /tmp/yalla-skills-checkout
+```
+
+## Layout
+
+```text
+yalla-skills/
+├── .claude-plugin/marketplace.json
+├── plugins/yalla-deploy/
+│   ├── .claude-plugin/plugin.json
+│   └── skills/yalla-deploy/
+└── codex/yalla-deploy/
+```
+
+Released versions track the yalla CLI release they were built and tested
+against. Current generated version: {version}.
+"""
+
+with open(f"{dist}/README.md", "w") as f:
+    f.write(readme)
+with open(f"{dist}/plugins/yalla-deploy/README.md", "w") as f:
+    f.write("# yalla-deploy\n\nClaude Code plugin wrapper for the yalla-deploy skill.\n")
 
 print(f"publish-skills: stamped version {version} into marketplace.json + plugin.json")
 PY
@@ -148,7 +237,10 @@ fi
 echo ""
 echo "=== Changes staged for ${DIST_SLUG} ==="
 git add -A
-git --no-pager diff --cached --stat
+changed_count="$(git diff --cached --name-only | wc -l | tr -d ' ')"
+echo "publish-skills: staged ${changed_count} changed paths"
+echo "publish-skills: Claude destination $CLAUDE_DEST_REL"
+echo "publish-skills: Codex destination $CODEX_DEST_REL"
 echo ""
 
 # --- Dry run stops here ---------------------------------------------------
@@ -195,7 +287,7 @@ else
 Install:
 \`\`\`sh
 /plugin marketplace add ${DIST_SLUG}
-/plugin install yalla-dokploy-deploy@yalla-skills
+/plugin install yalla-deploy@yalla-skills
 \`\`\`" >/dev/null
     echo "publish-skills: created GitHub release ${VERSION_TAG}"
   else
