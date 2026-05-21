@@ -12,6 +12,9 @@ Yalla API -> Postgres source of truth -> worker -> private Dokploy API
 ```
 
 Do not expose raw Dokploy operations. Do not hand-write an OpenAPI operation that is not backed by a registered route.
+The CLI uses this same document from `GET /openapi.json` for `yalla api
+operations` and `yalla schema`; do not reintroduce the embedded Dokploy
+OpenAPI registry as the public CLI contract.
 
 ## Required workflow
 

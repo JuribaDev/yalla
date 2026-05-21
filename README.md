@@ -1,8 +1,9 @@
 # yalla
 
-`yalla` is a production-grade, agent-first CLI for [Dokploy](https://dokploy.com).
-It exposes the full Dokploy public API as deterministic, machine-readable
-commands so AI agents and humans can drive Dokploy with the same tooling.
+`yalla` is a production-grade, agent-first CLI for the Yalla Control Plane.
+It talks to the Yalla backend API with bearer credentials. The backend and
+worker own Dokploy infrastructure access; normal CLI users never send Dokploy
+URLs or Dokploy tokens.
 
 ## Highlights
 
@@ -10,9 +11,9 @@ commands so AI agents and humans can drive Dokploy with the same tooling.
   Linux, and Windows (`amd64` and `arm64`).
 - **Agent contract** — `--json`, `--no-input`, stable exit codes, machine
   readable error envelopes, deterministic stdout/stderr separation.
-- **Full API coverage** — every Dokploy OpenAPI operation is reachable through
-  `yalla api call <operationId>`, with `yalla schema get` and `yalla manifest`
-  describing the surface programmatically.
+- **Backend contract discovery** — `yalla api operations` and `yalla schema`
+  read the backend `/openapi.json` contract shared by the frontend, CLI, and
+  CI agents.
 
 ## Install
 
@@ -35,32 +36,33 @@ yalla auth status
 yalla auth whoami
 yalla manifest --json
 yalla api operations --json
-yalla api call project-create --data '{"name":"smoke"}' --dry-run --json
-yalla deploy compose --project smoke --env staging --compose-file docker-compose.yml --dry-run --json
-yalla teardown project --project smoke --json
+yalla deploy compose --service-id svc_123 --source git --source-ref main --idempotency-key deploy-001 --json
+yalla wait job --job-id job_123 --status succeeded --json
+yalla teardown project --project-id proj_123 --json
 yalla wait url --url https://example.com --status-class 2xx --timeout 10s --json
 ```
 
-`yalla api call` accepts either `--input request.json` for the full envelope
-(`path_params`, `query`, `headers`, `body`, `files`) or `--data '<json>'` for
-single-line JSON. With `--data`, a bare object is treated as the request body,
-so agents can call create/update operations without boilerplate wrappers.
+`yalla api call <dokployOperation>` is no longer a normal-user escape hatch.
+Every mutating operation must be represented as a Yalla backend product route
+that persists desired state and durable jobs before the worker reconciles
+Dokploy.
 
-Composite commands layer safe orchestration on top of the raw executor:
+Backend-only command behavior:
 
-- `yalla deploy compose` creates or updates project/env/compose/domain state,
-  deploys, and waits for completion.
-- `yalla teardown project` cascades cleanup before removing a project and
-  returns `E_ORPHAN` when Docker resources remain.
-- `yalla rescue orphans` runs the API cleanup path or prints an explicit SSH
-  fallback.
-- `yalla wait compose|url|orphans` provides deterministic polling primitives.
+- `yalla auth login` verifies credentials with `GET /v1/me`.
+- `yalla deploy compose` creates a backend deployment via
+  `POST /v1/services/{service_id}/deployments`.
+- `yalla teardown project` deletes through `DELETE /v1/projects/{project_id}`.
+- `yalla wait job|deployment` polls backend state.
+- `yalla database ...` manages database services and backup policies through
+  backend service/backup routes, including manual run and restore requests.
+- Direct rescue commands are disabled until backend admin routes cover them.
 - `yalla audit tail` reads the local JSONL mutation audit log.
 
 For automation, avoid putting tokens in shell history:
 
 ```sh
-printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://deploy.example.com --token-stdin --json
+printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://api.yalla.example --token-stdin --json
 ```
 
 ## Releases

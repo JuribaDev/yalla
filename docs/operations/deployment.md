@@ -26,6 +26,10 @@ Customer / Agent / CI
 
 Customers must never receive Dokploy API tokens, database URLs, signing keys,
 secret-encryption keys, API keys, cookies, or rendered environment values.
+The customer-facing CLI is part of that boundary: it is configured with
+`YALLA_BASE_URL=<control-plane-api>` and `YALLA_TOKEN=<yalla-bearer-token>`.
+Only backend and worker processes may receive `YALLA_DOKPLOY_BASE_URL` and
+`YALLA_DOKPLOY_TOKEN`.
 
 ## Preflight
 

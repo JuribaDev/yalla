@@ -74,6 +74,7 @@ type ServiceVariableService struct {
 	store     *Store
 	services  *ServiceRepository
 	variables *ServiceVariableRepository
+	jobs      JobEnqueuer
 	audit     AuditAppender
 	provider  secrets.Provider
 }
@@ -92,7 +93,7 @@ type ServiceVariableService struct {
 // pass secrets.NewPlaintext() — the plaintext provider is acceptable
 // in local/test profiles only and cmd/yalla-api rejects it for
 // staging/production.
-func NewServiceVariableService(s *Store, services *ServiceRepository, variables *ServiceVariableRepository, audit AuditAppender, provider secrets.Provider) (*ServiceVariableService, error) {
+func NewServiceVariableService(s *Store, services *ServiceRepository, variables *ServiceVariableRepository, jobs JobEnqueuer, audit AuditAppender, provider secrets.Provider) (*ServiceVariableService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -100,12 +101,14 @@ func NewServiceVariableService(s *Store, services *ServiceRepository, variables 
 		return nil, errors.New("store: nil service repository")
 	case variables == nil:
 		return nil, errors.New("store: nil service variable repository")
+	case jobs == nil:
+		return nil, errors.New("store: nil job enqueuer")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	case provider == nil:
 		return nil, errors.New("store: nil secrets provider")
 	}
-	return &ServiceVariableService{store: s, services: services, variables: variables, audit: audit, provider: provider}, nil
+	return &ServiceVariableService{store: s, services: services, variables: variables, jobs: jobs, audit: audit, provider: provider}, nil
 }
 
 // sealVariableValue projects a ServiceVariableReplace onto the
@@ -248,6 +251,15 @@ func (svc *ServiceVariableService) Replace(ctx context.Context, in ReplaceServic
 		}
 		if delErr := svc.variables.DeleteByServiceExceptKeys(ctx, tx, organizationID, serviceID, keepKeys); delErr != nil {
 			return delErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        "sync_variables",
+			ResourceID:     serviceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
 		}
 		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
 			return audErr

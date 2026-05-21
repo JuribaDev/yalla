@@ -253,6 +253,8 @@ func scalarAPIReferenceHandler() http.HandlerFunc {
 // serviceBackupCreator backs POST /v1/services/{service_id}/backups.
 // serviceBackupRunner backs POST
 // /v1/services/{service_id}/backups/{backup_id}/run.
+// serviceBackupRestorer backs POST
+// /v1/services/{service_id}/backups/{backup_id}/restore.
 // serviceBackupUpdater backs PATCH
 // /v1/services/{service_id}/backups/{backup_id}.
 // serviceBackupDeleter backs DELETE
@@ -269,6 +271,7 @@ func scalarAPIReferenceHandler() http.HandlerFunc {
 func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceLogReader ServiceLogReader, serviceMetricsReader ServiceMetricsReader, serviceDomainReader ServiceDomainReader, serviceDomainCreator ServiceDomainCreator, serviceDomainUpdater ServiceDomainUpdater, serviceDomainDeleter ServiceDomainDeleter, serviceBackupReader ServiceBackupReader, serviceBackupCreator ServiceBackupCreator, serviceBackupUpdater ServiceBackupUpdater, serviceBackupRunner ServiceBackupRunner, serviceBackupDeleter ServiceBackupDeleter, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController, routeOptions ...any) []apiRoute {
 	build = build.Normalized()
 	var previewCreator PreviewCreator
+	var serviceBackupRestorer ServiceBackupRestorer
 	var jobReader JobReader
 	var jobRetrier JobRetrier
 	var jobCanceler JobCanceler
@@ -302,6 +305,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
+		}
+		if v, ok := opt.(ServiceBackupRestorer); ok {
+			serviceBackupRestorer = v
 		}
 		if v, ok := opt.(JobReader); ok {
 			jobReader = v
@@ -392,6 +398,11 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(*telemetry.SecretRedactionCanaryMetrics); ok && v != nil {
 			secretRedactionCanaryMetrics = v
+		}
+	}
+	if serviceBackupRestorer == nil {
+		if v, ok := serviceBackupRunner.(ServiceBackupRestorer); ok {
+			serviceBackupRestorer = v
 		}
 	}
 
@@ -2767,6 +2778,29 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: serviceIDResolver,
 			handler:  runServiceBackupHandler(serviceBackupRunner),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/services/{service_id}/backups/{backup_id}/restore",
+				OperationID:    "restoreServiceBackup",
+				Summary:        "Restore a service backup",
+				Description:    "Records customer intent to restore the service named by {service_id} from the successful backup policy row named by {backup_id}. The request body is empty: restore context is read from the persisted backup row and executed asynchronously by a durable restore_backup worker job. Action backup.restore is authorized against the principal home organization and service id before the handler runs, and the store repeats that authorization inside the transaction that appends the job and audit event. A disabled backup or a backup whose latest status is not succeeded is rejected with a deterministic 409.",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionBackupRestore),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service the backup policy belongs to.",
+				}, {
+					Name:        "backup_id",
+					Description: "The id of the successful backup policy to restore.",
+				}},
+				SuccessDescription: "The restore request was accepted and a durable worker job was enqueued.",
+			},
+			resolver: serviceIDResolver,
+			handler:  restoreServiceBackupHandler(serviceBackupRestorer),
 		},
 		{
 			endpoint: openapi.Endpoint{

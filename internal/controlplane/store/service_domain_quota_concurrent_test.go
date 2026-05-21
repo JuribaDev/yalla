@@ -128,6 +128,7 @@ func TestServiceDomainServiceCreateRejectsParallelOversubscriptionForDomainsQuot
 		store.NewServiceDomainRepository(),
 		authz,
 		checker,
+		&recordingJobs{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {
@@ -402,6 +403,7 @@ func TestServiceDomainServiceCreateAppliesDomainsQuotaIndependentlyOfServicesQuo
 		store.NewServiceDomainRepository(),
 		authz,
 		checker,
+		&recordingJobs{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {

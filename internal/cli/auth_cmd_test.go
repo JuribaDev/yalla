@@ -163,13 +163,13 @@ func TestAuthLogin_TokenStdinStoresURLAndTokenThenVerifies(t *testing.T) {
 	path := withTempConfig(t, "")
 	const token = "login-secret-token-value"
 
-	var seenPath, seenAPIKey string
+	var seenPath, seenAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenPath = r.URL.Path
-		seenAPIKey = r.Header.Get(api.DefaultAPIKeyHeader)
+		seenAuth = r.Header.Get(api.HeaderAuthorization)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"user_1","email":"dev@example.com","activeOrganizationId":"org_1"}`))
+		_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"principal_id":"usr_1","organization_id":"org_1","role":"owner","grants":[],"disabled":false}}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -185,11 +185,11 @@ func TestAuthLogin_TokenStdinStoresURLAndTokenThenVerifies(t *testing.T) {
 	if strings.Contains(stdout.String()+stderr.String(), token) {
 		t.Fatalf("token leaked into output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	if seenPath != coverageWirePath("/user.get") {
-		t.Errorf("verification path = %q, want %q", seenPath, coverageWirePath("/user.get"))
+	if seenPath != "/v1/me" {
+		t.Errorf("verification path = %q, want /v1/me", seenPath)
 	}
-	if seenAPIKey != token {
-		t.Errorf("verification API key = %q, want token from stdin", seenAPIKey)
+	if seenAuth != "Bearer "+token {
+		t.Errorf("verification authorization = %q, want bearer token from stdin", seenAuth)
 	}
 	stored, err := keyring.Get("yalla", srv.URL)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestAuthLogin_TokenStdinStoresURLAndTokenThenVerifies(t *testing.T) {
 	if env.Data.URL != srv.URL || env.Data.Token.Source != string(config.SourceCredentialStore) {
 		t.Errorf("unexpected login payload: %+v", env.Data)
 	}
-	if env.Data.User.Email != "dev@example.com" || env.Data.ActiveOrganizationID != "org_1" {
+	if env.Data.User.ID != "usr_1" || env.Data.ActiveOrganizationID != "org_1" {
 		t.Errorf("verification identity not surfaced: %+v", env.Data)
 	}
 }
@@ -228,7 +228,7 @@ func TestAuthLogin_TokenStdinRedactsVerificationFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte("bad token: " + r.Header.Get(api.DefaultAPIKeyHeader)))
+		_, _ = w.Write([]byte("bad token: " + strings.TrimPrefix(r.Header.Get(api.HeaderAuthorization), "Bearer ")))
 	}))
 	t.Cleanup(srv.Close)
 

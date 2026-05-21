@@ -39,6 +39,22 @@ signing keys, secret-encryption keys, the Dokploy service token, and the
 internal worker token — must never reach logs, errors, audit metadata, or test
 output.
 
+## CLI environment variables
+
+The customer-facing `yalla` CLI uses a separate, smaller environment contract:
+
+| Variable | Meaning in backend-only CLI mode |
+| --- | --- |
+| `YALLA_BASE_URL` | Yalla Control Plane API base URL, not a Dokploy URL. |
+| `YALLA_TOKEN` | Yalla backend credential: `yka_*` API key or supported session/JWT token. |
+| `YALLA_CONFIG` | Path to the CLI config file. |
+| `YALLA_OUTPUT` | `human` or `json`. |
+| `YALLA_NO_INPUT` | Disable prompts when set to a truthy value. |
+
+The CLI sends credentials with HTTP bearer-style authorization. It must not read,
+store, or send `YALLA_DOKPLOY_BASE_URL` or `YALLA_DOKPLOY_TOKEN`; those are
+backend/worker infrastructure secrets only.
+
 ## Profiles
 
 `YALLA_PROFILE` selects the deployment environment:

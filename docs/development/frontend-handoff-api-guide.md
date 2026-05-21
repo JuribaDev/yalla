@@ -1,8 +1,9 @@
 # Yalla Control Plane frontend handoff API guide
 
-Use this guide when building a frontend, mobile client, or external integration
-against the Yalla Control Plane API. It documents the stable contracts every
-consumer must rely on so frontend and backend can ship independently.
+Use this guide when building a frontend, CLI workflow, mobile client, or
+external integration against the Yalla Control Plane API. It documents the
+stable contracts every consumer must rely on so clients and backend can ship
+independently.
 
 ## Scope
 
@@ -20,6 +21,11 @@ Customer / Agent / CI / Frontend
 Frontend code must never call Dokploy directly. All tenant identity, scoped
 grants, desired state, durable jobs, audit events, limits, and metered usage are
 owned by Yalla.
+
+The CLI follows the same boundary. `yalla auth login` verifies `GET /v1/me`,
+`yalla api operations` and `yalla schema` consume `/openapi.json`, and mutating
+CLI commands use the same product routes as the frontend rather than raw
+Dokploy operation IDs.
 
 ## Base URL and versioning
 

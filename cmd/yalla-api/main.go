@@ -343,7 +343,7 @@ func main() {
 		logger.Error("failed to initialize the service domain reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceDomainService, err := store.NewServiceDomainService(dataStore, store.NewServiceRepository(), store.NewServiceDomainRepository(), serviceAuthz, serviceQuota, auditRepo)
+	serviceDomainService, err := store.NewServiceDomainService(dataStore, store.NewServiceRepository(), store.NewServiceDomainRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the service domain service", "error", err.Error())
 		os.Exit(1)
@@ -353,7 +353,7 @@ func main() {
 		logger.Error("failed to initialize the service backup reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceBackupService, err := store.NewServiceBackupService(dataStore, store.NewServiceRepository(), store.NewServiceBackupRepository(), serviceAuthz, serviceQuota, auditRepo)
+	serviceBackupService, err := store.NewServiceBackupService(dataStore, store.NewServiceRepository(), store.NewServiceBackupRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the service backup service", "error", err.Error())
 		os.Exit(1)
@@ -363,7 +363,7 @@ func main() {
 		logger.Error("failed to initialize the service variable reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceVariableService, err := store.NewServiceVariableService(dataStore, store.NewServiceRepository(), store.NewServiceVariableRepository(), auditRepo, secretsProvider)
+	serviceVariableService, err := store.NewServiceVariableService(dataStore, store.NewServiceRepository(), store.NewServiceVariableRepository(), serviceJobs, auditRepo, secretsProvider)
 	if err != nil {
 		logger.Error("failed to initialize the service variable service", "error", err.Error())
 		os.Exit(1)

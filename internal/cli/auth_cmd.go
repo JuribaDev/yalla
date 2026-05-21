@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -35,8 +36,8 @@ var credentialStoreFactory = func() credentials.Store {
 func newAuthCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Inspect Dokploy credentials and connection settings",
-		Long: `Inspect the authentication state yalla will use for Dokploy API calls.
+		Short: "Inspect Yalla API credentials and connection settings",
+		Long: `Inspect the authentication state yalla will use for Yalla API calls.
 
 The command never echoes the token value; it only reports presence,
 provenance, and whether the resolved configuration is sufficient to make a
@@ -108,8 +109,8 @@ type authLogoutDoc struct {
 func newAuthStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether yalla can authenticate against Dokploy",
-		Long: `Report the resolved authentication state without contacting the Dokploy
+		Short: "Show whether yalla can authenticate against the Yalla API",
+		Long: `Report the resolved authentication state without contacting the Yalla
 API. The command always exits 0 when it can compute the status (so agents
 can rely on a non-error envelope to detect partial configuration); the
 ` + "`ready`" + ` boolean inside the payload is the authoritative
@@ -145,7 +146,7 @@ By default the URL is written to the yalla config file and the token is
 stored in the host operating system credential store. Use --token-stdin for
 automation so the token does not appear in shell history or process lists.`,
 		Example: `  yalla auth login
-  printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://deploy.example.com --token-stdin --json`,
+  printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://api.yalla.example --token-stdin --json`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -163,8 +164,8 @@ automation so the token does not appear in shell history or process lists.`,
 			})
 		},
 	}
-	cmd.Flags().StringVar(&loginURL, "url", "", "URL yalla should use for API calls")
-	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the API token from stdin")
+	cmd.Flags().StringVar(&loginURL, "url", "", "Yalla API URL")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the Yalla API token from stdin")
 	cmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "store credentials without calling the API")
 	cmd.Flags().StringVar(&store, "store", authStoreKeyring, "where to store the token: keyring or config")
 	return cmd
@@ -585,26 +586,19 @@ func verifyAuthIdentity(ctx context.Context, baseURL, token string, build BuildI
 		return authIdentity{}, yerr.New(yerr.CodeAuth, "no API token configured").
 			WithHint("run `yalla auth login`")
 	}
-	op, ok := api.Default().Get("user-get")
-	if !ok {
-		return authIdentity{}, yerr.New(yerr.CodeInternal, "user-get operation is not registered")
-	}
-	scheme, headerName, basePath := resolveAPIClientDefaults(api.Default())
 	cli, err := api.NewClient(api.ClientConfig{
-		BaseURL:        baseURL,
-		Token:          token,
-		AuthScheme:     scheme,
-		AuthHeaderName: headerName,
-		BasePathPrefix: basePath,
-		UserAgent:      "yalla/" + build.Version,
-		MaxRetries:     0,
+		BaseURL:    baseURL,
+		Token:      token,
+		AuthScheme: api.AuthSchemeBearer,
+		UserAgent:  "yalla/" + build.Version,
+		MaxRetries: 2,
 	})
 	if err != nil {
 		return authIdentity{}, err
 	}
 	result, err := cli.Do(ctx, &api.Request{
-		Method:     op.Method,
-		Path:       op.Path,
+		Method:     http.MethodGet,
+		Path:       "/v1/me",
 		Idempotent: true,
 	})
 	if err != nil {
@@ -613,7 +607,7 @@ func verifyAuthIdentity(ctx context.Context, baseURL, token string, build BuildI
 	if !result.Success() {
 		return authIdentity{}, result.AsError()
 	}
-	return parseAuthIdentity(result.Body), nil
+	return parseAuthIdentity(unwrapYallaData(result.Body)), nil
 }
 
 func parseAuthIdentity(body []byte) authIdentity {
@@ -622,6 +616,9 @@ func parseAuthIdentity(body []byte) authIdentity {
 		UserID               string `json:"userId"`
 		Email                string `json:"email"`
 		Name                 string `json:"name"`
+		PrincipalID          string `json:"principal_id"`
+		Kind                 string `json:"kind"`
+		OrganizationID       string `json:"organization_id"`
 		ActiveOrganizationID string `json:"activeOrganizationId"`
 	}
 	_ = json.Unmarshal(body, &raw)
@@ -629,13 +626,20 @@ func parseAuthIdentity(body []byte) authIdentity {
 	if id == "" {
 		id = raw.UserID
 	}
+	if id == "" {
+		id = raw.PrincipalID
+	}
+	orgID := raw.ActiveOrganizationID
+	if orgID == "" {
+		orgID = raw.OrganizationID
+	}
 	return authIdentity{
 		User: authUserDoc{
 			ID:    id,
 			Email: raw.Email,
 			Name:  raw.Name,
 		},
-		ActiveOrganizationID: raw.ActiveOrganizationID,
+		ActiveOrganizationID: orgID,
 	}
 }
 

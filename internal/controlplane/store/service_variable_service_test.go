@@ -37,6 +37,7 @@ func newServiceVariableService(t *testing.T, s *store.Store, audit store.AuditAp
 	svc, err := store.NewServiceVariableService(s,
 		store.NewServiceRepository(),
 		store.NewServiceVariableRepository(),
+		&recordingJobs{},
 		audit,
 		secrets.NewPlaintext(),
 	)
@@ -428,20 +429,22 @@ func TestNewServiceVariableServiceRejectsNilDependencies(t *testing.T) {
 		store     *store.Store
 		services  *store.ServiceRepository
 		variables *store.ServiceVariableRepository
+		jobs      store.JobEnqueuer
 		audit     store.AuditAppender
 		provider  secrets.Provider
 	}{
-		{"nil store", nil, store.NewServiceRepository(), store.NewServiceVariableRepository(), store.NewAuditRepository(), plain},
-		{"nil services", s, nil, store.NewServiceVariableRepository(), store.NewAuditRepository(), plain},
-		{"nil variables", s, store.NewServiceRepository(), nil, store.NewAuditRepository(), plain},
-		{"nil audit", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), nil, plain},
-		{"nil provider", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), store.NewAuditRepository(), nil},
+		{"nil store", nil, store.NewServiceRepository(), store.NewServiceVariableRepository(), &recordingJobs{}, store.NewAuditRepository(), plain},
+		{"nil services", s, nil, store.NewServiceVariableRepository(), &recordingJobs{}, store.NewAuditRepository(), plain},
+		{"nil variables", s, store.NewServiceRepository(), nil, &recordingJobs{}, store.NewAuditRepository(), plain},
+		{"nil jobs", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), nil, store.NewAuditRepository(), plain},
+		{"nil audit", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), &recordingJobs{}, nil, plain},
+		{"nil provider", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), &recordingJobs{}, store.NewAuditRepository(), nil},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := store.NewServiceVariableService(tc.store, tc.services, tc.variables, tc.audit, tc.provider); err == nil {
+			if _, err := store.NewServiceVariableService(tc.store, tc.services, tc.variables, tc.jobs, tc.audit, tc.provider); err == nil {
 				t.Error("NewServiceVariableService returned no error; want a nil-dependency error")
 			}
 		})

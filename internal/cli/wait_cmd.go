@@ -2,117 +2,168 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/JuribaDev/yalla/internal/dokploy"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
 func newWaitCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "wait", Short: "Wait for Dokploy state", SilenceErrors: true, SilenceUsage: true}
-	cmd.AddCommand(newWaitComposeCommand(), newWaitURLCommand(), newWaitOrphansCommand())
+	cmd := &cobra.Command{Use: "wait", Short: "Wait for Yalla backend jobs or deployments", SilenceErrors: true, SilenceUsage: true}
+	cmd.AddCommand(newWaitJobCommand(), newWaitDeploymentCommand(), newWaitURLCommand())
 	return cmd
 }
 
-func newWaitComposeCommand() *cobra.Command {
+func newWaitJobCommand() *cobra.Command {
 	var id, status string
-	var timeout time.Duration
-	cmd := &cobra.Command{Use: "compose", Short: "Wait for a compose status", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
-		r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
-		runner, err := newDokployRunner(configFromCommand(c), BuildInfoFromContext(c.Context()), 0)
-		if err != nil {
-			return err
+	var timeout, interval time.Duration
+	cmd := &cobra.Command{Use: "job", Short: "Wait for a backend job status", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
+		if strings.TrimSpace(id) == "" {
+			return yerr.New(yerr.CodeInvalidInput, "job ID is required").WithHint("pass --job-id")
 		}
-		ctx := c.Context()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-		}
-		res, err := dokploy.WaitCompose(ctx, runner, id, status, time.Second)
-		if err != nil {
-			if res != nil {
-				return dokploy.TimeoutError(res)
-			}
-			return err
-		}
-		if r.JSON() {
-			return r.Data(res)
-		}
-		r.Human(res.Status)
-		return nil
+		return waitBackendResource(c, yallaPath("v1/jobs", pathID(id)), "job", status, timeout, interval)
 	}}
-	cmd.Flags().StringVar(&id, "id", "", "compose id")
-	cmd.Flags().StringVar(&status, "status", "done", "desired status")
+	cmd.Flags().StringVar(&id, "job-id", "", "Yalla job ID")
+	cmd.Flags().StringVar(&status, "status", "succeeded", "desired terminal status")
 	cmd.Flags().DurationVar(&timeout, "timeout", 300*time.Second, "maximum wait")
-	_ = cmd.MarkFlagRequired("id")
+	cmd.Flags().DurationVar(&interval, "interval", time.Second, "poll interval")
 	return cmd
+}
+
+func newWaitDeploymentCommand() *cobra.Command {
+	var id, status string
+	var timeout, interval time.Duration
+	cmd := &cobra.Command{Use: "deployment", Short: "Wait for a deployment status", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
+		if strings.TrimSpace(id) == "" {
+			return yerr.New(yerr.CodeInvalidInput, "deployment ID is required").WithHint("pass --deployment-id")
+		}
+		return waitBackendResource(c, yallaPath("v1/deployments", pathID(id)), "deployment", status, timeout, interval)
+	}}
+	cmd.Flags().StringVar(&id, "deployment-id", "", "Yalla deployment ID")
+	cmd.Flags().StringVar(&status, "status", "succeeded", "desired terminal status")
+	cmd.Flags().DurationVar(&timeout, "timeout", 300*time.Second, "maximum wait")
+	cmd.Flags().DurationVar(&interval, "interval", time.Second, "poll interval")
+	return cmd
+}
+
+func waitBackendResource(c *cobra.Command, path, resourceKey, want string, timeout, interval time.Duration) error {
+	r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
+	cli, err := newYallaAPIClient(configFromCommand(c), BuildInfoFromContext(c.Context()), 0)
+	if err != nil {
+		return err
+	}
+	ctx := c.Context()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var last json.RawMessage
+	for {
+		data, _, err := yallaJSONRequest(ctx, cli, http.MethodGet, path, nil, true)
+		if err != nil {
+			return err
+		}
+		last = data
+		if resourceStatus(data, resourceKey) == want {
+			if r.JSON() {
+				return r.Data(data)
+			}
+			r.Human(want)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return yerr.Newf(yerr.CodeTimeout, "timed out waiting for %s status %q", resourceKey, want).
+				WithHint(string(last))
+		case <-time.After(interval):
+		}
+	}
+}
+
+func resourceStatus(data json.RawMessage, resourceKey string) string {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(data, &outer); err != nil {
+		return ""
+	}
+	raw := outer[resourceKey]
+	if len(raw) == 0 {
+		raw = data
+	}
+	var obj struct {
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(raw, &obj)
+	return obj.Status
 }
 
 func newWaitURLCommand() *cobra.Command {
 	var rawURL, class string
-	var timeout time.Duration
+	var timeout, interval time.Duration
 	cmd := &cobra.Command{Use: "url", Short: "Wait for an HTTP status class", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
-		r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
-		ctx := c.Context()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
+		if strings.TrimSpace(rawURL) == "" {
+			return yerr.New(yerr.CodeInvalidInput, "URL is required").WithHint("pass --url")
 		}
-		res, err := dokploy.WaitURL(ctx, rawURL, class, time.Second)
-		if err != nil {
-			if res != nil {
-				return dokploy.TimeoutError(res)
-			}
-			return err
-		}
-		if r.JSON() {
-			return r.Data(res)
-		}
-		r.Human(res.Status)
-		return nil
+		return waitURL(c, rawURL, class, timeout, interval)
 	}}
 	cmd.Flags().StringVar(&rawURL, "url", "", "URL to probe")
 	cmd.Flags().StringVar(&class, "status-class", "2xx", "desired status class")
 	cmd.Flags().DurationVar(&timeout, "timeout", 120*time.Second, "maximum wait")
-	_ = cmd.MarkFlagRequired("url")
+	cmd.Flags().DurationVar(&interval, "interval", time.Second, "poll interval")
 	return cmd
 }
 
-func newWaitOrphansCommand() *cobra.Command {
-	var appName string
-	var count int
-	var timeout time.Duration
-	cmd := &cobra.Command{Use: "orphans", Short: "Wait for orphan container count", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
-		r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
-		runner, err := newDokployRunner(configFromCommand(c), BuildInfoFromContext(c.Context()), 0)
+func waitURL(c *cobra.Command, rawURL, class string, timeout, interval time.Duration) error {
+	r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
+	ctx := c.Context()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
-			return err
+			return yerr.Newf(yerr.CodeInvalidInput, "invalid URL %q: %v", rawURL, err)
 		}
-		ctx := c.Context()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-		}
-		res, err := dokploy.WaitOrphans(ctx, runner, appName, count, time.Second)
-		if err != nil {
-			if res != nil {
-				return dokploy.TimeoutError(res)
+		res, err := client.Do(req)
+		if err == nil {
+			_ = res.Body.Close()
+			if statusMatchesClass(res.StatusCode, class) {
+				doc := map[string]any{"url": rawURL, "status": http.StatusText(res.StatusCode), "status_code": res.StatusCode}
+				if r.JSON() {
+					return r.Data(doc)
+				}
+				r.Human(http.StatusText(res.StatusCode))
+				return nil
 			}
-			return err
 		}
-		if r.JSON() {
-			return r.Data(res)
+		select {
+		case <-ctx.Done():
+			return yerr.Newf(yerr.CodeTimeout, "timed out waiting for %s to return %s", rawURL, class)
+		case <-time.After(interval):
 		}
-		r.Human(appName)
-		return nil
-	}}
-	cmd.Flags().StringVar(&appName, "app-name", "", "Dokploy appName")
-	cmd.Flags().IntVar(&count, "count", 0, "desired count")
-	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Second, "maximum wait")
-	_ = cmd.MarkFlagRequired("app-name")
-	return cmd
+	}
+}
+
+func statusMatchesClass(status int, class string) bool {
+	if len(class) != 3 || class[1:] != "xx" {
+		return false
+	}
+	if status < 100 || status > 599 {
+		return false
+	}
+	return strconv.Itoa(status/100)+"xx" == class
 }

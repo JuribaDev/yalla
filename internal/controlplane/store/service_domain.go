@@ -515,6 +515,7 @@ type ServiceDomainService struct {
 	domains  *ServiceDomainRepository
 	authz    Authorizer
 	quota    QuotaReserver
+	jobs     JobEnqueuer
 	audit    AuditAppender
 }
 
@@ -522,7 +523,7 @@ type ServiceDomainService struct {
 // dependencies. It returns a typed error if any dependency is nil, so a
 // misconfigured service fails at construction rather than on its first
 // request.
-func NewServiceDomainService(s *Store, services *ServiceRepository, domains *ServiceDomainRepository, authz Authorizer, quota QuotaReserver, audit AuditAppender) (*ServiceDomainService, error) {
+func NewServiceDomainService(s *Store, services *ServiceRepository, domains *ServiceDomainRepository, authz Authorizer, quota QuotaReserver, jobs JobEnqueuer, audit AuditAppender) (*ServiceDomainService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -534,6 +535,8 @@ func NewServiceDomainService(s *Store, services *ServiceRepository, domains *Ser
 		return nil, errors.New("store: nil authorizer")
 	case quota == nil:
 		return nil, errors.New("store: nil quota reserver")
+	case jobs == nil:
+		return nil, errors.New("store: nil job enqueuer")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
@@ -543,6 +546,7 @@ func NewServiceDomainService(s *Store, services *ServiceRepository, domains *Ser
 		domains:  domains,
 		authz:    authz,
 		quota:    quota,
+		jobs:     jobs,
 		audit:    audit,
 	}, nil
 }
@@ -616,6 +620,15 @@ func (svc *ServiceDomainService) Create(ctx context.Context, in CreateServiceDom
 		}
 		inserted, err := svc.domains.Insert(ctx, tx, row)
 		if err != nil {
+			return err
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: row.OrganizationID,
+			JobKind:        "sync_domains",
+			ResourceID:     row.ServiceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
 			return err
 		}
 		event := AuditEvent{
@@ -1004,6 +1017,15 @@ func (svc *ServiceDomainService) Update(ctx context.Context, in UpdateServiceDom
 		if updErr != nil {
 			return updErr
 		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        "sync_domains",
+			ResourceID:     row.ServiceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
+		}
 		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
 			return audErr
 		}
@@ -1130,6 +1152,15 @@ func (svc *ServiceDomainService) Delete(ctx context.Context, in DeleteServiceDom
 		row, delErr := svc.domains.DeleteByID(ctx, tx, organizationID, serviceID, domainID, in.IfMatchVersion)
 		if delErr != nil {
 			return delErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        "sync_domains",
+			ResourceID:     row.ServiceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
 		}
 
 		event := AuditEvent{

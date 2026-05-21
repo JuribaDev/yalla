@@ -974,6 +974,15 @@ func (svc *ServiceService) ScheduleDeletion(ctx context.Context, in DeleteServic
 		if updErr != nil {
 			return updErr
 		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        serviceDeleteAction,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
+		}
 		// deletion_scheduled_at is database-assigned (now()); record the
 		// resolved timestamp — a non-secret value — as audit context so
 		// the trail captures exactly when teardown was scheduled.

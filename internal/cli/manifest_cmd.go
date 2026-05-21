@@ -23,8 +23,8 @@ const ManifestSchema = "yalla.manifest.v1"
 
 // manifestDoc is the agent-facing description of the entire CLI surface.
 // It bundles binary metadata, the full command tree (with persistent +
-// local flags), the canonical error-code table, and the OpenAPI
-// operation coverage so an agent can introspect what the binary can do
+// local flags), the canonical error-code table, and the runtime API
+// discovery metadata so an agent can introspect what the binary can do
 // without invoking individual help subcommands.
 //
 // Field order follows the JSON tag order so the marshalled document
@@ -105,10 +105,10 @@ type manifestCuratedCommand struct {
 	JSONExample  string   `json:"json_example,omitempty"`
 }
 
-// manifestOperations summarises the embedded OpenAPI registry coverage.
-// The full operation catalogue is reachable through `yalla api operations`
-// and `yalla schema get`, but a flat ID list lives here so the manifest
-// alone is sufficient to verify "every API operation is covered".
+// manifestOperations summarises local operation coverage. Backend API
+// operations are discovered at runtime through `yalla api operations` and
+// `yalla schema get`; the manifest deliberately does not embed the old
+// Dokploy OpenAPI operation catalogue.
 type manifestOperations struct {
 	Total int      `json:"total"`
 	Tags  []string `json:"tags"`
@@ -128,8 +128,7 @@ func newManifestCommand() *cobra.Command {
 The manifest is the single artefact agents inspect to discover what
 this binary can do. It includes the full command tree (with each
 command's flags, examples, and visibility), the canonical error-code
-table (with stable exit codes), and the embedded OpenAPI operation
-catalogue (count, tags, and operationIds).
+	table (with stable exit codes), and the backend API discovery surface.
 
 The payload is wrapped in the standard ` + "`yalla.output.v1`" + `
 envelope when ` + "`--json`" + ` is set; the inner payload carries its
@@ -144,10 +143,20 @@ can branch on the manifest shape independently of the envelope.`,
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
 			build := BuildInfoFromContext(c.Context())
-			return runManifest(c, r, build, api.Default(), curated.Default())
+			reg, err := backendManifestRegistry()
+			if err != nil {
+				return yerr.Newf(yerr.CodeInternal, "could not build backend manifest registry: %v", err)
+			}
+			return runManifest(c, r, build, reg, curated.Default())
 		},
 	}
 	return cmd
+}
+
+const backendManifestOpenAPI = `{"openapi":"3.1.0","info":{"title":"Yalla Control Plane API","version":"runtime-discovered"},"paths":{}}`
+
+func backendManifestRegistry() (*api.Registry, error) {
+	return api.Load([]byte(backendManifestOpenAPI))
 }
 
 // runManifest assembles the manifest from the live root command and

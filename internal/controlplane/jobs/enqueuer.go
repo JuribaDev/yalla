@@ -29,6 +29,7 @@ type Enqueuer struct {
 	projects      *store.ProjectRepository
 	environments  *store.EnvironmentRepository
 	services      *store.ServiceRepository
+	backups       *store.ServiceBackupRepository
 	deployments   *store.DeploymentRepository
 }
 
@@ -41,6 +42,7 @@ func NewEnqueuer() *Enqueuer {
 		projects:      store.NewProjectRepository(),
 		environments:  store.NewEnvironmentRepository(),
 		services:      store.NewServiceRepository(),
+		backups:       store.NewServiceBackupRepository(),
 		deployments:   store.NewDeploymentRepository(),
 	}
 }
@@ -70,8 +72,18 @@ func (e *Enqueuer) Enqueue(ctx context.Context, tx *store.Tx, in store.EnqueueJo
 	case TypeRestartService, TypeRestartServiceAlias,
 		TypeRollbackService, TypeRollbackServiceAlias,
 		TypeStopService, TypeStopServiceAlias,
-		TypeStartService, TypeStartServiceAlias:
+		TypeStartService, TypeStartServiceAlias,
+		TypeDeleteService, TypeDeleteServiceAlias,
+		TypeSyncDomains,
+		TypeSyncVariables,
+		TypeReconcileService:
 		return e.enqueueServiceRuntime(ctx, tx, in)
+	case TypeDeleteEnvironment, TypeDeleteEnvironmentAlias:
+		return e.enqueueDeleteEnvironment(ctx, tx, in)
+	case TypeDeleteProject, TypeDeleteProjectAlias:
+		return e.enqueueDeleteProject(ctx, tx, in)
+	case TypeRunBackup, TypeRestoreBackup:
+		return e.enqueueBackup(ctx, tx, in)
 	case TypeCreatePreviewEnvironment, TypeDeletePreviewEnvironment:
 		return e.enqueuePreview(ctx, tx, in)
 	default:
@@ -84,6 +96,7 @@ func normalizeInput(in store.EnqueueJobInput) store.EnqueueJobInput {
 		OrganizationID: strings.TrimSpace(in.OrganizationID),
 		JobKind:        strings.TrimSpace(in.JobKind),
 		ResourceID:     strings.TrimSpace(in.ResourceID),
+		ServiceID:      strings.TrimSpace(in.ServiceID),
 		RequestID:      strings.TrimSpace(in.RequestID),
 		CorrelationID:  strings.TrimSpace(in.CorrelationID),
 	}
@@ -239,6 +252,80 @@ func (e *Enqueuer) enqueueDeployment(ctx context.Context, tx *store.Tx, in store
 			"environment_id":  deployment.EnvironmentID,
 			"service_id":      deployment.ServiceID,
 			"deployment_id":   deployment.ID,
+		},
+	})
+}
+
+func (e *Enqueuer) enqueueDeleteEnvironment(ctx context.Context, tx *store.Tx, in store.EnqueueJobInput) error {
+	env, err := e.environments.GetByID(ctx, tx, in.OrganizationID, in.ResourceID)
+	if err != nil {
+		return err
+	}
+	return e.insertIfAbsent(ctx, tx, store.ProvisioningJob{
+		OrganizationID: env.OrganizationID,
+		JobType:        in.JobKind,
+		ProjectID:      env.ProjectID,
+		EnvironmentID:  env.ID,
+		DesiredVersion: env.Version,
+		IdempotencyKey: idempotencyKey(in.JobKind, env.ID, env.Version),
+		RequestID:      in.RequestID,
+		CorrelationID:  in.CorrelationID,
+		Payload: map[string]string{
+			"organization_id": env.OrganizationID,
+			"project_id":      env.ProjectID,
+			"environment_id":  env.ID,
+		},
+	})
+}
+
+func (e *Enqueuer) enqueueDeleteProject(ctx context.Context, tx *store.Tx, in store.EnqueueJobInput) error {
+	project, err := e.projects.Get(ctx, tx, in.OrganizationID, in.ResourceID)
+	if err != nil {
+		return err
+	}
+	return e.insertIfAbsent(ctx, tx, store.ProvisioningJob{
+		OrganizationID: project.OrganizationID,
+		JobType:        in.JobKind,
+		ProjectID:      project.ID,
+		DesiredVersion: project.Version,
+		IdempotencyKey: idempotencyKey(in.JobKind, project.ID, project.Version),
+		RequestID:      in.RequestID,
+		CorrelationID:  in.CorrelationID,
+		Payload: map[string]string{
+			"organization_id": project.OrganizationID,
+			"project_id":      project.ID,
+		},
+	})
+}
+
+func (e *Enqueuer) enqueueBackup(ctx context.Context, tx *store.Tx, in store.EnqueueJobInput) error {
+	if in.ServiceID == "" {
+		return apierr.Internal(errors.New("jobs: backup job requires service_id"))
+	}
+	backup, err := e.backups.GetByID(ctx, tx, in.OrganizationID, in.ServiceID, in.ResourceID)
+	if err != nil {
+		return err
+	}
+	svc, err := e.services.GetByID(ctx, tx, in.OrganizationID, backup.ServiceID)
+	if err != nil {
+		return err
+	}
+	return e.insertIfAbsent(ctx, tx, store.ProvisioningJob{
+		OrganizationID: backup.OrganizationID,
+		JobType:        in.JobKind,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		DesiredVersion: backup.Version,
+		IdempotencyKey: idempotencyKey(in.JobKind, backup.ID, backup.Version),
+		RequestID:      in.RequestID,
+		CorrelationID:  in.CorrelationID,
+		Payload: map[string]string{
+			"organization_id": backup.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+			"backup_id":       backup.ID,
 		},
 	})
 }

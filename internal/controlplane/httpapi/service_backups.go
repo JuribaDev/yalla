@@ -42,6 +42,11 @@ var errNoServiceBackupCreator = errors.New("httpapi: no service backup creator c
 // misleading 2xx with no side effect.
 var errNoServiceBackupRunner = errors.New("httpapi: no service backup runner configured")
 
+// errNoServiceBackupRestorer is returned when POST
+// /v1/services/{service_id}/backups/{backup_id}/restore is reached
+// without a ServiceBackupRestorer wired into NewHandler.
+var errNoServiceBackupRestorer = errors.New("httpapi: no service backup restorer configured")
+
 // errNoServiceBackupUpdater is returned when PATCH
 // /v1/services/{service_id}/backups/{backup_id} is reached without a
 // ServiceBackupUpdater wired into NewHandler. Like
@@ -524,6 +529,58 @@ func runServiceBackupHandler(runner ServiceBackupRunner) http.HandlerFunc {
 
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), runServiceBackupPayload{
 			Backup: serviceBackupOf(triggered),
+		})
+	}
+}
+
+// ServiceBackupRestorer is the narrow persistence port POST
+// /v1/services/{service_id}/backups/{backup_id}/restore depends on.
+// *store.ServiceBackupService satisfies it in production; tests supply a fake.
+type ServiceBackupRestorer interface {
+	Restore(ctx context.Context, in store.RestoreServiceBackupInput) (store.ServiceBackup, error)
+}
+
+// restoreServiceBackupPayload is the data block returned after a restore
+// request is accepted. The backup row is unchanged by the control plane; the
+// durable restore_backup job carries the actual side effect to the worker.
+type restoreServiceBackupPayload struct {
+	Backup serviceBackup `json:"backup"`
+}
+
+// restoreServiceBackupHandler builds the POST
+// /v1/services/{service_id}/backups/{backup_id}/restore handler. The request
+// body is intentionally empty: the service and backup ids come from the path,
+// and the worker derives all restore context from the persisted backup row.
+func restoreServiceBackupHandler(restorer ServiceBackupRestorer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if restorer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceBackupRestorer))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		restored, err := restorer.Restore(r.Context(), store.RestoreServiceBackupInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			BackupID:       r.PathValue("backup_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), restoreServiceBackupPayload{
+			Backup: serviceBackupOf(restored),
 		})
 	}
 }

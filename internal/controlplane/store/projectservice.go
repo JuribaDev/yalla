@@ -63,6 +63,7 @@ type EnqueueJobInput struct {
 	OrganizationID string
 	JobKind        string
 	ResourceID     string
+	ServiceID      string
 	RequestID      string
 	CorrelationID  string
 }
@@ -555,11 +556,10 @@ func validateProjectDisplayName(raw string) (string, *apierr.FieldViolation) {
 // in-transaction Authorizer is reserved for Create (the create-time race
 // against grant changes during a quota reservation).
 //
-// This is a soft, scheduled deletion: it records the intent and stamps the
-// timestamp. The destructive teardown — the ON DELETE CASCADE that removes
-// environments, services, and the audit log under the project — is a later
-// worker story, so the project row and its audit trail still exist after
-// this returns.
+// This is a soft, scheduled deletion: it records the intent, stamps the
+// timestamp, and enqueues the durable worker job that performs backend-owned
+// teardown. The project row and its audit trail still exist after this
+// returns so the worker has a consistent desired-state record to process.
 func (svc *ProjectService) ScheduleDeletion(ctx context.Context, in DeleteProjectInput) (Project, error) {
 	organizationID := strings.TrimSpace(in.OrganizationID)
 	if organizationID == "" {
@@ -623,6 +623,15 @@ func (svc *ProjectService) ScheduleDeletion(ctx context.Context, in DeleteProjec
 		row, updErr := svc.repo.ScheduleDeletion(ctx, tx, organizationID, projectID, in.IfMatchVersion)
 		if updErr != nil {
 			return updErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        projectDeleteAction,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
 		}
 		// deletion_scheduled_at is database-assigned (now()); record the
 		// resolved timestamp — a non-secret value — as audit context so the

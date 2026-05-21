@@ -12,21 +12,17 @@ import (
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
-// newAPICommand builds the `yalla api` subtree. It hosts the read-only
-// `operations` listing (US-0004) and the raw `call` executor (US-0005).
-// Curated commands (US-0012) live under their own top-level subtree; this
-// tree is the universal escape hatch that guarantees every Dokploy API
-// operation can be invoked.
+// newAPICommand builds the `yalla api` subtree. It hosts read-only Yalla
+// backend OpenAPI inspection. Raw Dokploy operation execution is removed from
+// normal CLI usage.
 func newAPICommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "api",
-		Short: "Inspect the Dokploy OpenAPI surface yalla covers and invoke any operation",
-		Long: `Inspect or invoke the Dokploy OpenAPI operation registry yalla ships with.
+		Short: "Inspect the Yalla backend OpenAPI surface",
+		Long: `Inspect the Yalla Control Plane OpenAPI operation registry.
 
-Yalla embeds the Dokploy OpenAPI 3.1 document at build time and exposes a
-stable view of every operation through these subcommands. The registry is
-the source of truth for ` + "`yalla api call`" + ` (the raw executor),
-` + "`yalla schema`" + `, and ` + "`yalla manifest`" + ` (US-0007).`,
+The backend serves ` + "`/openapi.json`" + ` and is the source of truth shared by
+the CLI, frontend, and CI agents.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
@@ -73,11 +69,11 @@ func newAPIOperationsCommand() *cobra.Command {
 	var tag string
 	cmd := &cobra.Command{
 		Use:   "operations",
-		Short: "List every Dokploy API operation yalla covers",
-		Long: `List the Dokploy API operations yalla can invoke through ` + "`yalla api call`" + `.
+		Short: "List Yalla backend API operations",
+		Long: `List the Yalla backend API operations exposed by ` + "`/openapi.json`" + `.
 
 The output is deterministic (operationId-sorted) so agents can diff results
-across yalla versions to detect upstream API churn. Use ` + "`--tag`" + ` to
+across Yalla versions to detect API churn. Use ` + "`--tag`" + ` to
 restrict the list to a single OpenAPI tag (e.g. ` + "`application`" + `,
 ` + "`compose`" + `, ` + "`server`" + `).`,
 		Example: `  yalla api operations
@@ -89,7 +85,11 @@ restrict the list to a single OpenAPI tag (e.g. ` + "`application`" + `,
 		RunE: func(c *cobra.Command, _ []string) error {
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
-			return runAPIOperations(r, api.Default(), tag)
+			reg, err := yallaBackendRegistry(c.Context(), configFromCommand(c), BuildInfoFromContext(c.Context()))
+			if err != nil {
+				return err
+			}
+			return runAPIOperations(r, reg, tag)
 		},
 	}
 	cmd.Flags().StringVar(&tag, "tag", "", "filter by OpenAPI tag (e.g. application)")

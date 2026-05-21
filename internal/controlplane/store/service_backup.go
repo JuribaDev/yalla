@@ -294,7 +294,10 @@ const serviceBackupCreateAction = "backup.create"
 // POST /v1/services/{service_id}/backups/{backup_id}/run. The
 // constant lives in the store layer because the audit event is
 // written from the same *Tx as the status flip the worker observes.
-const serviceBackupRunAction = "backup.run"
+const (
+	serviceBackupRunAction     = "backup.run"
+	serviceBackupRestoreAction = "backup.restore"
+)
 
 // serviceBackupUpdateAction is the immutable audit-event Action
 // string emitted when a service backup policy is partially updated
@@ -414,6 +417,7 @@ type ServiceBackupService struct {
 	backups  *ServiceBackupRepository
 	authz    Authorizer
 	quota    QuotaReserver
+	jobs     JobEnqueuer
 	audit    AuditAppender
 }
 
@@ -421,7 +425,7 @@ type ServiceBackupService struct {
 // dependencies. It returns a typed error if any dependency is nil, so
 // a misconfigured service fails at construction rather than on its
 // first request.
-func NewServiceBackupService(s *Store, services *ServiceRepository, backups *ServiceBackupRepository, authz Authorizer, quota QuotaReserver, audit AuditAppender) (*ServiceBackupService, error) {
+func NewServiceBackupService(s *Store, services *ServiceRepository, backups *ServiceBackupRepository, authz Authorizer, quota QuotaReserver, jobs JobEnqueuer, audit AuditAppender) (*ServiceBackupService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -433,6 +437,8 @@ func NewServiceBackupService(s *Store, services *ServiceRepository, backups *Ser
 		return nil, errors.New("store: nil authorizer")
 	case quota == nil:
 		return nil, errors.New("store: nil quota reserver")
+	case jobs == nil:
+		return nil, errors.New("store: nil job enqueuer")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
@@ -442,6 +448,7 @@ func NewServiceBackupService(s *Store, services *ServiceRepository, backups *Ser
 		backups:  backups,
 		authz:    authz,
 		quota:    quota,
+		jobs:     jobs,
 		audit:    audit,
 	}, nil
 }
@@ -964,6 +971,16 @@ func (svc *ServiceBackupService) Run(ctx context.Context, in RunServiceBackupInp
 		if err != nil {
 			return err
 		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        "run_backup",
+			ResourceID:     updated.ID,
+			ServiceID:      serviceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
+		}
 		event := AuditEvent{
 			OrganizationID: actorOrgID,
 			ActorID:        strings.TrimSpace(in.ActorID),
@@ -1004,6 +1021,102 @@ func (svc *ServiceBackupService) Run(ctx context.Context, in RunServiceBackupInp
 		return ServiceBackup{}, txErr
 	}
 	return triggered, nil
+}
+
+// RestoreServiceBackupInput is the store-layer command for restoring a
+// service from a completed backup-policy row. It mirrors RunServiceBackupInput:
+// the HTTP boundary supplies OrganizationID from the authenticated principal's
+// home organization, ServiceID/BackupID from the path, and actor/correlation
+// metadata for the immutable audit event.
+type RestoreServiceBackupInput struct {
+	OrganizationID string
+	ServiceID      string
+	BackupID       string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Restore records customer intent to restore a service from the backup row
+// named by (OrganizationID, ServiceID, BackupID) and enqueues the durable
+// restore_backup job in the same transaction as the authorization and audit
+// event. Restore is intentionally stricter than Run: only an enabled backup
+// with status succeeded can be restored, because the worker must not attempt to
+// restore from a disabled policy or from a backup whose latest artefact is
+// still pending/running/failed.
+func (svc *ServiceBackupService) Restore(ctx context.Context, in RestoreServiceBackupInput) (ServiceBackup, error) {
+	c := validate.New()
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	validate.ID(c, "organization_id", organizationID, domain.KindOrganization)
+	serviceID := strings.TrimSpace(in.ServiceID)
+	validate.ID(c, "service_id", serviceID, domain.KindService)
+	backupID := strings.TrimSpace(in.BackupID)
+	validate.ID(c, "backup_id", backupID, domain.KindServiceBackup)
+	if err := c.Err(); err != nil {
+		return ServiceBackup{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupService.Restore requires an actor organization for the audit record"))
+	}
+
+	var restored ServiceBackup
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		if _, err := svc.services.GetByID(ctx, tx, organizationID, serviceID); err != nil {
+			return err
+		}
+		current, err := svc.backups.GetByID(ctx, tx, organizationID, serviceID, backupID)
+		if err != nil {
+			return err
+		}
+		if !current.Enabled {
+			return apierr.Conflict("backup is disabled")
+		}
+		if current.Status != ServiceBackupStatusSucceeded {
+			return apierr.Conflict("backup has no successful run to restore")
+		}
+		if err := svc.authz.Authorize(ctx, tx, serviceBackupRestoreAction, organizationID); err != nil {
+			return err
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        "restore_backup",
+			ResourceID:     current.ID,
+			ServiceID:      serviceID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         serviceBackupRestoreAction,
+			ResourceKind:   string(domain.KindServiceBackup),
+			ResourceID:     current.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for backup.restore",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			Metadata: map[string]string{
+				"service_id": current.ServiceID,
+				"status":     current.Status,
+			},
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		restored = current
+		return nil
+	})
+	if txErr != nil {
+		return ServiceBackup{}, txErr
+	}
+	return restored, nil
 }
 
 // Update writes a partial update to the service_backups row

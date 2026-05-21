@@ -2,7 +2,7 @@
 //
 // The package answers a single question for every subcommand: "given the CLI
 // flags the user typed, the environment we run in, and the config file on
-// disk, what is the effective Dokploy connection profile right now?"
+// disk, what is the effective Yalla API connection profile right now?"
 //
 // Three contracts are part of yalla's public API:
 //
@@ -118,7 +118,7 @@ type Config struct {
 	FileLoaded bool
 }
 
-// HasToken reports whether a Dokploy API token is configured from any
+// HasToken reports whether a Yalla API token is configured from any
 // source. The check is intentionally string-only so callers never need to
 // see the value to make the decision.
 func (c *Config) HasToken() bool {
@@ -128,7 +128,7 @@ func (c *Config) HasToken() bool {
 	return c.Token != ""
 }
 
-// HasBaseURL reports whether a Dokploy base URL is configured.
+// HasBaseURL reports whether a Yalla API base URL is configured.
 func (c *Config) HasBaseURL() bool {
 	if c == nil {
 		return false
@@ -137,7 +137,7 @@ func (c *Config) HasBaseURL() bool {
 }
 
 // Ready returns nil when the config is sufficient to make an authenticated
-// Dokploy API call. Otherwise it returns the most specific typed error so
+// Yalla API call. Otherwise it returns the most specific typed error so
 // the caller can surface it through the standard renderer without
 // re-classifying.
 //
@@ -150,11 +150,11 @@ func (c *Config) Ready() error {
 		return yerr.New(yerr.CodeConfig, "yalla config is not initialised")
 	}
 	if !c.HasToken() {
-		return yerr.New(yerr.CodeAuth, "no Dokploy API token configured").
+		return yerr.New(yerr.CodeAuth, "no Yalla API token configured").
 			WithHint("run `yalla auth login`, set YALLA_TOKEN, or pass --token")
 	}
 	if !c.HasBaseURL() {
-		return yerr.New(yerr.CodeConfig, "no Dokploy base URL configured").
+		return yerr.New(yerr.CodeConfig, "no Yalla API URL configured").
 			WithHint("run `yalla auth login`, set YALLA_BASE_URL, or pass --base-url")
 	}
 	return nil

@@ -131,6 +131,7 @@ func TestServiceBackupServiceCreateRejectsParallelOversubscriptionForBackupSched
 		store.NewServiceBackupRepository(),
 		authz,
 		checker,
+		&recordingJobs{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {
@@ -399,6 +400,7 @@ func TestServiceBackupServiceCreateAppliesBackupSchedulesQuotaIndependentlyOfSer
 		store.NewServiceBackupRepository(),
 		authz,
 		checker,
+		&recordingJobs{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {

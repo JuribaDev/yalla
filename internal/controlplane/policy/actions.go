@@ -75,11 +75,12 @@ const (
 	ActionDeploymentRollback Action = "deployment.rollback"
 
 	// Backup actions.
-	ActionBackupRead   Action = "backup.read"
-	ActionBackupCreate Action = "backup.create"
-	ActionBackupUpdate Action = "backup.update"
-	ActionBackupDelete Action = "backup.delete"
-	ActionBackupRun    Action = "backup.run"
+	ActionBackupRead    Action = "backup.read"
+	ActionBackupCreate  Action = "backup.create"
+	ActionBackupUpdate  Action = "backup.update"
+	ActionBackupDelete  Action = "backup.delete"
+	ActionBackupRun     Action = "backup.run"
+	ActionBackupRestore Action = "backup.restore"
 
 	// Provisioning-job actions.
 	ActionJobRead   Action = "job.read"
@@ -169,6 +170,7 @@ var allActions = []Action{
 	ActionBackupUpdate,
 	ActionBackupDelete,
 	ActionBackupRun,
+	ActionBackupRestore,
 	ActionJobRead,
 	ActionJobCancel,
 	ActionJobRetry,

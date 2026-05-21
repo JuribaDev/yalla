@@ -51,6 +51,7 @@ func newServiceVariableServiceWith(t *testing.T, s *store.Store, provider secret
 	svc, err := store.NewServiceVariableService(s,
 		store.NewServiceRepository(),
 		store.NewServiceVariableRepository(),
+		&recordingJobs{},
 		store.NewAuditRepository(),
 		provider)
 	if err != nil {

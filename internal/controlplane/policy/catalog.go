@@ -114,6 +114,7 @@ var defaultActionCatalog = map[Action]Capability{
 	ActionDeploymentCancel:   CapDeploy,
 	ActionDeploymentRollback: CapDeploy,
 	ActionBackupRun:          CapDeploy,
+	ActionBackupRestore:      CapDeploy,
 	ActionJobCancel:          CapDeploy,
 	ActionJobRetry:           CapDeploy,
 	ActionServiceRestart:     CapDeploy,

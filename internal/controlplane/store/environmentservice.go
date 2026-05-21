@@ -536,11 +536,10 @@ func (svc *EnvironmentService) Update(ctx context.Context, in UpdateEnvironmentI
 // in-transaction Authorizer is reserved for Create (the create-time race
 // against grant changes during a quota reservation).
 //
-// This is a soft, scheduled deletion: it records the intent and stamps
-// the timestamp. The destructive teardown — the ON DELETE CASCADE that
-// removes services and the audit log under the environment — is a later
-// worker story, so the environment row and its audit trail still exist
-// after this returns.
+// This is a soft, scheduled deletion: it records the intent, stamps the
+// timestamp, and enqueues the durable worker job that performs backend-owned
+// teardown. The environment row and its audit trail still exist after this
+// returns so the worker has a consistent desired-state record to process.
 func (svc *EnvironmentService) ScheduleDeletion(ctx context.Context, in DeleteEnvironmentInput) (Environment, error) {
 	organizationID := strings.TrimSpace(in.OrganizationID)
 	if organizationID == "" {
@@ -604,6 +603,15 @@ func (svc *EnvironmentService) ScheduleDeletion(ctx context.Context, in DeleteEn
 		row, updErr := svc.environments.ScheduleDeletion(ctx, tx, organizationID, environmentID, in.IfMatchVersion)
 		if updErr != nil {
 			return updErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
+			OrganizationID: organizationID,
+			JobKind:        environmentDeleteAction,
+			ResourceID:     row.ID,
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		}); err != nil {
+			return err
 		}
 		// deletion_scheduled_at is database-assigned (now()); record the
 		// resolved timestamp — a non-secret value — as audit context so the

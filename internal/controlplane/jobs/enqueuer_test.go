@@ -293,6 +293,103 @@ func TestEnqueuerEnqueuesServiceRuntimeJob(t *testing.T) {
 	}
 }
 
+func TestEnqueuerEnqueuesServiceSideEffectJobs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		kind      string
+		wantParse func(store.ProvisioningJob) error
+	}{
+		{
+			name: "delete",
+			kind: jobs.TypeDeleteService,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseDeleteServicePayload(job)
+				return err
+			},
+		},
+		{
+			name: "sync domains",
+			kind: jobs.TypeSyncDomains,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseSyncDomainsPayload(job)
+				return err
+			},
+		},
+		{
+			name: "sync variables",
+			kind: jobs.TypeSyncVariables,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseSyncVariablesPayload(job)
+				return err
+			},
+		},
+		{
+			name: "reconcile",
+			kind: jobs.TypeReconcileService,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseReconcileServicePayload(job)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := testutil.RequireMigratedDB(t)
+			s := newJobsTestStore(t, db)
+			enq := jobs.NewEnqueuer()
+			ctx := context.Background()
+
+			var org store.Organization
+			var project store.Project
+			var env store.Environment
+			var svc store.Service
+			if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+				org = insertJobsTestOrganization(ctx, t, tx, "acme")
+				project = insertJobsTestProject(ctx, t, tx, org, "api")
+				env = insertJobsTestEnvironment(ctx, t, tx, org, project, "prod", store.EnvironmentKindStandard)
+				svc = insertJobsTestService(ctx, t, tx, org, project, env, "api", store.ServiceKindApplication)
+				return enq.Enqueue(ctx, tx, store.EnqueueJobInput{
+					OrganizationID: org.ID,
+					JobKind:        tc.kind,
+					ResourceID:     svc.ID,
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+				})
+			}); err != nil {
+				t.Fatalf("enqueue service side effect job: %v", err)
+			}
+
+			job := readOnlyJob(t, s, org.ID)
+			assertJob(t, job, jobExpectation{
+				OrganizationID: org.ID,
+				JobType:        tc.kind,
+				ProjectID:      project.ID,
+				EnvironmentID:  env.ID,
+				ServiceID:      svc.ID,
+				DesiredVersion: svc.Version,
+				IdempotencyKey: tc.kind + ":" + svc.ID + ":v" + strconv.FormatInt(svc.Version, 10),
+				RequestID:      "req_test",
+				CorrelationID:  "corr_test",
+				Payload: map[string]string{
+					"organization_id": org.ID,
+					"project_id":      project.ID,
+					"environment_id":  env.ID,
+					"service_id":      svc.ID,
+				},
+			})
+			if err := tc.wantParse(job); err != nil {
+				t.Fatalf("worker rejected %s payload: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestEnqueuerEnqueuesDeploymentJob(t *testing.T) {
 	t.Parallel()
 
@@ -344,6 +441,202 @@ func TestEnqueuerEnqueuesDeploymentJob(t *testing.T) {
 	})
 	if _, err := worker.ParseDeployServicePayload(job); err != nil {
 		t.Fatalf("worker rejected deployment payload: %v", err)
+	}
+}
+
+func TestEnqueuerEnqueuesDeleteProjectAndEnvironmentJobs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		kind      string
+		enqueue   func(context.Context, *testing.T, *store.Tx, store.Organization, store.Project, store.Environment, *jobs.Enqueuer) error
+		wantParse func(store.ProvisioningJob) error
+		assert    func(*testing.T, store.ProvisioningJob, store.Organization, store.Project, store.Environment)
+	}{
+		{
+			name: "project",
+			kind: jobs.TypeDeleteProject,
+			enqueue: func(ctx context.Context, t *testing.T, tx *store.Tx, org store.Organization, project store.Project, _ store.Environment, enq *jobs.Enqueuer) error {
+				return enq.Enqueue(ctx, tx, store.EnqueueJobInput{
+					OrganizationID: org.ID,
+					JobKind:        jobs.TypeDeleteProject,
+					ResourceID:     project.ID,
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+				})
+			},
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseDeleteProjectPayload(job)
+				return err
+			},
+			assert: func(t *testing.T, job store.ProvisioningJob, org store.Organization, project store.Project, _ store.Environment) {
+				t.Helper()
+				assertJob(t, job, jobExpectation{
+					OrganizationID: org.ID,
+					JobType:        jobs.TypeDeleteProject,
+					ProjectID:      project.ID,
+					DesiredVersion: project.Version,
+					IdempotencyKey: jobs.TypeDeleteProject + ":" + project.ID + ":v" + strconv.FormatInt(project.Version, 10),
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+					Payload: map[string]string{
+						"organization_id": org.ID,
+						"project_id":      project.ID,
+					},
+				})
+			},
+		},
+		{
+			name: "environment",
+			kind: jobs.TypeDeleteEnvironment,
+			enqueue: func(ctx context.Context, t *testing.T, tx *store.Tx, org store.Organization, _ store.Project, env store.Environment, enq *jobs.Enqueuer) error {
+				return enq.Enqueue(ctx, tx, store.EnqueueJobInput{
+					OrganizationID: org.ID,
+					JobKind:        jobs.TypeDeleteEnvironment,
+					ResourceID:     env.ID,
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+				})
+			},
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseDeleteEnvironmentPayload(job)
+				return err
+			},
+			assert: func(t *testing.T, job store.ProvisioningJob, org store.Organization, project store.Project, env store.Environment) {
+				t.Helper()
+				assertJob(t, job, jobExpectation{
+					OrganizationID: org.ID,
+					JobType:        jobs.TypeDeleteEnvironment,
+					ProjectID:      project.ID,
+					EnvironmentID:  env.ID,
+					DesiredVersion: env.Version,
+					IdempotencyKey: jobs.TypeDeleteEnvironment + ":" + env.ID + ":v" + strconv.FormatInt(env.Version, 10),
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+					Payload: map[string]string{
+						"organization_id": org.ID,
+						"project_id":      project.ID,
+						"environment_id":  env.ID,
+					},
+				})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := testutil.RequireMigratedDB(t)
+			s := newJobsTestStore(t, db)
+			enq := jobs.NewEnqueuer()
+			ctx := context.Background()
+
+			var org store.Organization
+			var project store.Project
+			var env store.Environment
+			if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+				org = insertJobsTestOrganization(ctx, t, tx, "acme")
+				project = insertJobsTestProject(ctx, t, tx, org, "api")
+				env = insertJobsTestEnvironment(ctx, t, tx, org, project, "prod", store.EnvironmentKindStandard)
+				return tc.enqueue(ctx, t, tx, org, project, env, enq)
+			}); err != nil {
+				t.Fatalf("enqueue %s delete job: %v", tc.name, err)
+			}
+
+			job := readOnlyJob(t, s, org.ID)
+			tc.assert(t, job, org, project, env)
+			if err := tc.wantParse(job); err != nil {
+				t.Fatalf("worker rejected %s delete payload: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestEnqueuerEnqueuesBackupJobs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		kind      string
+		wantParse func(store.ProvisioningJob) error
+	}{
+		{
+			name: "run",
+			kind: jobs.TypeRunBackup,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseRunBackupPayload(job)
+				return err
+			},
+		},
+		{
+			name: "restore",
+			kind: jobs.TypeRestoreBackup,
+			wantParse: func(job store.ProvisioningJob) error {
+				_, err := worker.ParseRestoreBackupPayload(job)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := testutil.RequireMigratedDB(t)
+			s := newJobsTestStore(t, db)
+			enq := jobs.NewEnqueuer()
+			ctx := context.Background()
+
+			var org store.Organization
+			var project store.Project
+			var env store.Environment
+			var svc store.Service
+			var backup store.ServiceBackup
+			if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+				org = insertJobsTestOrganization(ctx, t, tx, "acme")
+				project = insertJobsTestProject(ctx, t, tx, org, "api")
+				env = insertJobsTestEnvironment(ctx, t, tx, org, project, "prod", store.EnvironmentKindStandard)
+				svc = insertJobsTestService(ctx, t, tx, org, project, env, "api", store.ServiceKindApplication)
+				backup = insertJobsTestBackup(ctx, t, tx, org, svc)
+				return enq.Enqueue(ctx, tx, store.EnqueueJobInput{
+					OrganizationID: org.ID,
+					JobKind:        tc.kind,
+					ResourceID:     backup.ID,
+					ServiceID:      svc.ID,
+					RequestID:      "req_test",
+					CorrelationID:  "corr_test",
+				})
+			}); err != nil {
+				t.Fatalf("enqueue backup job: %v", err)
+			}
+
+			job := readOnlyJob(t, s, org.ID)
+			assertJob(t, job, jobExpectation{
+				OrganizationID: org.ID,
+				JobType:        tc.kind,
+				ProjectID:      project.ID,
+				EnvironmentID:  env.ID,
+				ServiceID:      svc.ID,
+				DesiredVersion: backup.Version,
+				IdempotencyKey: tc.kind + ":" + backup.ID + ":v" + strconv.FormatInt(backup.Version, 10),
+				RequestID:      "req_test",
+				CorrelationID:  "corr_test",
+				Payload: map[string]string{
+					"organization_id": org.ID,
+					"project_id":      project.ID,
+					"environment_id":  env.ID,
+					"service_id":      svc.ID,
+					"backup_id":       backup.ID,
+				},
+			})
+			if err := tc.wantParse(job); err != nil {
+				t.Fatalf("worker rejected %s backup payload: %v", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -624,6 +917,24 @@ func insertJobsTestDeployment(ctx context.Context, t *testing.T, tx *store.Tx, o
 	})
 	if err != nil {
 		t.Fatalf("insert deployment: %v", err)
+	}
+	return row
+}
+
+func insertJobsTestBackup(ctx context.Context, t *testing.T, tx *store.Tx, org store.Organization, svc store.Service) store.ServiceBackup {
+	t.Helper()
+	row, err := store.NewServiceBackupRepository().Insert(ctx, tx, store.ServiceBackup{
+		ID:             domain.MustNewID(domain.KindServiceBackup).String(),
+		OrganizationID: org.ID,
+		ServiceID:      svc.ID,
+		DisplayName:    "daily",
+		Schedule:       "0 2 * * *",
+		RetentionCount: 7,
+		Enabled:        true,
+		Status:         store.ServiceBackupStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("insert backup: %v", err)
 	}
 	return row
 }
