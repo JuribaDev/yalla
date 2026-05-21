@@ -290,6 +290,8 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var adminBillingProviderManager AdminBillingProviderManager
 	var adminOveragePolicyManager AdminOveragePolicyManager
 	var adminFeatureFlagManager AdminFeatureFlagManager
+	var serviceBuildConfigReader ServiceBuildConfigReader
+	var serviceBuildConfigSetter ServiceBuildConfigSetter
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -362,6 +364,12 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminFeatureFlagManager); ok {
 			adminFeatureFlagManager = v
+		}
+		if v, ok := opt.(ServiceBuildConfigReader); ok {
+			serviceBuildConfigReader = v
+		}
+		if v, ok := opt.(ServiceBuildConfigSetter); ok {
+			serviceBuildConfigSetter = v
 		}
 		if v, ok := opt.(*telemetry.HTTPMetrics); ok && v != nil {
 			httpMetrics = v
@@ -1958,6 +1966,44 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// cannot mutate services in another tenant.
 			resolver: serviceIDResolver,
 			handler:  restoreServiceHandler(serviceRestorer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/services/{service_id}/build-config",
+				OperationID:    "getServiceBuildConfig",
+				Summary:        "Get service build configuration",
+				Description:    "Returns the normalized build configuration attached to the service named by the {service_id} path parameter. The response carries only non-secret source and config fields; credential material is represented by references such as registry_secret_ref.",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceBuildRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service whose build configuration to read.",
+				}},
+				SuccessDescription: "The service build configuration.",
+			},
+			resolver: serviceIDResolver,
+			handler:  getServiceBuildConfigHandler(serviceBuildConfigReader),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/services/{service_id}/build-config",
+				OperationID:    "setServiceBuildConfig",
+				Summary:        "Set service build configuration",
+				Description:    "Creates or replaces the normalized build configuration attached to the service named by the {service_id} path parameter, then enqueues a durable service.build.update reconciliation job. The request supports static, dockerfile, compose, and image build payloads and rejects raw secret values; callers must send credential references instead.",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceBuildUpdate),
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service whose build configuration to update.",
+				}},
+				SuccessDescription: "The service build configuration was updated.",
+			},
+			resolver: serviceIDResolver,
+			handler:  setServiceBuildConfigHandler(serviceBuildConfigSetter),
 		},
 		{
 			endpoint: openapi.Endpoint{

@@ -76,7 +76,8 @@ func (e *Enqueuer) Enqueue(ctx context.Context, tx *store.Tx, in store.EnqueueJo
 		TypeDeleteService, TypeDeleteServiceAlias,
 		TypeSyncDomains,
 		TypeSyncVariables,
-		TypeReconcileService:
+		TypeReconcileService,
+		TypeServiceBuildUpdate:
 		return e.enqueueServiceRuntime(ctx, tx, in)
 	case TypeDeleteEnvironment, TypeDeleteEnvironmentAlias:
 		return e.enqueueDeleteEnvironment(ctx, tx, in)

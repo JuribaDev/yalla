@@ -71,6 +71,11 @@ The active Cobra commands are documented by `yalla --json manifest`.
 Representative backend-mediated workflows:
 
 ```sh
+yalla project create --project-id proj_acme_web --name acme-web --json
+yalla environment create --environment-id env_acme_web_prod --project-id proj_acme_web --name production --json
+yalla service create --service-id svc_acme_web --environment-id env_acme_web_prod --name web --kind application --build-type dockerfile --repo https://github.com/acme/web --branch main --context . --dockerfile Dockerfile --port 3000 --deploy --wait --json
+yalla service build set --service-id svc_acme_web --build-type static --repo https://github.com/acme/web --branch main --build-command "npm run build" --output-dir dist --json
+yalla service deploy --service-id svc_acme_web --source git --source-ref main --idempotency-key deploy-001 --wait --json
 yalla deploy compose --service-id svc_123 --source manual
 yalla wait deployment --deployment-id dep_123 --status succeeded
 yalla wait job --job-id job_123 --status succeeded

@@ -138,6 +138,8 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 	var adminBillingProviderManager AdminBillingProviderManager
 	var adminOveragePolicyManager AdminOveragePolicyManager
 	var adminFeatureFlagManager AdminFeatureFlagManager
+	var serviceBuildConfigReader ServiceBuildConfigReader
+	var serviceBuildConfigSetter ServiceBuildConfigSetter
 	httpMetrics := telemetry.DefaultHTTPMetrics
 	dokployMetrics := telemetry.DefaultDokployDependencyMetrics
 	quotaMetrics := telemetry.DefaultQuotaUsageMetrics
@@ -187,6 +189,10 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 			adminOveragePolicyManager = v
 		case AdminFeatureFlagManager:
 			adminFeatureFlagManager = v
+		case ServiceBuildConfigReader:
+			serviceBuildConfigReader = v
+		case ServiceBuildConfigSetter:
+			serviceBuildConfigSetter = v
 		case *telemetry.HTTPMetrics:
 			if v != nil {
 				httpMetrics = v
@@ -250,7 +256,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 		backupReporter = backup.Unconfigured()
 	}
 
-	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings, dokployRefs, adminDokployReconciler, adminDokployImporter, adminConfigDryRunner, adminConfigPromotionManager, adminPlanManager, adminSubscriptionManager, adminMeteringSourceManager, adminMetricDefinitionManager, adminAttributionRuleManager, adminUsageAggregationScheduleManager, adminBillingProviderManager, adminOveragePolicyManager, adminFeatureFlagManager, httpMetrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics, traceMetrics, slowQueryMetrics, readinessMetrics, sloBurnRateMetrics, deadLetterAlertMetrics, reconciliationDriftAlertMetrics, secretRedactionCanaryMetrics)
+	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings, dokployRefs, adminDokployReconciler, adminDokployImporter, adminConfigDryRunner, adminConfigPromotionManager, adminPlanManager, adminSubscriptionManager, adminMeteringSourceManager, adminMetricDefinitionManager, adminAttributionRuleManager, adminUsageAggregationScheduleManager, adminBillingProviderManager, adminOveragePolicyManager, adminFeatureFlagManager, serviceBuildConfigReader, serviceBuildConfigSetter, httpMetrics, dokployMetrics, quotaMetrics, auditMetrics, policyMetrics, traceMetrics, slowQueryMetrics, readinessMetrics, sloBurnRateMetrics, deadLetterAlertMetrics, reconciliationDriftAlertMetrics, secretRedactionCanaryMetrics)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)

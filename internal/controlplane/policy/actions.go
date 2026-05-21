@@ -49,14 +49,16 @@ const (
 	ActionEnvironmentGrantsWrite Action = "environment.grants.write"
 
 	// Service actions.
-	ActionServiceRead    Action = "service.read"
-	ActionServiceCreate  Action = "service.create"
-	ActionServiceUpdate  Action = "service.update"
-	ActionServiceDelete  Action = "service.delete"
-	ActionServiceRestore Action = "service.restore"
-	ActionServiceRestart Action = "service.restart"
-	ActionServiceStart   Action = "service.start"
-	ActionServiceStop    Action = "service.stop"
+	ActionServiceRead        Action = "service.read"
+	ActionServiceCreate      Action = "service.create"
+	ActionServiceUpdate      Action = "service.update"
+	ActionServiceDelete      Action = "service.delete"
+	ActionServiceRestore     Action = "service.restore"
+	ActionServiceRestart     Action = "service.restart"
+	ActionServiceStart       Action = "service.start"
+	ActionServiceStop        Action = "service.stop"
+	ActionServiceBuildRead   Action = "service.build.read"
+	ActionServiceBuildUpdate Action = "service.build.update"
 
 	// Environment-variable actions.
 	ActionEnvRead  Action = "env.read"
@@ -155,6 +157,8 @@ var allActions = []Action{
 	ActionServiceRestart,
 	ActionServiceStart,
 	ActionServiceStop,
+	ActionServiceBuildRead,
+	ActionServiceBuildUpdate,
 	ActionEnvRead,
 	ActionEnvWrite,
 	ActionDomainRead,

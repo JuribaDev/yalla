@@ -227,10 +227,12 @@ func TestDatabaseCommandsUseBackendRoutes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"backup":{"id":"sbkp_1","service_id":"svc_db","status":"pending"}}}`))
 		case "POST /v1/services/svc_db/backups/sbkp_1/run":
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"backup":{"id":"sbkp_1","service_id":"svc_db","status":"pending"}}}`))
+			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"backup":{"id":"sbkp_1","service_id":"svc_db","status":"pending"},"job_id":"job_run"}}`))
 		case "POST /v1/services/svc_db/backups/sbkp_1/restore":
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"backup":{"id":"sbkp_1","service_id":"svc_db","status":"succeeded"}}}`))
+			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"backup":{"id":"sbkp_1","service_id":"svc_db","status":"succeeded"},"job_id":"job_restore"}}`))
+		case "GET /v1/jobs/job_run", "GET /v1/jobs/job_restore":
+			_, _ = w.Write([]byte(`{"schema_version":"yalla.output.v1","data":{"job":{"id":"` + r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:] + `","status":"succeeded"}}}`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -240,8 +242,8 @@ func TestDatabaseCommandsUseBackendRoutes(t *testing.T) {
 		{"--json", "database", "create", "--environment-id", "env_1", "--service-id", "svc_db", "--name", "postgres", "--deploy"},
 		{"--json", "database", "list", "--environment-id", "env_1"},
 		{"--json", "database", "backup", "create", "--service-id", "svc_db", "--backup-id", "sbkp_1", "--display-name", "nightly", "--schedule", "0 2 * * *"},
-		{"--json", "database", "backup", "run", "--service-id", "svc_db", "--backup-id", "sbkp_1"},
-		{"--json", "database", "backup", "restore", "--service-id", "svc_db", "--backup-id", "sbkp_1"},
+		{"--json", "database", "backup", "run", "--service-id", "svc_db", "--backup-id", "sbkp_1", "--wait", "--poll-interval", "1ms"},
+		{"--json", "database", "backup", "restore", "--service-id", "svc_db", "--backup-id", "sbkp_1", "--wait", "--poll-interval", "1ms"},
 	}
 	for _, args := range commands {
 		stdout, stderr, err := runRootArgs(t, args...)
@@ -261,7 +263,9 @@ func TestDatabaseCommandsUseBackendRoutes(t *testing.T) {
 		"GET /v1/environments/env_1/services",
 		"POST /v1/services/svc_db/backups",
 		"POST /v1/services/svc_db/backups/sbkp_1/run",
+		"GET /v1/jobs/job_run",
 		"POST /v1/services/svc_db/backups/sbkp_1/restore",
+		"GET /v1/jobs/job_restore",
 	}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("requests = %#v, want %#v", seen, want)

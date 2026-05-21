@@ -334,7 +334,8 @@ func newDatabaseBackupUpdateCommand() *cobra.Command {
 
 func newDatabaseBackupRunCommand() *cobra.Command {
 	var serviceID, backupID string
-	var timeout time.Duration
+	var wait bool
+	var timeout, pollInterval time.Duration
 	cmd := &cobra.Command{
 		Use:           "run",
 		Short:         "Run a database backup policy",
@@ -352,18 +353,26 @@ func newDatabaseBackupRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if wait {
+				if waited, waitErr := waitOnBackendJobFromData(c, data, timeout, pollInterval); waitErr != nil {
+					return waitErr
+				} else if waited != nil {
+					data = mergeRawObjects(data, "job", waited)
+				}
+			}
 			return renderDatabaseData(c, data, "database backup run accepted")
 		},
 	}
 	cmd.Flags().StringVar(&serviceID, "service-id", "", "Yalla database service ID")
 	cmd.Flags().StringVar(&backupID, "backup-id", "", "Yalla backup policy ID")
-	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "request timeout")
+	addWaitFlags(cmd, &wait, &timeout, &pollInterval)
 	return cmd
 }
 
 func newDatabaseBackupRestoreCommand() *cobra.Command {
 	var serviceID, backupID string
-	var timeout time.Duration
+	var wait bool
+	var timeout, pollInterval time.Duration
 	cmd := &cobra.Command{
 		Use:           "restore",
 		Short:         "Restore a database backup policy",
@@ -381,12 +390,19 @@ func newDatabaseBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if wait {
+				if waited, waitErr := waitOnBackendJobFromData(c, data, timeout, pollInterval); waitErr != nil {
+					return waitErr
+				} else if waited != nil {
+					data = mergeRawObjects(data, "job", waited)
+				}
+			}
 			return renderDatabaseData(c, data, "database backup restore accepted")
 		},
 	}
 	cmd.Flags().StringVar(&serviceID, "service-id", "", "Yalla database service ID")
 	cmd.Flags().StringVar(&backupID, "backup-id", "", "Yalla backup policy ID")
-	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "request timeout")
+	addWaitFlags(cmd, &wait, &timeout, &pollInterval)
 	return cmd
 }
 

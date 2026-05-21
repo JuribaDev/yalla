@@ -45,6 +45,10 @@ func configFromCommand(cmd interface{ Context() context.Context }) *config.Confi
 }
 
 func yallaJSONRequest(ctx context.Context, cli *api.Client, method, path string, body any, idempotent bool) (json.RawMessage, *api.Result, error) {
+	return yallaJSONRequestWithHeaders(ctx, cli, method, path, body, nil, idempotent)
+}
+
+func yallaJSONRequestWithHeaders(ctx context.Context, cli *api.Client, method, path string, body any, headers http.Header, idempotent bool) (json.RawMessage, *api.Result, error) {
 	var payload []byte
 	if body != nil {
 		var err error
@@ -56,6 +60,7 @@ func yallaJSONRequest(ctx context.Context, cli *api.Client, method, path string,
 	res, err := cli.Do(ctx, &api.Request{
 		Method:      method,
 		Path:        path,
+		Headers:     headers,
 		Body:        payload,
 		ContentType: api.ContentTypeJSON,
 		Idempotent:  idempotent,

@@ -180,6 +180,17 @@ type EnsureServiceInput struct {
 	// Engine is the database engine; required when Type is ServiceDatabase and
 	// ignored otherwise.
 	Engine string
+	// BuildConfig carries Yalla's normalized non-secret build/runtime desired state.
+	BuildConfig *ServiceBuildConfigDesired
+}
+
+// ServiceBuildConfigDesired is the normalized non-secret build/runtime desired
+// state sent to Dokploy service creation.
+type ServiceBuildConfigDesired struct {
+	BuildType  string         `json:"build_type"`
+	SourceType string         `json:"source_type"`
+	Source     map[string]any `json:"source,omitempty"`
+	Config     map[string]any `json:"config,omitempty"`
 }
 
 // EnsureDomainInput describes the desired state of a Dokploy domain.

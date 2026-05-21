@@ -23,6 +23,11 @@ flowchart LR
 | `schema list` | Embedded Dokploy schemas | `GET /openapi.json` | public discovery | none | `schemaListDoc` | migrated |
 | `schema get` | Embedded Dokploy schema by operationId | `GET /openapi.json` then local lookup | public discovery | none | OpenAPI-derived schema doc | migrated |
 | `api call <operationId>` | Raw Dokploy operation executor | none for normal users | unsupported | none | `E_UNSUPPORTED` | removed from normal CLI |
+| `project list/get/create/update/delete/restore` | not available as product commands | `/v1/projects` and `/v1/projects/{project_id}` | `project.read/create/update/delete/restore` | create/update none; delete/restore backend job when returned | backend `project` / `projects` payload | added |
+| `environment list/get/create/update/delete/clone` | not available as product commands | `/v1/projects/{project_id}/environments`, `/v1/environments/{environment_id}`, `/v1/environments/{environment_id}/clone` | `environment.read/create/update/delete/clone` | create/update none; delete/clone backend job when returned | backend `environment` / `environments` payload | added |
+| `service list/get/create/update/delete/restore` | not available as product commands | `/v1/environments/{environment_id}/services`, `/v1/services/{service_id}` | `service.read/create/update/delete/restore` | `service.provision`, `service.delete`, or backend job when returned | backend `service` / `services` payload | added |
+| `service build get/set` | not available | `/v1/services/{service_id}/build-config` | `service.build.read` / `service.build.update` | `service.build.update` | backend `build_config` payload | added |
+| `service deploy` | not available as canonical service command | `POST /v1/services/{service_id}/deployments` | `deployment.create` | `service.deploy` | backend `deployment` payload | added |
 | `deploy compose` | Direct Dokploy project/env/compose/domain orchestration | `POST /v1/services/{service_id}/deployments` | `deployment.create` | `service.deploy` | backend `data` passthrough | migrated to service deployment |
 | `wait job` | not available | `GET /v1/jobs/{job_id}` | `job.read` | none | backend `job` payload | added |
 | `wait deployment` | not available | `GET /v1/deployments/{deployment_id}` | `deployment.read` | none | backend `deployment` payload | added |
@@ -64,6 +69,8 @@ flowchart LR
 | --- | --- | --- |
 | Project deletion scheduling | `project.delete` | enqueued by `ProjectService.ScheduleDeletion` |
 | Environment deletion scheduling | `environment.delete` | enqueued by `EnvironmentService.ScheduleDeletion` |
+| Service creation with build config | `service.provision` | persisted in `services` and `service_build_configs` before provisioning |
+| Service build config update | `service.build.update` | enqueued by `ServiceBuildConfigService.SetServiceBuildConfig` |
 | Service deletion scheduling | `service.delete` | enqueued by `ServiceService.ScheduleDeletion` |
 | Service domain create/update/delete | `sync_domains` | enqueued by `ServiceDomainService` |
 | Service variable replacement | `sync_variables` | enqueued by `ServiceVariableService` |

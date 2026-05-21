@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strconv"
@@ -50,6 +51,9 @@ const JobTypeEnsureDatabaseService = jobs.TypeEnsureDatabaseService
 // service.deploy; JobTypeDeployServiceAlias accepts the PRD's deploy_service
 // spelling for forward compatibility with manually seeded jobs.
 const JobTypeDeployService = jobs.TypeDeployService
+
+// JobTypeServiceBuildUpdate reconciles a service after its build config changes.
+const JobTypeServiceBuildUpdate = jobs.TypeServiceBuildUpdate
 
 // JobTypeDeployServiceAlias is accepted by the worker as an alias for
 // JobTypeDeployService.
@@ -1297,8 +1301,8 @@ func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload,
 // returns a terminal error for payload shapes retrying cannot repair.
 func ParseReconcileServicePayload(job store.ProvisioningJob) (ReconcileServicePayload, error) {
 	var violations []apierr.FieldViolation
-	if job.JobType != JobTypeReconcileService {
-		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be reconcile_service"})
+	if job.JobType != JobTypeReconcileService && job.JobType != JobTypeServiceBuildUpdate {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be reconcile_service or service.build.update"})
 	}
 	if job.OrganizationID == "" {
 		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
@@ -1581,6 +1585,7 @@ type ProvisionerConfig struct {
 	EnvVariables  *store.EnvironmentVariableRepository
 	SvcVariables  *store.ServiceVariableRepository
 	Deployments   *store.DeploymentRepository
+	BuildConfigs  *store.ServiceBuildConfigRepository
 	Refs          *store.DokployRefRepository
 	Mapper        *dokploy.Mapper
 	Secrets       secrets.Provider
@@ -1603,6 +1608,7 @@ type Provisioner struct {
 	envVariables  *store.EnvironmentVariableRepository
 	svcVariables  *store.ServiceVariableRepository
 	deployments   *store.DeploymentRepository
+	buildConfigs  *store.ServiceBuildConfigRepository
 	refs          *store.DokployRefRepository
 	mapper        *dokploy.Mapper
 	resolver      *variables.Resolver
@@ -1670,6 +1676,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if deployments == nil {
 		deployments = store.NewDeploymentRepository()
 	}
+	buildConfigs := cfg.BuildConfigs
+	if buildConfigs == nil {
+		buildConfigs = store.NewServiceBuildConfigRepository()
+	}
 	refs := cfg.Refs
 	if refs == nil {
 		refs = store.NewDokployRefRepository()
@@ -1700,6 +1710,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		envVariables:  envVariables,
 		svcVariables:  svcVariables,
 		deployments:   deployments,
+		buildConfigs:  buildConfigs,
 		refs:          refs,
 		mapper:        mapper,
 		resolver:      resolver,
@@ -1747,7 +1758,7 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runSyncDomains(ctx, job)
 	case JobTypeSyncVariables:
 		return p.runSyncVariables(ctx, job)
-	case JobTypeReconcileService:
+	case JobTypeReconcileService, JobTypeServiceBuildUpdate:
 		return p.runReconcileService(ctx, job)
 	case JobTypeRunBackup:
 		return p.runBackup(ctx, job)
@@ -2017,6 +2028,11 @@ func (p *Provisioner) runEnsureApplicationService(ctx context.Context, job store
 	if err != nil {
 		return Terminal(err)
 	}
+	buildConfig, err := p.serviceBuildConfigDesired(ctx, svc.OrganizationID, svc.ID)
+	if err != nil {
+		return err
+	}
+	in.BuildConfig = buildConfig
 
 	ensured, ensureErr := p.client.EnsureService(ctx, in)
 	if ensureErr != nil {
@@ -2065,6 +2081,11 @@ func (p *Provisioner) runEnsureComposeService(ctx context.Context, job store.Pro
 	if err != nil {
 		return Terminal(err)
 	}
+	buildConfig, err := p.serviceBuildConfigDesired(ctx, svc.OrganizationID, svc.ID)
+	if err != nil {
+		return err
+	}
+	in.BuildConfig = buildConfig
 
 	ensured, ensureErr := p.client.EnsureService(ctx, in)
 	if ensureErr != nil {
@@ -2492,6 +2513,11 @@ func (p *Provisioner) runReconcileService(ctx context.Context, job store.Provisi
 	if err != nil {
 		return Terminal(err)
 	}
+	buildConfig, err := p.serviceBuildConfigDesired(ctx, target.Service.OrganizationID, target.Service.ID)
+	if err != nil {
+		return err
+	}
+	in.BuildConfig = buildConfig
 
 	ensured, ensureErr := p.client.EnsureService(ctx, in)
 	if ensureErr != nil {
@@ -2610,6 +2636,31 @@ func (p *Provisioner) runBackup(ctx context.Context, job store.ProvisioningJob) 
 		_ = p.markBackupFailed(context.WithoutCancel(ctx), payload)
 		return Terminal(err)
 	}
+}
+
+func (p *Provisioner) serviceBuildConfigDesired(ctx context.Context, organizationID, serviceID string) (*dokploy.ServiceBuildConfigDesired, error) {
+	var cfg store.ServiceBuildConfig
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		cfg, err = p.buildConfigs.Get(ctx, q, organizationID, serviceID)
+		return err
+	})
+	if err != nil {
+		if yerr.From(err).Code == yerr.CodeNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	source := map[string]any{}
+	config := map[string]any{}
+	_ = json.Unmarshal(cfg.SourceJSON, &source)
+	_ = json.Unmarshal(cfg.ConfigJSON, &config)
+	return &dokploy.ServiceBuildConfigDesired{
+		BuildType:  cfg.BuildType,
+		SourceType: cfg.SourceType,
+		Source:     source,
+		Config:     config,
+	}, nil
 }
 
 func (p *Provisioner) runRestoreBackup(ctx context.Context, job store.ProvisioningJob) error {

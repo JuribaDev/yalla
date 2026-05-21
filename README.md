@@ -36,7 +36,14 @@ yalla auth status
 yalla auth whoami
 yalla manifest --json
 yalla api operations --json
-yalla deploy compose --service-id svc_123 --source git --source-ref main --idempotency-key deploy-001 --json
+yalla project create --project-id proj_acme_web --name acme-web --json
+yalla environment create --environment-id env_acme_web_prod --project-id proj_acme_web --name production --json
+yalla service create --service-id svc_acme_web --environment-id env_acme_web_prod --name web --kind application --build-type dockerfile --repo https://github.com/acme/web --branch main --context . --dockerfile Dockerfile --port 3000 --deploy --wait --json
+yalla service build set --service-id svc_acme_web --build-type static --repo https://github.com/acme/web --branch main --build-command "npm run build" --output-dir dist --json
+yalla service create --service-id svc_acme_stack --environment-id env_acme_web_prod --name stack --kind compose --build-type compose --compose-file docker-compose.yml --repo https://github.com/acme/stack --branch main --json
+yalla service create --service-id svc_acme_worker --environment-id env_acme_web_prod --name worker --kind application --build-type image --image ghcr.io/acme/worker:latest --port 8080 --json
+yalla service deploy --service-id svc_acme_web --source git --source-ref main --idempotency-key deploy-001 --wait --json
+yalla database backup run --service-id svc_db --backup-id sbkp_123 --wait --json
 yalla wait job --job-id job_123 --status succeeded --json
 yalla teardown project --project-id proj_123 --json
 yalla wait url --url https://example.com --status-class 2xx --timeout 10s --json
@@ -50,6 +57,9 @@ Dokploy.
 Backend-only command behavior:
 
 - `yalla auth login` verifies credentials with `GET /v1/me`.
+- `yalla project ...`, `yalla environment ...`, and `yalla service ...`
+  provide first-class project, environment, service, build-config, and deploy
+  workflows through backend product routes.
 - `yalla deploy compose` creates a backend deployment via
   `POST /v1/services/{service_id}/deployments`.
 - `yalla teardown project` deletes through `DELETE /v1/projects/{project_id}`.

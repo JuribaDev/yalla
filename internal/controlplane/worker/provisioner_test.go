@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -3866,6 +3867,114 @@ func TestProvisionerReconcileServiceEnsuresServiceVariablesAndDomains(t *testing
 		reqs[7].Method != http.MethodPost || reqs[7].Path != "/application.saveEnvironment" ||
 		reqs[8].Method != http.MethodGet || reqs[8].Path != "/api/domains/domain_1" {
 		t.Fatalf("replayed reconcile_service fake requests = %+v, want idempotent GET/sync/GET", reqs)
+	}
+}
+
+func TestProvisionerReconcileServiceAppliesBuildConfigs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		kind          string
+		buildType     string
+		sourceType    string
+		source        json.RawMessage
+		config        json.RawMessage
+		dokployID     string
+		wantSourceKey string
+		wantConfigKey string
+	}{
+		{
+			name:          "static",
+			kind:          store.ServiceKindApplication,
+			buildType:     store.BuildTypeStatic,
+			sourceType:    "git",
+			source:        json.RawMessage(`{"repo":"https://github.com/example/static","branch":"main"}`),
+			config:        json.RawMessage(`{"output_dir":"dist","build_command":"npm run build","spa_fallback":true,"port":3000}`),
+			dokployID:     "app_1",
+			wantSourceKey: "repo",
+			wantConfigKey: "output_dir",
+		},
+		{
+			name:          "dockerfile",
+			kind:          store.ServiceKindApplication,
+			buildType:     store.BuildTypeDockerfile,
+			sourceType:    "git",
+			source:        json.RawMessage(`{"repo":"https://github.com/example/api","branch":"main"}`),
+			config:        json.RawMessage(`{"context":".","dockerfile":"Dockerfile","target":"prod","port":8080}`),
+			dokployID:     "app_1",
+			wantSourceKey: "repo",
+			wantConfigKey: "dockerfile",
+		},
+		{
+			name:          "compose",
+			kind:          store.ServiceKindCompose,
+			buildType:     store.BuildTypeCompose,
+			sourceType:    "git",
+			source:        json.RawMessage(`{"repo":"https://github.com/example/stack","compose_file":"docker-compose.yml"}`),
+			config:        json.RawMessage(`{"env_file":".env","compose_service":"web"}`),
+			dokployID:     "compose_1",
+			wantSourceKey: "compose_file",
+			wantConfigKey: "compose_service",
+		},
+		{
+			name:          "image",
+			kind:          store.ServiceKindApplication,
+			buildType:     store.BuildTypeImage,
+			sourceType:    "image",
+			source:        json.RawMessage(`{"image":"ghcr.io/example/worker:latest"}`),
+			config:        json.RawMessage(`{"registry_secret_ref":"sec_registry","command":"worker","args":["run"],"port":9090}`),
+			dokployID:     "app_1",
+			wantSourceKey: "image",
+			wantConfigKey: "registry_secret_ref",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			db := testutil.RequireMigratedDB(t)
+			dataStore, err := store.New(db.Pool, nil)
+			if err != nil {
+				t.Fatalf("store.New: %v", err)
+			}
+			org := insertWorkerOrg(ctx, t, dataStore, "acme-"+tc.name)
+			project := insertWorkerProject(ctx, t, dataStore, org, "api")
+			env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+			svc := insertWorkerService(ctx, t, dataStore, env, tc.name, tc.kind)
+			insertWorkerServiceBuildConfig(ctx, t, dataStore, svc, tc.buildType, tc.sourceType, tc.source, tc.config)
+
+			fake := dokployfake.New()
+			defer fake.Close()
+			client := newWorkerDokployClient(t, fake)
+			if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+				t.Fatalf("seed parent dokploy environment: %v", err)
+			}
+
+			p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+				Store:  dataStore,
+				Client: client,
+				Mapper: dokploy.NewMapper(),
+			})
+			if err != nil {
+				t.Fatalf("NewProvisioner: %v", err)
+			}
+			if err := p.Run(ctx, reconcileServiceJob(svc)); err != nil {
+				t.Fatalf("Run reconcile_service: %v", err)
+			}
+
+			got := fake.ServiceBuildConfig(tc.dokployID)
+			if got["build_type"] != tc.buildType || got["source_type"] != tc.sourceType {
+				t.Fatalf("build config = %+v, want %s/%s", got, tc.buildType, tc.sourceType)
+			}
+			source, _ := got["source"].(map[string]any)
+			config, _ := got["config"].(map[string]any)
+			if source[tc.wantSourceKey] == "" || config[tc.wantConfigKey] == "" {
+				t.Fatalf("build config missing source/config keys: %+v", got)
+			}
+		})
 	}
 }
 
@@ -9168,6 +9277,25 @@ func insertWorkerService(ctx context.Context, t *testing.T, s *store.Store, env 
 		t.Fatalf("insert service: %v", err)
 	}
 	return svc
+}
+
+func insertWorkerServiceBuildConfig(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, buildType, sourceType string, source, config json.RawMessage) store.ServiceBuildConfig {
+	t.Helper()
+	repo := store.NewServiceBuildConfigRepository()
+	var cfg store.ServiceBuildConfig
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		cfg, err = repo.Upsert(ctx, tx, svc.OrganizationID, svc.ID, store.ServiceBuildConfigInput{
+			BuildType:  buildType,
+			SourceType: sourceType,
+			SourceJSON: source,
+			ConfigJSON: config,
+		}, nil)
+		return err
+	}); err != nil {
+		t.Fatalf("insert service build config: %v", err)
+	}
+	return cfg
 }
 
 func listWorkerServices(ctx context.Context, t *testing.T, s *store.Store, organizationID, environmentID string) []store.Service {

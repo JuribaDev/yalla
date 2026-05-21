@@ -221,6 +221,7 @@ type CreateServiceInput struct {
 	Slug           string
 	DisplayName    string
 	Kind           string
+	BuildConfig    *ServiceBuildConfigInput
 	ActorID        string
 	ActorKind      string
 	ActorOrgID     string
@@ -251,6 +252,7 @@ type ServiceService struct {
 	projects     *ProjectRepository
 	environments *EnvironmentRepository
 	services     *ServiceRepository
+	buildConfigs *ServiceBuildConfigRepository
 	authz        Authorizer
 	quota        QuotaReserver
 	jobs         JobEnqueuer
@@ -284,6 +286,7 @@ func NewServiceService(s *Store, projects *ProjectRepository, environments *Envi
 		projects:     projects,
 		environments: environments,
 		services:     services,
+		buildConfigs: NewServiceBuildConfigRepository(),
 		authz:        authz,
 		quota:        quota,
 		jobs:         jobs,
@@ -468,6 +471,11 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		row, err := svc.services.Insert(ctx, tx, service)
 		if err != nil {
 			return err
+		}
+		if in.BuildConfig != nil {
+			if _, err := svc.buildConfigs.Upsert(ctx, tx, row.OrganizationID, row.ID, *in.BuildConfig, nil); err != nil {
+				return err
+			}
 		}
 		if err := svc.jobs.Enqueue(ctx, tx, EnqueueJobInput{
 			OrganizationID: service.OrganizationID,

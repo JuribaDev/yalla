@@ -137,6 +137,9 @@ func (c *Client) EnsureService(ctx context.Context, in EnsureServiceInput) (Serv
 	if in.Type == ServiceDatabase {
 		body["engine"] = strings.TrimSpace(in.Engine)
 	}
+	if in.BuildConfig != nil {
+		body["build_config"] = in.BuildConfig
+	}
 	var svc Service
 	if err := c.post(ctx, "/api/"+collection, body, &svc); err != nil {
 		return Service{}, err

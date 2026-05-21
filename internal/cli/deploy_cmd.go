@@ -3,7 +3,6 @@ package cli
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"net/http"
 	"strings"
 	"time"
 
@@ -22,6 +21,8 @@ type deployComposeOptions struct {
 	Source         string
 	SourceRef      string
 	IdempotencyKey string
+	Wait           bool
+	PollInterval   time.Duration
 	Timeout        time.Duration
 }
 
@@ -38,18 +39,16 @@ func newDeployComposeCommand() *cobra.Command {
 		if strings.TrimSpace(opts.IdempotencyKey) == "" {
 			opts.IdempotencyKey = generatedIdempotencyKey()
 		}
-		cli, err := newYallaAPIClient(configFromCommand(c), BuildInfoFromContext(c.Context()), opts.Timeout)
+		data, err := deployService(c, opts.ServiceID, opts.Source, opts.SourceRef, opts.IdempotencyKey, opts.Timeout)
 		if err != nil {
 			return err
 		}
-		body := map[string]string{
-			"source":          opts.Source,
-			"source_ref":      opts.SourceRef,
-			"idempotency_key": opts.IdempotencyKey,
-		}
-		data, _, err := yallaJSONRequest(c.Context(), cli, http.MethodPost, yallaPath("v1/services", pathID(opts.ServiceID), "deployments"), body, false)
-		if err != nil {
-			return err
+		if opts.Wait {
+			if waited, waitErr := waitOnBackendJobFromData(c, data, opts.Timeout, opts.PollInterval); waitErr != nil {
+				return waitErr
+			} else if waited != nil {
+				data = waited
+			}
 		}
 		if r.JSON() {
 			return r.Data(data)
@@ -61,6 +60,8 @@ func newDeployComposeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Source, "source", "manual", "deployment source: manual, git, or image")
 	cmd.Flags().StringVar(&opts.SourceRef, "source-ref", "", "source ref, commit, image, or label")
 	cmd.Flags().StringVar(&opts.IdempotencyKey, "idempotency-key", "", "idempotency key for safe retries")
+	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "wait for deployment job to complete")
+	cmd.Flags().DurationVar(&opts.PollInterval, "poll-interval", time.Second, "wait polling interval")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 5*time.Minute, "deployment timeout")
 	return cmd
 }

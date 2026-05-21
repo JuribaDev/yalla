@@ -21,6 +21,9 @@ const TypeEnsureDatabaseService = "ensure_database_service"
 // TypeDeployService deploys a service.
 const TypeDeployService = "service.deploy"
 
+// TypeServiceBuildUpdate reconciles a service after its build configuration changes.
+const TypeServiceBuildUpdate = "service.build.update"
+
 // TypeDeployServiceAlias is accepted for manually seeded deploy jobs.
 const TypeDeployServiceAlias = "deploy_service"
 

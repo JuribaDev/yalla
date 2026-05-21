@@ -55,6 +55,13 @@ The CLI sends credentials with HTTP bearer-style authorization. It must not read
 store, or send `YALLA_DOKPLOY_BASE_URL` or `YALLA_DOKPLOY_TOKEN`; those are
 backend/worker infrastructure secrets only.
 
+Project, environment, service, build-config, deployment, database, and backup
+CLI commands all use this same Yalla API credential contract. Build-config
+commands may carry non-secret desired state such as Git repository URLs,
+Dockerfile paths, compose files, image references, ports, and secret reference
+IDs. They must not carry raw registry passwords, API tokens, or environment
+secret values.
+
 ## Profiles
 
 `YALLA_PROFILE` selects the deployment environment:

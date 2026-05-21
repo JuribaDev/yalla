@@ -91,18 +91,19 @@ type BackupRun struct {
 // resourceStore is the fake's in-memory state. It is not safe for concurrent
 // use on its own; every access goes through a Server method holding Server.mu.
 type resourceStore struct {
-	organizations     map[string]*Organization
-	projects          map[string]*Project
-	environments      map[string]*Environment
-	services          map[string]*Service
-	serviceEnvs       map[string]string
-	domains           map[string]*Domain
-	deployments       map[string]*Deployment
-	backupRuns        map[string]*BackupRun
-	appMonitoring     map[string]map[string]any
-	containerMetrics  map[string]map[string]any
-	serverMetrics     map[string]map[string]any
-	userServerMetrics map[string]any
+	organizations       map[string]*Organization
+	projects            map[string]*Project
+	environments        map[string]*Environment
+	services            map[string]*Service
+	serviceEnvs         map[string]string
+	serviceBuildConfigs map[string]map[string]any
+	domains             map[string]*Domain
+	deployments         map[string]*Deployment
+	backupRuns          map[string]*BackupRun
+	appMonitoring       map[string]map[string]any
+	containerMetrics    map[string]map[string]any
+	serverMetrics       map[string]map[string]any
+	userServerMetrics   map[string]any
 	// logs maps a deployment ID to its log lines.
 	logs map[string][]string
 	// counters backs deterministic per-kind ID generation.
@@ -112,20 +113,21 @@ type resourceStore struct {
 // newResourceStore returns an empty resourceStore with every map initialised.
 func newResourceStore() resourceStore {
 	return resourceStore{
-		organizations:     map[string]*Organization{},
-		projects:          map[string]*Project{},
-		environments:      map[string]*Environment{},
-		services:          map[string]*Service{},
-		serviceEnvs:       map[string]string{},
-		domains:           map[string]*Domain{},
-		deployments:       map[string]*Deployment{},
-		backupRuns:        map[string]*BackupRun{},
-		appMonitoring:     map[string]map[string]any{},
-		containerMetrics:  map[string]map[string]any{},
-		serverMetrics:     map[string]map[string]any{},
-		userServerMetrics: map[string]any{},
-		logs:              map[string][]string{},
-		counters:          map[string]int{},
+		organizations:       map[string]*Organization{},
+		projects:            map[string]*Project{},
+		environments:        map[string]*Environment{},
+		services:            map[string]*Service{},
+		serviceEnvs:         map[string]string{},
+		serviceBuildConfigs: map[string]map[string]any{},
+		domains:             map[string]*Domain{},
+		deployments:         map[string]*Deployment{},
+		backupRuns:          map[string]*BackupRun{},
+		appMonitoring:       map[string]map[string]any{},
+		containerMetrics:    map[string]map[string]any{},
+		serverMetrics:       map[string]map[string]any{},
+		userServerMetrics:   map[string]any{},
+		logs:                map[string][]string{},
+		counters:            map[string]int{},
 	}
 }
 
@@ -591,7 +593,8 @@ type createServiceRequest struct {
 	EnvironmentID string `json:"environment_id"`
 	Name          string `json:"name"`
 	// Engine is required for database services and ignored otherwise.
-	Engine string `json:"engine,omitempty"`
+	Engine      string         `json:"engine,omitempty"`
+	BuildConfig map[string]any `json:"build_config,omitempty"`
 }
 
 // createService returns the handler for one service type. The three service
@@ -642,6 +645,9 @@ func (s *Server) createService(serviceType string) http.HandlerFunc {
 		}
 		if serviceType == ServiceDatabase {
 			svc.Engine = req.Engine
+		}
+		if req.BuildConfig != nil {
+			s.resources.serviceBuildConfigs[svc.ID] = req.BuildConfig
 		}
 		s.resources.services[svc.ID] = svc
 		writeJSON(w, http.StatusCreated, svc)
@@ -1059,4 +1065,11 @@ func (s *Server) ApplicationEnv(applicationID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.resources.serviceEnvs[applicationID]
+}
+
+// ServiceBuildConfig returns the build config recorded for a fake service.
+func (s *Server) ServiceBuildConfig(serviceID string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resources.serviceBuildConfigs[serviceID]
 }

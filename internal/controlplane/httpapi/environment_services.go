@@ -223,10 +223,11 @@ type EnvironmentServiceCreator interface {
 // database work, so an invalid request never opens a transaction —
 // and the request body never carries credential material.
 type createEnvironmentServiceRequest struct {
-	ServiceID   string `json:"service_id"`
-	Slug        string `json:"slug"`
-	DisplayName string `json:"display_name"`
-	Kind        string `json:"kind"`
+	ServiceID   string                     `json:"service_id"`
+	Slug        string                     `json:"slug"`
+	DisplayName string                     `json:"display_name"`
+	Kind        string                     `json:"kind"`
+	BuildConfig *serviceBuildConfigRequest `json:"build_config"`
 }
 
 // createEnvironmentServicePayload is the data block of the POST
@@ -300,7 +301,7 @@ func createEnvironmentServiceHandler(creator EnvironmentServiceCreator) http.Han
 		}
 
 		correlation := telemetry.FromContext(r.Context())
-		service, err := creator.Create(r.Context(), store.CreateServiceInput{
+		input := store.CreateServiceInput{
 			OrganizationID: p.OrganizationID,
 			EnvironmentID:  r.PathValue("environment_id"),
 			ServiceID:      req.ServiceID,
@@ -312,7 +313,16 @@ func createEnvironmentServiceHandler(creator EnvironmentServiceCreator) http.Han
 			ActorOrgID:     p.OrganizationID,
 			RequestID:      correlation.RequestID,
 			CorrelationID:  correlation.CorrelationID,
-		})
+		}
+		if req.BuildConfig != nil {
+			input.BuildConfig = &store.ServiceBuildConfigInput{
+				BuildType:  req.BuildConfig.BuildType,
+				SourceType: req.BuildConfig.SourceType,
+				SourceJSON: req.BuildConfig.Source,
+				ConfigJSON: req.BuildConfig.Config,
+			}
+		}
+		service, err := creator.Create(r.Context(), input)
 		if err != nil {
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return

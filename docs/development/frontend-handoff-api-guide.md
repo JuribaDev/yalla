@@ -126,6 +126,47 @@ path or query. Frontend routing should nest screens using the same hierarchy.
 | Feature flag        | `flag_`   |
 | Policy              | `policy_` |
 
+## Project, Environment, And Service Contract
+
+The portal, CLI, and CI agents all use the same product routes. Creating a
+project in one surface must immediately make it manageable from the other
+surface.
+
+```mermaid
+sequenceDiagram
+    participant Client as Portal / CLI / CI
+    participant API as Yalla API
+    participant Store as Postgres
+    participant Worker
+    participant Dokploy
+
+    Client->>API: POST /v1/projects
+    API->>Store: persist project, audit, idempotency
+    Client->>API: POST /v1/projects/{project_id}/environments
+    API->>Store: persist environment
+    Client->>API: POST /v1/environments/{environment_id}/services
+    API->>Store: persist service + optional build_config
+    API-->>Worker: durable service.provision job
+    Worker->>Dokploy: apply desired state with private token
+```
+
+Primary routes:
+
+| Resource | Routes |
+| --- | --- |
+| Projects | `GET/POST /v1/projects`, `GET/PATCH/DELETE /v1/projects/{project_id}`, `POST /v1/projects/{project_id}/restore` |
+| Environments | `GET/POST /v1/projects/{project_id}/environments`, `GET/PATCH/DELETE /v1/environments/{environment_id}`, `POST /v1/environments/{environment_id}/clone` |
+| Services | `GET/POST /v1/environments/{environment_id}/services`, `GET/PATCH/DELETE /v1/services/{service_id}`, `POST /v1/services/{service_id}/restore` |
+| Build config | `GET/PUT /v1/services/{service_id}/build-config` |
+| Deployments | `POST /v1/services/{service_id}/deployments` |
+
+Service create accepts an optional `build_config` object. `PUT
+/v1/services/{service_id}/build-config` replaces the same object later and
+enqueues reconciliation. Build configs support `static`, `dockerfile`,
+`compose`, and `image` build types. Registry credentials and environment
+secrets must be referenced by secret IDs such as `registry_secret_ref`; raw
+secret values are rejected.
+
 ## Common endpoint patterns
 
 ### List endpoints
