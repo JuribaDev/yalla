@@ -118,8 +118,8 @@ Allowed keys: ` + strings.Join(config.AllKeys, ", ") + `.
 The active config file path follows the same precedence chain as every
 other setting: --config > YALLA_CONFIG > the platform-default location
 (use ` + "`yalla config get config_path`" + ` to confirm).`,
-		Example: `  yalla config set base_url https://dokploy.example.com
-  yalla config set token "$DOKPLOY_TOKEN"
+		Example: `  yalla config set base_url https://api.yalla.example
+  yalla config set token "$YALLA_TOKEN"
   yalla config set output json`,
 		Args:          cobra.ExactArgs(2),
 		SilenceErrors: true,

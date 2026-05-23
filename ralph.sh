@@ -18,8 +18,18 @@ if [ ! -f "$PRD_FILE" ]; then
   exit 1
 fi
 
-# Always archive existing prd.json + progress.txt before starting
-if [ -f "$LAST_BRANCH_FILE" ]; then
+# Detect whether the current PRD still has stories explicitly marked failed.
+# If so, resume in place: skip archive + skip branch reset/creation from main.
+FAILED_STORIES=$(jq '[.userStories[] | select(.passes == false)] | length' "$PRD_FILE")
+if [ "$FAILED_STORIES" -gt 0 ]; then
+  RESUME_MODE=true
+  echo "Resuming previous run: $FAILED_STORIES stories have passes=false in prd.json"
+else
+  RESUME_MODE=false
+fi
+
+# Archive existing prd.json + progress.txt only on a fresh start
+if [ "$RESUME_MODE" = false ] && [ -f "$LAST_BRANCH_FILE" ]; then
   LAST_BRANCH=$(cat "$LAST_BRANCH_FILE" 2>/dev/null || echo "")
   if [ -n "$LAST_BRANCH" ]; then
     DATE=$(date +%Y-%m-%d-%H%M%S)
@@ -41,25 +51,36 @@ if [ -z "$BRANCH_NAME" ] || [ "$BRANCH_NAME" = "null" ]; then
   exit 1
 fi
 
-# Always ensure we're on the correct branch, created from main
 CURRENT_BRANCH=$(git branch --show-current)
 if [ "$CURRENT_BRANCH" != "$BRANCH_NAME" ]; then
-  echo "Switching to branch: $BRANCH_NAME"
-
-  # Stash any uncommitted changes
-  git stash push -m "ralph-auto-stash" 2>/dev/null || true
-
-  # Checkout main and pull latest
-  git checkout main
-  git pull origin main
-
-  # Create or switch to feature branch from main
-  if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
-    echo "Branch exists, switching to it"
-    git checkout "$BRANCH_NAME"
+  if [ "$RESUME_MODE" = true ]; then
+    # Resume: switch to the existing branch without resetting from main
+    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+      echo "Resuming on existing branch: $BRANCH_NAME"
+      git stash push -m "ralph-auto-stash" 2>/dev/null || true
+      git checkout "$BRANCH_NAME"
+    else
+      echo "Error: prd.json has $FAILED_STORIES stories with passes=false, refusing to create new branch $BRANCH_NAME"
+      exit 1
+    fi
   else
-    echo "Creating new branch from main"
-    git checkout -b "$BRANCH_NAME"
+    echo "Switching to branch: $BRANCH_NAME"
+
+    # Stash any uncommitted changes
+    git stash push -m "ralph-auto-stash" 2>/dev/null || true
+
+    # Checkout main and pull latest
+    git checkout main
+    git pull origin main
+
+    # Create or switch to feature branch from main
+    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+      echo "Branch exists, switching to it"
+      git checkout "$BRANCH_NAME"
+    else
+      echo "Creating new branch from main"
+      git checkout -b "$BRANCH_NAME"
+    fi
   fi
 fi
 
@@ -87,15 +108,15 @@ while true; do
   OUTPUT=$(claude -p --dangerously-skip-permissions "$PROMPT" 2>&1 | tee /dev/stderr) || true
 
   # Stop only when the PRD says every story is complete.
-  REMAINING_STORIES=$(jq '[.userStories[] | select(.passes != true)] | length' "$PRD_FILE")
-  if [ "$REMAINING_STORIES" -eq 0 ]; then
+  FAILED_STORIES=$(jq '[.userStories[] | select(.passes == false)] | length' "$PRD_FILE")
+  if [ "$FAILED_STORIES" -eq 0 ]; then
     echo ""
     echo "Ralph completed all tasks!"
     echo "Completed at iteration $i"
     exit 0
   fi
 
-  echo "Iteration $i complete. Remaining stories: $REMAINING_STORIES. Continuing..."
+  echo "Iteration $i complete. Remaining stories with passes=false: $FAILED_STORIES. Continuing..."
   sleep 2
   i=$((i + 1))
 done

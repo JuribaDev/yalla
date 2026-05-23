@@ -1,0 +1,689 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/policy"
+	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
+)
+
+// errNoProjectReader is returned when GET /v1/projects is reached without a
+// project reader wired into NewHandler. Like errNoOrganizationReader it can
+// only happen through a wiring error — a programming mistake, not a client
+// error — so the handler reports it as a typed internal failure rather than
+// serving an empty or misleading list.
+var errNoProjectReader = errors.New("httpapi: no project reader configured")
+
+// errNoProjectCreator is returned when POST /v1/projects is reached without
+// a project creator wired into NewHandler. Like errNoProjectReader it can
+// only happen through a wiring error — a programming mistake, not a client
+// error — so the handler reports it as a typed internal failure rather than
+// silently failing to persist the resource.
+var errNoProjectCreator = errors.New("httpapi: no project creator configured")
+
+// errNoProjectUpdater is returned when PATCH /v1/projects/{project_id} is
+// reached without a project updater wired into NewHandler. Like
+// errNoProjectCreator it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to persist the
+// mutation.
+var errNoProjectUpdater = errors.New("httpapi: no project updater configured")
+
+// errNoProjectDeleter is returned when DELETE /v1/projects/{project_id} is
+// reached without a project deleter wired into NewHandler. Like
+// errNoProjectUpdater it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to schedule the
+// teardown.
+var errNoProjectDeleter = errors.New("httpapi: no project deleter configured")
+
+// errNoProjectRestorer is returned when POST /v1/projects/{project_id}/restore
+// is reached without a project restorer wired into NewHandler. Like
+// errNoProjectDeleter it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to clear the
+// soft-delete stamp.
+var errNoProjectRestorer = errors.New("httpapi: no project restorer configured")
+
+// ProjectReader is the narrow persistence port GET /v1/projects and GET
+// /v1/projects/{project_id} depend on. *store.ProjectReader satisfies it in
+// production; tests supply a fake. Keeping the dependency an interface keeps
+// the handler unit-testable without a real database, the same way
+// OrganizationReader keeps GET /v1/organizations testable.
+//
+// The list read is tenant scoped at the persistence layer: the repository
+// filters by organization_id, so a cross-tenant id simply matches no rows
+// and the handler renders an empty list, never another organization's
+// projects. The GET-by-id read is tenant scoped the same way: the
+// repository filters by (organization_id, id), so a cross-tenant
+// project_id does not match and is reported as a typed NotFound — a
+// cross-tenant id can never reveal another organization's project. The
+// list route uses a nil resolver and authorizes against the principal's
+// home organization; the by-id route uses projectIDResolver which
+// authorizes against the (home org, path project_id) scope so a
+// project-level grant for THAT project authorizes the read.
+type ProjectReader interface {
+	ListProjects(ctx context.Context, organizationID string) ([]store.Project, error)
+	GetProject(ctx context.Context, organizationID, projectID string) (store.Project, error)
+}
+
+// listProjectsPayload is the data block of the GET /v1/projects success
+// envelope: every project the authenticated principal's home organization
+// owns, in deterministic (slug, id) order. Every field is a non-secret
+// identifier, slug, display name, version, or timestamp — the endpoint
+// never returns credential material, so the payload is safe to log and
+// audit verbatim. Projects is always a non-nil slice so agents can iterate
+// it without a nil check.
+type listProjectsPayload struct {
+	Projects []projectResource `json:"projects"`
+}
+
+// projectResource is one project in a listProjectsPayload: the
+// source-of-truth project resource — its id, the id of the organization
+// that owns it, slug, display name, optimistic-concurrency version, and
+// lifecycle timestamps — as the control plane stores it. It is the HTTP
+// wire shape, deliberately distinct from store.Project so the persistence
+// layout can evolve without breaking the public contract.
+//
+// Version is the database-owned optimistic-concurrency token. It is
+// exposed so PATCH /v1/projects/{project_id} and DELETE
+// /v1/projects/{project_id} callers can echo it back as the If-Match
+// precondition without re-reading the row.
+//
+// DeletionScheduledAt is present only once a deletion has been scheduled
+// for the project by DELETE /v1/projects/{project_id}, and is omitted
+// entirely for a live project, so adding it left the wire shape of every
+// other project endpoint byte-for-byte unchanged.
+type projectResource struct {
+	ProjectID           string  `json:"project_id"`
+	OrganizationID      string  `json:"organization_id"`
+	Slug                string  `json:"slug"`
+	DisplayName         string  `json:"display_name"`
+	Version             int64   `json:"version"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+	DeletionScheduledAt *string `json:"deletion_scheduled_at,omitempty"`
+}
+
+// projectResourceOf projects a store.Project into the stable wire shape.
+// Timestamps are rendered as UTC RFC 3339 strings so the contract is
+// independent of the database driver's time representation and the
+// response is deterministic for a given row. A nil DeletionScheduledAt —
+// a live project — is omitted from the wire shape entirely.
+func projectResourceOf(p store.Project) projectResource {
+	resource := projectResource{
+		ProjectID:      p.ID,
+		OrganizationID: p.OrganizationID,
+		Slug:           p.Slug,
+		DisplayName:    p.DisplayName,
+		Version:        p.Version,
+		CreatedAt:      p.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:      p.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if p.DeletionScheduledAt != nil {
+		scheduled := p.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)
+		resource.DeletionScheduledAt = &scheduled
+	}
+	return resource
+}
+
+// listProjectsHandler builds the GET /v1/projects handler. It lists the
+// projects visible to the authenticated principal — resolved by
+// RequireAuth and carried on the request context — by reading them from
+// the source-of-truth database through the ProjectReader port.
+//
+// The route uses a nil resolver, so RequireAuth gates the call on action
+// project.read against the principal's home organization before the
+// handler runs. project.read is a CapRead action, so the gate admits the
+// principal's organization-wide roles (owner, admin, developer, viewer,
+// ci) and a support principal performing a read; a grant-only principal
+// whose grants are narrower than the home organization is denied at the
+// boundary because the engine asks whether the grant scope contains the
+// resource scope, not the other way around. The handler never widens or
+// narrows that decision: it reads only the principal's own home
+// organization, so the tenant boundary is structural here — there is no
+// caller input that could point the read at another tenant.
+//
+// A request that arrives here with no principal is a wiring error and is
+// reported as a typed internal error rather than reading for a zero
+// principal. A reader-store outage surfaces as its own typed 5xx, and an
+// organization with no projects is a deterministic empty list — the
+// project list has no "not found" path of its own, mirroring every list
+// endpoint.
+func listProjectsHandler(reader ProjectReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectReader))
+			return
+		}
+		projects, err := reader.ListProjects(r.Context(), p.OrganizationID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		out := make([]projectResource, 0, len(projects))
+		for _, project := range projects {
+			out = append(out, projectResourceOf(project))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectsPayload{Projects: out})
+	}
+}
+
+// getProjectPayload is the data block of the GET /v1/projects/{project_id}
+// success envelope: the single project addressed by the {project_id} path
+// parameter, in the same stable wire shape GET /v1/projects returns for
+// each list element. It carries no credential material — a projects row
+// stores no secrets.
+type getProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// projectIDResolver derives the policy.Resource a GET
+// /v1/projects/{project_id} request acts on from its {project_id} path
+// parameter and the authenticated principal's home organization id (read
+// from the context the RequireAuth middleware attached before invoking
+// the resolver). RequireAuth calls it after the principal is resolved and
+// before action project.read is authorized, so the decision is made
+// against the project the path actually names — not merely the
+// principal's home organization — which is what lets a project-scoped
+// Admin grant for THAT project authorize the read while still denying a
+// project-scoped Admin grant for a SIBLING project (the policy engine
+// asks whether the grant scope contains the resource scope, never the
+// reverse).
+//
+// The organization id on the resource is the principal's home
+// organization id, never a caller-supplied value. A cross-tenant
+// project_id therefore reaches the store layer with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// tenant-scoped repository query — a cross-tenant id can never reveal
+// another organization's project. (A support principal performing a
+// read is allowed cross-tenant by the policy engine, but the support
+// principal is still bound to its own home organization on the resource
+// scope here, so the persistence layer still refuses to surface another
+// tenant's row through this endpoint.)
+func projectIDResolver(r *http.Request) policy.Resource {
+	scope := policy.Scope{ProjectID: r.PathValue("project_id")}
+	if p, ok := policy.PrincipalFromContext(r.Context()); ok {
+		scope.OrganizationID = p.OrganizationID
+	}
+	return policy.Resource{
+		Kind:  domain.KindProject,
+		Scope: scope,
+	}
+}
+
+// getProjectHandler builds the GET /v1/projects/{project_id} handler. It
+// reads the project named by the {project_id} path parameter from the
+// source-of-truth database through the ProjectReader port and renders it
+// in a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action project.read before the handler
+// runs — authorized through projectIDResolver against the principal's
+// home organization combined with the project_id path parameter — and
+// attaches the resolved principal to the context. project.read is a
+// CapRead action, so the gate admits the principal's organization-wide
+// roles (owner, admin, developer, viewer, ci) and a support principal
+// performing a read; it also admits a scoped grant that covers the
+// (home_org, project_id) resource (for example, a project-scoped Admin
+// grant for THAT project), but denies a grant that names a SIBLING
+// project because the engine asks whether the grant scope contains the
+// resource scope, not the reverse.
+//
+// The handler reads from the principal's home organization id only — it
+// never trusts a caller-supplied organization id — so the tenant
+// boundary is structural at the persistence layer too: a cross-tenant
+// project_id reaches the store with the principal's home organization
+// id and is rejected as a typed NotFound by the tenant-scoped
+// repository query. A request that arrives with no principal is a
+// wiring error reported as a typed internal error rather than reading
+// for a zero principal; a reader-store outage surfaces as its own
+// typed 5xx; an unknown or cross-tenant project_id is a typed 404,
+// never disguised as an empty success.
+func getProjectHandler(reader ProjectReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectReader))
+			return
+		}
+		project, err := reader.GetProject(r.Context(), p.OrganizationID, r.PathValue("project_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectCreator is the narrow persistence port POST /v1/projects depends on.
+// *store.ProjectService satisfies it in production; tests supply a fake.
+// Like ProjectReader it is an interface declared here so the handler stays
+// unit-testable without a real database — the concrete orchestrator (the
+// in-transaction authorization, quota reservation, desired-state write,
+// provisioning-job enqueue, and audit record) lives in the store layer.
+type ProjectCreator interface {
+	Create(ctx context.Context, in store.CreateProjectInput) (store.Project, error)
+}
+
+// createProjectRequest is the decoded POST /v1/projects request body.
+// ProjectID is the caller-supplied canonical project id — the agent contract
+// mints ids client-side so an idempotent retry is structural rather than
+// header-encoded. Slug is the canonical [a-z0-9-] identifier the project is
+// addressed by within its organization; DisplayName is its human-authored
+// label. The store layer validates every field before any database work, so
+// an invalid request never opens a transaction — and the request body never
+// carries credential material.
+type createProjectRequest struct {
+	ProjectID   string `json:"project_id"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+}
+
+// createProjectPayload is the data block of the POST /v1/projects success
+// envelope: the project that was created, in the same stable wire shape
+// GET /v1/projects returns. It carries no credential material — a projects
+// row stores no secrets.
+type createProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// createProjectHandler builds the POST /v1/projects handler. It decodes and
+// delegates: the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input), then
+// the create-project unit of work — authorize, reserve quota, write the
+// project row, enqueue the provisioning job, append the audit record, all in
+// one transaction — runs in the store layer through the ProjectCreator port.
+//
+// RequireAuth gates the route on action project.create before the handler
+// runs and attaches the resolved principal, so a request that reaches the
+// handler with no principal is a wiring error reported as a typed internal
+// error. project.create is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer, ci) but
+// denies viewer, denies support (a support principal is CapRead-only), and
+// denies a grant-only principal whose grants are narrower than the home
+// organization — a project-, environment-, or service-level grant cannot
+// create a sibling project through this endpoint because the engine asks
+// whether the grant scope contains the resource scope, never the reverse.
+//
+// The route uses a nil resolver: the new project does not exist yet, so the
+// resource scope authorized against is the principal's home organization.
+// The handler never widens or narrows that decision — it creates only inside
+// the principal's home organization, so the tenant boundary is structural
+// here: there is no caller input that could point the write at another
+// tenant. The principal and the request correlation identifiers are passed
+// to the creator so the audit record names the actor; a validation failure,
+// a slug conflict, an exhausted quota, and a datastore outage each surface
+// as their own typed status, never disguised as one another.
+func createProjectHandler(creator ProjectCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectCreator))
+			return
+		}
+
+		var req createProjectRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := creator.Create(r.Context(), store.CreateProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      req.ProjectID,
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectUpdater is the narrow persistence port PATCH /v1/projects/{project_id}
+// depends on. *store.ProjectService satisfies it in production; tests supply
+// a fake. Like ProjectCreator it is an interface declared here so the handler
+// stays unit-testable without a real database — the concrete orchestrator
+// (the desired-state write and the immutable audit record committed in one
+// transaction) lives in the store layer.
+type ProjectUpdater interface {
+	Update(ctx context.Context, in store.UpdateProjectInput) (store.Project, error)
+}
+
+// updateProjectRequest is the decoded PATCH /v1/projects/{project_id} request
+// body. Both fields are optional pointers: a nil pointer means the caller did
+// not include the field and it is left unchanged, which is what makes the
+// endpoint a partial update. The store layer validates every supplied field
+// before any database work and rejects a patch that names no field at all —
+// a mutation that changes nothing is a client error, not a silent success.
+// Neither field carries credential material.
+//
+// The request body intentionally exposes no organization_id or project_id
+// field: both are derived from the path and the authenticated principal's
+// home organization, never from the body, so a caller cannot point the
+// mutation at another tenant's project even if the strict decoder were
+// bypassed.
+type updateProjectRequest struct {
+	Slug        *string `json:"slug"`
+	DisplayName *string `json:"display_name"`
+}
+
+// updateProjectPayload is the data block of the PATCH
+// /v1/projects/{project_id} success envelope: the project after the update,
+// in the same stable wire shape the other project endpoints return. It
+// carries no credential material — a projects row stores no secrets.
+type updateProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// updateProjectHandler builds the PATCH /v1/projects/{project_id} handler. It
+// decodes and delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never echoes the
+// input), the If-Match header is parsed as an optional optimistic-concurrency
+// precondition, and then the update-project unit of work — validate, read the
+// current row, apply the patch, write the row back, append the audit record,
+// all in one transaction — runs in the store layer through the ProjectUpdater
+// port.
+//
+// RequireAuth gates the route on action project.update before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.update is a CapWrite action, so the
+// gate admits the principal's organization-wide write roles (owner, admin,
+// developer, ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant), and admits a
+// scoped grant that covers the (home_org, project_id) resource (for example,
+// a project-scoped Admin grant for THAT project) while denying a grant that
+// names only a SIBLING project because the engine asks whether the grant
+// scope contains the resource scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; a validation failure, a slug conflict, a
+// not-found {project_id}, a stale If-Match version, and a datastore outage
+// each surface as their own typed status, never disguised as one another.
+// On success, the handler mirrors the row's authoritative version into the
+// ETag response header so the caller can echo it back as the next
+// If-Match precondition without re-reading the row.
+func updateProjectHandler(updater ProjectUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectUpdater))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		var req updateProjectRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := updater.Update(r.Context(), store.UpdateProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectDeleter is the narrow persistence port DELETE
+// /v1/projects/{project_id} depends on. *store.ProjectService satisfies it
+// in production; tests supply a fake. Like ProjectUpdater it is an
+// interface declared here so the handler stays unit-testable without a
+// real database — the concrete orchestrator (the desired-state soft-delete
+// stamp and the immutable audit record committed in one transaction)
+// lives in the store layer.
+type ProjectDeleter interface {
+	ScheduleDeletion(ctx context.Context, in store.DeleteProjectInput) (store.Project, error)
+}
+
+// deleteProjectPayload is the data block of the DELETE
+// /v1/projects/{project_id} success envelope: the project with its
+// deletion_scheduled_at stamp set, in the same stable wire shape the other
+// project endpoints return. It carries no credential material — a projects
+// row stores no secrets.
+type deleteProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// deleteProjectHandler builds the DELETE /v1/projects/{project_id} handler.
+// It schedules the project for teardown by stamping deletion_scheduled_at
+// in the source-of-truth database through the ProjectDeleter port, then
+// renders the persisted row in a stable yalla.output.v1 envelope. The
+// teardown is scheduled, not immediate: the destructive cascade that
+// removes environments, services, and the audit log under the project is
+// a later worker story, so the project and its audit trail still exist
+// when this returns.
+//
+// RequireAuth gates the route on action project.delete before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.delete is a CapWrite action, so
+// the gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer, denies support (a support
+// principal is CapRead-only and cannot mutate even within its home
+// tenant), and admits a scoped grant that covers the (home_org,
+// project_id) resource (for example, a project-scoped Admin grant for
+// THAT project) while denying a grant that names only a SIBLING project
+// because the engine asks whether the grant scope contains the resource
+// scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; an If-Match parse failure, a stale If-Match
+// version, a not-found {project_id}, a project whose deletion is already
+// scheduled, and a datastore outage each surface as their own typed
+// status, never disguised as one another. On success, the handler mirrors
+// the row's authoritative version into the ETag response header so the
+// caller can echo it back as the next If-Match precondition without
+// re-reading the row, and returns 202 Accepted — the scheduling is durable
+// but the destructive teardown is a later worker job.
+func deleteProjectHandler(deleter ProjectDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := deleter.ScheduleDeletion(r.Context(), store.DeleteProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectRestorer is the narrow persistence port POST
+// /v1/projects/{project_id}/restore depends on. *store.ProjectService
+// satisfies it in production; tests supply a fake. Like ProjectDeleter it
+// is an interface declared here so the handler stays unit-testable without
+// a real database — the concrete orchestrator (the deletion_scheduled_at
+// clear and the immutable audit record committed in one transaction)
+// lives in the store layer.
+type ProjectRestorer interface {
+	Restore(ctx context.Context, in store.RestoreProjectInput) (store.Project, error)
+}
+
+// restoreProjectPayload is the data block of the POST
+// /v1/projects/{project_id}/restore success envelope: the project with its
+// deletion_scheduled_at stamp cleared, in the same stable wire shape the
+// other project endpoints return. It carries no credential material — a
+// projects row stores no secrets.
+type restoreProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// restoreProjectHandler builds the POST /v1/projects/{project_id}/restore
+// handler. It clears the project's deletion_scheduled_at stamp in the
+// source-of-truth database through the ProjectRestorer port, then renders
+// the persisted row in a stable yalla.output.v1 envelope. Restore is the
+// inverse of the DELETE /v1/projects/{project_id} soft-delete: it returns
+// a project to live state before the worker-driven destructive teardown
+// runs, so the project's environments, services, and audit trail are
+// recovered intact.
+//
+// RequireAuth gates the route on action project.restore before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.restore is a CapWrite action, so
+// the gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer, denies support (a support
+// principal is CapRead-only and cannot mutate even within its home
+// tenant), and admits a scoped grant that covers the (home_org,
+// project_id) resource (for example, a project-scoped Admin grant for
+// THAT project) while denying a grant that names only a SIBLING project
+// because the engine asks whether the grant scope contains the resource
+// scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; an If-Match parse failure, a stale If-Match
+// version, a not-found {project_id}, a project that is not scheduled for
+// deletion, and a datastore outage each surface as their own typed
+// status, never disguised as one another. On success, the handler mirrors
+// the row's authoritative version into the ETag response header so the
+// caller can echo it back as the next If-Match precondition without
+// re-reading the row.
+func restoreProjectHandler(restorer ProjectRestorer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if restorer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectRestorer))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := restorer.Restore(r.Context(), store.RestoreProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), restoreProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}

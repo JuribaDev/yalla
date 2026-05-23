@@ -51,6 +51,186 @@ jobs:
       - name: Unit and integration tests
         run: go test ./...
 
+      - name: Repository integration tests
+        run: go test ./internal/controlplane/store/...
+
+      - name: HTTP handler contract tests
+        run: go test ./internal/controlplane/httpapi/...
+
+      - name: OpenAPI schema conformance tests
+        run: go test ./internal/controlplane/openapi/...
+
+      - name: Policy matrix tests
+        run: go test -run TestPolicyMatrix ./...
+
+      - name: Quota concurrency tests
+        run: go test -run TestQuotaConcurrency ./...
+
+      - name: Job worker lease tests
+        run: go test -run TestJobWorkerLease ./...
+
+      - name: Fake Dokploy contract tests
+        run: go test -run TestFakeDokploy ./...
+
+      - name: Redaction tests
+        run: go test -run TestRedaction ./...
+
+      - name: Fuzz validator tests
+        run: go test -run TestFuzzValidator ./...
+
+      - name: Migration tests from empty DB
+        run: go test -run TestMigrationsEmptyDB ./...
+
+      - name: Migration downgrade safety tests
+        run: go test -run TestMigrationsDowngradeSafety ./...
+
+      - name: Load smoke tests
+        run: go test -run TestLoadSmoke ./...
+
+      - name: Chaos tests for Dokploy timeouts
+        run: go test -run TestChaosDokployTimeouts ./...
+
+      - name: Chaos tests for Postgres disconnects
+        run: go test -run TestChaosPostgresDisconnects ./...
+
+      - name: Idempotency replay tests
+        run: go test -run TestIdempotencyReplay ./...
+
+      - name: Audit completeness tests
+        run: go test -run TestAuditCompleteness ./...
+
+      - name: Pagination stability tests
+        run: go test -run TestPaginationStability ./...
+
+      - name: Tenant isolation tests
+        run: go test -run TestTenantIsolation ./...
+
+      - name: Backup restore rehearsal tests
+        run: go test -run TestBackupRestoreRehearsal ./...
+
+      - name: Release build tests
+        run: go test -run TestReleaseBuild ./...
+
+      - name: Config validation tests
+        run: go test -run TestConfigValidation ./...
+
+      - name: Admin endpoint tests
+        run: go test -run TestAdminEndpoint ./...
+
+      - name: Break-glass tests
+        run: go test -run TestBreakGlass ./...
+
+      - name: Reconciliation tests
+        run: go test -run TestReconciliation ./...
+
+      - name: Import dry-run tests
+        run: go test -run TestImportDryRun ./...
+
+      - name: Service desired-state golden tests
+        run: go test -run TestServiceDesiredState ./...
+
+      - name: Deployment lifecycle end-to-end tests
+        run: go test -run TestDeploymentLifecycleE2E ./...
+
+      - name: Kubernetes artifact static tests
+        run: go test ./internal/release/... -run TestKubernetesArtifact
+
+      - name: systemd artifact static tests
+        run: go test ./internal/release/... -run TestSystemdArtifact
+
+      - name: Database migration command artifact static tests
+        run: go test ./internal/release/... -run TestDatabaseMigrationCommand
+
+      - name: Database migration authoring artifact static tests
+        run: go test ./internal/release/... -run TestDatabaseMigrationAuthoringArtifact
+
+      - name: Worker job authoring artifact static tests
+        run: go test ./internal/release/... -run TestWorkerJobAuthoringArtifact
+
+      - name: Fake Dokploy usage artifact static tests
+        run: go test ./internal/release/... -run TestFakeDokployUsageArtifact
+
+      - name: OpenAPI update procedure artifact static tests
+        run: go test ./internal/release/... -run TestOpenAPIUpdateProcedureArtifact
+
+      - name: Security review checklist artifact static tests
+        run: go test ./internal/release/... -run TestSecurityReviewChecklistArtifact
+
+      - name: Production config reference artifact static tests
+        run: go test ./internal/release/... -run TestProductionConfigReferenceArtifact
+
+      - name: Environment variable reference artifact static tests
+        run: go test ./internal/release/... -run TestEnvironmentVariableReferenceArtifact
+
+      - name: Observability dashboard guide artifact static tests
+        run: go test ./internal/release/... -run TestObservabilityDashboardGuideArtifact
+
+      - name: External live-Dokploy smoke test guide artifact static tests
+        run: go test ./internal/release/... -run TestExternalLiveDokploySmokeTestGuideArtifact
+
+      - name: Seed admin command artifact static tests
+        run: go test ./internal/release/... -run TestSeedAdminCommand
+
+      - name: Backup command artifact static tests
+        run: go test ./internal/release/... -run TestBackupCommand
+
+      - name: Restore rehearsal command artifact static tests
+        run: go test ./internal/release/... -run TestRestoreRehearsalCommand
+
+      - name: Backup restore rehearsal artifact static tests
+        run: go test ./internal/release/... -run TestBackupRestoreRehearsalArtifact
+
+      - name: Config example artifact static tests
+        run: go test ./internal/release/... -run TestConfigExamplesArtifact
+
+      - name: Deployment runbook artifact static tests
+        run: go test ./internal/release/... -run TestDeploymentRunbookArtifact
+
+      - name: Local development setup artifact static tests
+        run: go test ./internal/release/... -run TestLocalDevelopmentSetupArtifact
+
+      - name: API handler conventions artifact static tests
+        run: go test ./internal/release/... -run TestAPIHandlerConventionsArtifact
+
+      - name: Policy engine conventions artifact static tests
+        run: go test ./internal/release/... -run TestPolicyEngineConventionsArtifact
+
+      - name: Quota implementation guide artifact static tests
+        run: go test ./internal/release/... -run TestQuotaImplementationGuideArtifact
+
+      - name: Repository conventions artifact static tests
+        run: go test ./internal/release/... -run TestRepositoryConventionsArtifact
+
+      - name: Incident response runbook artifact static tests
+        run: go test ./internal/release/... -run TestIncidentResponseRunbookArtifact
+
+      - name: Tenant import playbook artifact static tests
+        run: go test ./internal/release/... -run TestTenantImportPlaybookArtifact
+
+      - name: On-call dashboard artifact static tests
+        run: go test ./internal/release/... -run TestOnCallDashboardArtifact
+
+      - name: SLO document artifact static tests
+        run: go test ./internal/release/... -run TestSLODocumentArtifact
+
+      - name: Release checklist artifact static tests
+        run: go test ./internal/release/... -run TestReleaseChecklistArtifact
+
+      - name: Rollback checklist artifact static tests
+        run: go test ./internal/release/... -run TestRollbackChecklistArtifact
+
+      - name: Break-glass playbook artifact static tests
+        run: go test ./internal/release/... -run TestBreakGlassPlaybookArtifact
+
+      - name: Frontend handoff API guide artifact static tests
+        run: go test ./internal/release/... -run TestFrontendHandoffAPIGuideArtifact
+
+      - name: Agent story execution guide artifact static tests
+        run: go test ./internal/release/... -run TestAgentStoryExecutionGuideArtifact
+
+      - name: Pricing and usage tracking architecture artifact static tests
+        run: go test ./internal/release/... -run TestPricingAndUsageTrackingArchitectureArtifact
+
       - name: Race detector
         run: go test -race ./...
 

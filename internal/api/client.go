@@ -431,7 +431,7 @@ func (r *Result) AsError() *yerr.Error {
 		return nil
 	}
 	code := classifyStatus(r.Status)
-	msg := fmt.Sprintf("Dokploy API responded with HTTP %d %s", r.Status, http.StatusText(r.Status))
+	msg := fmt.Sprintf("API responded with HTTP %d %s", r.Status, http.StatusText(r.Status))
 	e := yerr.New(code, msg)
 	if hint := bodyHint(r.Body); hint != "" {
 		e = e.WithHint(hint)

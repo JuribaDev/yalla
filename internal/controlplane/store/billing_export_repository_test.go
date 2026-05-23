@@ -1,0 +1,313 @@
+package store_test
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
+	"github.com/JuribaDev/yalla/internal/output"
+)
+
+func prepareBillingExportOrFail(ctx context.Context, t *testing.T, s *store.Store, repo *store.BillingExportRepository, in store.PrepareBillingExportInput) store.BillingExport {
+	t.Helper()
+	var export store.BillingExport
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		export, err = repo.Prepare(ctx, tx, in)
+		return err
+	}); err != nil {
+		t.Fatalf("Prepare billing export: %v", err)
+	}
+	return export
+}
+
+func markBillingExportSucceededOrFail(ctx context.Context, t *testing.T, s *store.Store, repo *store.BillingExportRepository, in store.MarkBillingExportSucceededInput) store.BillingExport {
+	t.Helper()
+	var export store.BillingExport
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		export, err = repo.MarkSucceeded(ctx, tx, in)
+		return err
+	}); err != nil {
+		t.Fatalf("MarkSucceeded billing export: %v", err)
+	}
+	return export
+}
+
+func markBillingExportFailedOrFail(ctx context.Context, t *testing.T, s *store.Store, repo *store.BillingExportRepository, in store.MarkBillingExportFailedInput) store.BillingExport {
+	t.Helper()
+	var export store.BillingExport
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		export, err = repo.MarkFailed(ctx, tx, in)
+		return err
+	}); err != nil {
+		t.Fatalf("MarkFailed billing export: %v", err)
+	}
+	return export
+}
+
+func TestBillingExportRepositoryPrepareSnapshotsCountersAndMarksSuccess(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	ctx := context.Background()
+	f := testutil.NewFactory(t)
+	org := seedOrg(t, db, f, "billing-export")
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	events := store.NewUsageEventRepository()
+	counters := store.NewUsageCounterRepository()
+	exports := store.NewBillingExportRepository()
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	plan := seededPlan(ctx, t, s, pricing, "pro")
+	upsertEntitlementOrFail(ctx, t, s, pricing, store.UpsertPlanEntitlementInput{
+		PlanID:          plan.ID,
+		EntitlementKey:  string(store.QuotaResourceHTTPRequests),
+		LimitValue:      int64Ptr(40),
+		EnforcementMode: store.EnforcementModeMetered,
+		Metadata:        []byte(`{"unit":"request","overage_behavior":"warn"}`),
+	})
+	sub := createSubscriptionOrFail(ctx, t, s, subs, store.CreateSubscriptionInput{
+		OrganizationID:     org.ID,
+		PlanID:             plan.ID,
+		Status:             store.SubscriptionStatusActive,
+		CurrentPeriodStart: periodStart,
+		CurrentPeriodEnd:   periodEnd,
+		Provider:           "stripe_main",
+	})
+
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceHTTPRequests,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       42,
+		Unit:           "request",
+		Source:         "traefik",
+		IdempotencyKey: "billing-export-requests",
+		OccurredAt:     periodStart.Add(time.Hour),
+	})
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceBuildMinutes,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       7.5,
+		Unit:           "minute",
+		Source:         "yalla_jobs",
+		IdempotencyKey: "billing-export-build",
+		OccurredAt:     periodStart.Add(2 * time.Hour),
+	})
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceHTTPRPSPeak1m,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       8.5,
+		Unit:           "requests_per_second",
+		Source:         "traefik",
+		IdempotencyKey: "billing-export-rps-peak",
+		OccurredAt:     periodStart.Add(3 * time.Hour),
+	})
+	appendUsageEventOrFail(ctx, t, s, events, store.AppendUsageEventInput{
+		OrganizationID: org.ID,
+		Resource:       store.QuotaResourceActiveDomains,
+		EventType:      store.UsageEventTypeConsumed,
+		Quantity:       2,
+		Unit:           "domain",
+		Source:         "yalla_current_state",
+		IdempotencyKey: "billing-export-active-domains",
+		OccurredAt:     periodStart.Add(4 * time.Hour),
+	})
+	aggregateUsageCountersOrFail(ctx, t, s, counters, store.AggregateUsageCountersInput{
+		OrganizationID:     org.ID,
+		PeriodStart:        periodStart,
+		PeriodEnd:          periodEnd,
+		AggregatedAt:       periodEnd.Add(time.Hour),
+		AggregationVersion: 1,
+	})
+
+	prepared := prepareBillingExportOrFail(ctx, t, s, exports, store.PrepareBillingExportInput{
+		OrganizationID: org.ID,
+		SubscriptionID: sub.ID,
+		Provider:       sub.Provider,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		RequestedAt:    now,
+	})
+	if prepared.Status != store.BillingExportStatusPending {
+		t.Fatalf("prepared status = %q, want pending", prepared.Status)
+	}
+	if prepared.OrganizationID != org.ID || prepared.SubscriptionID != sub.ID || prepared.Provider != "stripe_main" {
+		t.Fatalf("prepared scope = %+v, want org/sub/provider", prepared)
+	}
+	if len(prepared.Items) != 4 {
+		t.Fatalf("prepared items = %d, want 4: %+v", len(prepared.Items), prepared.Items)
+	}
+	if prepared.Items[0].Key != string(store.QuotaResourceActiveDomains) || prepared.Items[0].Unit != "domain" || prepared.Items[0].Quantity != 2 {
+		t.Fatalf("first item = %+v, want active_domains 2 domain", prepared.Items[0])
+	}
+	if prepared.Items[0].EntitlementKey != nil || prepared.Items[0].OveragePolicyMode != nil || prepared.Items[0].OverageDecision != nil {
+		t.Fatalf("first item overage fields = %+v, want nil for non-billing metric without entitlement", prepared.Items[0])
+	}
+	if prepared.Items[1].Key != string(store.QuotaResourceBuildMinutes) || prepared.Items[1].Quantity != 7.5 {
+		t.Fatalf("second item = %+v, want build_minutes 7.5", prepared.Items[1])
+	}
+	if prepared.Items[2].Key != string(store.QuotaResourceHTTPRequests) || prepared.Items[2].Quantity != 42 {
+		t.Fatalf("third item = %+v, want http_requests 42", prepared.Items[2])
+	}
+	if prepared.Items[3].Key != string(store.QuotaResourceHTTPRPSPeak1m) || prepared.Items[3].Unit != "requests_per_second" || prepared.Items[3].Quantity != 8.5 {
+		t.Fatalf("fourth item = %+v, want http_rps_peak_1m 8.5 requests_per_second", prepared.Items[3])
+	}
+	if prepared.Items[3].EntitlementKey != nil || prepared.Items[3].OveragePolicyMode != nil || prepared.Items[3].OverageDecision != nil {
+		t.Fatalf("fourth item overage fields = %+v, want nil for soft non-billing metric without entitlement", prepared.Items[3])
+	}
+	if prepared.Items[2].EntitlementKey == nil || *prepared.Items[2].EntitlementKey != string(store.QuotaResourceHTTPRequests) {
+		t.Fatalf("third item entitlement_key = %v, want http_requests", prepared.Items[2].EntitlementKey)
+	}
+	if prepared.Items[2].OveragePolicyMode == nil || *prepared.Items[2].OveragePolicyMode != "warn" {
+		t.Fatalf("third item overage_policy_mode = %v, want warn", prepared.Items[2].OveragePolicyMode)
+	}
+	if prepared.Items[2].OverageDecision == nil || *prepared.Items[2].OverageDecision != "warned" {
+		t.Fatalf("third item overage_decision = %v, want warned", prepared.Items[2].OverageDecision)
+	}
+	if prepared.Items[2].IncludedQuantity == nil || *prepared.Items[2].IncludedQuantity != 40 {
+		t.Fatalf("third item included_quantity = %v, want 40", prepared.Items[2].IncludedQuantity)
+	}
+	if prepared.Items[2].OverageQuantity == nil || *prepared.Items[2].OverageQuantity != 2 {
+		t.Fatalf("third item overage_quantity = %v, want 2", prepared.Items[2].OverageQuantity)
+	}
+
+	succeeded := markBillingExportSucceededOrFail(ctx, t, s, exports, store.MarkBillingExportSucceededInput{
+		OrganizationID:     org.ID,
+		ExportID:           prepared.ID,
+		ProviderResponseID: "in_123456789",
+		ExportedAt:         now.Add(time.Minute),
+	})
+	if succeeded.Status != store.BillingExportStatusSucceeded {
+		t.Fatalf("succeeded status = %q, want succeeded", succeeded.Status)
+	}
+	if succeeded.ProviderResponseID == nil || *succeeded.ProviderResponseID != "in_123456789" {
+		t.Fatalf("provider response id = %v, want in_123456789", succeeded.ProviderResponseID)
+	}
+	if succeeded.ExportedAt == nil || !succeeded.ExportedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("exported_at = %v, want %v", succeeded.ExportedAt, now.Add(time.Minute))
+	}
+}
+
+func TestBillingExportRepositoryPrepareIsIdempotentForDuplicateGroup(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	ctx := context.Background()
+	f := testutil.NewFactory(t)
+	org := seedOrg(t, db, f, "billing-export-duplicate")
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	exports := store.NewBillingExportRepository()
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	plan := seededPlan(ctx, t, s, pricing, "starter")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, store.CreateSubscriptionInput{
+		OrganizationID:     org.ID,
+		PlanID:             plan.ID,
+		Status:             store.SubscriptionStatusActive,
+		CurrentPeriodStart: periodStart,
+		CurrentPeriodEnd:   periodEnd,
+		Provider:           "manual",
+	})
+	in := store.PrepareBillingExportInput{
+		OrganizationID: org.ID,
+		SubscriptionID: sub.ID,
+		Provider:       "manual",
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		RequestedAt:    time.Date(2026, 5, 19, 11, 0, 0, 0, time.UTC),
+	}
+
+	first := prepareBillingExportOrFail(ctx, t, s, exports, in)
+	second := prepareBillingExportOrFail(ctx, t, s, exports, in)
+	if first.ID != second.ID {
+		t.Fatalf("duplicate prepare created export %q, want existing %q", second.ID, first.ID)
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM billing_exports WHERE organization_id = $1`, org.ID).Scan(&count); err != nil {
+		t.Fatalf("count billing_exports: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("billing_exports count = %d, want 1", count)
+	}
+}
+
+func TestBillingExportRepositoryFailureBackoffAndRedactedLogValue(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	ctx := context.Background()
+	f := testutil.NewFactory(t)
+	org := seedOrg(t, db, f, "billing-export-failed")
+	pricing := store.NewPricingPlanRepository()
+	subs := store.NewSubscriptionRepository()
+	exports := store.NewBillingExportRepository()
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+	secret := "sk_live_secret_billing_export"
+	plan := seededPlan(ctx, t, s, pricing, "business")
+	sub := createSubscriptionOrFail(ctx, t, s, subs, store.CreateSubscriptionInput{
+		OrganizationID:     org.ID,
+		PlanID:             plan.ID,
+		Status:             store.SubscriptionStatusPastDue,
+		CurrentPeriodStart: periodStart,
+		CurrentPeriodEnd:   periodEnd,
+		Provider:           "stripe_main",
+	})
+	prepared := prepareBillingExportOrFail(ctx, t, s, exports, store.PrepareBillingExportInput{
+		OrganizationID: org.ID,
+		SubscriptionID: sub.ID,
+		Provider:       sub.Provider,
+		PeriodStart:    periodStart,
+		PeriodEnd:      periodEnd,
+		RequestedAt:    now,
+	})
+
+	failed := markBillingExportFailedOrFail(ctx, t, s, exports, store.MarkBillingExportFailedInput{
+		OrganizationID: org.ID,
+		ExportID:       prepared.ID,
+		FailedAt:       now.Add(time.Minute),
+		RetryAfter:     15 * time.Minute,
+		ErrorSummary:   "stripe rejected Authorization: Bearer " + secret,
+	})
+	if failed.Status != store.BillingExportStatusFailed {
+		t.Fatalf("failed status = %q, want failed", failed.Status)
+	}
+	if failed.AttemptCount != 1 {
+		t.Fatalf("attempt_count = %d, want 1", failed.AttemptCount)
+	}
+	wantNext := now.Add(16 * time.Minute)
+	if failed.NextAttemptAt == nil || !failed.NextAttemptAt.Equal(wantNext) {
+		t.Fatalf("next_attempt_at = %v, want %v", failed.NextAttemptAt, wantNext)
+	}
+	if failed.LastErrorSummary == nil || strings.Contains(*failed.LastErrorSummary, secret) || !strings.Contains(*failed.LastErrorSummary, output.Sentinel) {
+		t.Fatalf("last_error_summary = %q, want redacted sentinel and no secret", stringPtrValue(failed.LastErrorSummary))
+	}
+
+	rendered := slog.Any("export", failed).Value.String()
+	if strings.Contains(rendered, secret) {
+		t.Fatalf("LogValue leaked provider secret: %q", rendered)
+	}
+	if !strings.Contains(rendered, output.Sentinel) {
+		t.Fatalf("LogValue = %q, want redaction sentinel", rendered)
+	}
+}
+
+func stringPtrValue(v *string) string {
+	if v == nil {
+		return "<nil>"
+	}
+	return *v
+}

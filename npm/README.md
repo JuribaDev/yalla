@@ -48,7 +48,11 @@ to the private source repository.
 ```sh
 cd npm
 node --test test/*.js
+npm audit --omit=dev
 ```
+
+`package-lock.json` is committed so CI and local verification audit the exact
+dependency graph published with the wrapper.
 
 ## Manual one-shot run via npx
 

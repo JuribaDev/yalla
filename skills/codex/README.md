@@ -2,9 +2,9 @@
 
 OpenAI Codex-flavored skills that pair with the yalla CLI.
 
-This tree currently ships the Codex variant of `yalla-dokploy-deploy`.
-It mirrors the Claude skill's deploy references, but includes Codex-facing
-metadata and notes for how Codex loads and presents skills.
+This tree currently ships the Codex variant of `yalla-deploy`. It mirrors the
+Claude skill's deploy references, but includes Codex-facing metadata and notes
+for how Codex loads and presents skills.
 
 The folder contract is identical to `skills/claude/<skill>/`:
 

@@ -1,0 +1,1777 @@
+package apierr
+
+import (
+	stderrors "errors"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
+	"github.com/JuribaDev/yalla/internal/output"
+)
+
+// TestCatalogStatusesAreDeterministicFailures asserts every catalogued code has
+// a deterministic HTTP status, that the status matches apienvelope (the single
+// source of truth), and that no error code maps to a non-failure status.
+func TestCatalogStatusesAreDeterministicFailures(t *testing.T) {
+	t.Parallel()
+
+	cat := Catalog()
+	if len(cat) == 0 {
+		t.Fatal("Catalog() is empty")
+	}
+	for _, entry := range cat {
+		if entry.Code == "" {
+			t.Errorf("catalogue entry has an empty code: %+v", entry)
+		}
+		if want := apienvelope.StatusForCode(entry.Code); entry.HTTPStatus != want {
+			t.Errorf("%s HTTPStatus = %d, want %d (apienvelope is the source of truth)",
+				entry.Code, entry.HTTPStatus, want)
+		}
+		if entry.HTTPStatus < 400 {
+			t.Errorf("%s maps to status %d, want a >= 400 failure status",
+				entry.Code, entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific && entry.MessagePolicy != MessageGeneric {
+			t.Errorf("%s has an unknown message policy %q", entry.Code, entry.MessagePolicy)
+		}
+		if entry.Description == "" {
+			t.Errorf("%s has no description", entry.Code)
+		}
+	}
+}
+
+// TestCatalogIsSortedAndCoversCategories proves the catalogue is deterministic
+// and covers every category named by the story: auth, policy, validation,
+// quota, conflict, dependency failures, and internal failures.
+func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
+	t.Parallel()
+
+	cat := Catalog()
+	for i := 1; i < len(cat); i++ {
+		if cat[i-1].Code >= cat[i].Code {
+			t.Fatalf("Catalog() not sorted: %s before %s", cat[i-1].Code, cat[i].Code)
+		}
+	}
+	required := []yerr.Code{
+		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
+		yerr.CodeBreakGlassRequired,
+		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeJobNotClaimed, yerr.CodeJobCancelled, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
+		yerr.CodeQuotaExceeded, yerr.CodeUnsupportedServiceType,
+		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployRateLimited, yerr.CodeDokployUnavailable, yerr.CodeDokployBadResponse, yerr.CodeDBUnavailable, yerr.CodeMigrationRequired, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeTimeout, yerr.CodeSecretDecryption, yerr.CodeDriftReviewRequired, yerr.CodeInternal,
+	}
+	for _, code := range required {
+		if _, ok := Lookup(code); !ok {
+			t.Errorf("taxonomy is missing required code %s", code)
+		}
+	}
+}
+
+func TestLookupUnknownCode(t *testing.T) {
+	t.Parallel()
+
+	if entry, ok := Lookup(yerr.Code("E_NOT_A_REAL_CODE")); ok {
+		t.Errorf("Lookup of an unknown code returned ok with %+v", entry)
+	}
+}
+
+// TestConstructorsEmitCataloguedCodes proves every constructor produces a code
+// that is documented in the catalogue with the expected status.
+func TestConstructorsEmitCataloguedCodes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		err        *yerr.Error
+		wantCode   yerr.Code
+		wantStatus int
+	}{
+		{"authentication required", AuthenticationRequired(), yerr.CodeAuthenticationRequired, 401},
+		{"auth invalid", AuthInvalid(), yerr.CodeAuthInvalid, 401},
+		{"auth expired", AuthExpired(), yerr.CodeAuthExpired, 401},
+		{"unauthenticated", Unauthenticated(""), yerr.CodeAuth, 401},
+		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
+		{"break glass required", BreakGlassRequired(stderrors.New("x")), yerr.CodeBreakGlassRequired, 403},
+		{"scope required", ScopeRequired("organization"), yerr.CodeScopeRequired, 400},
+		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
+		{"conflict", Conflict(""), yerr.CodeConflict, 409},
+		{"job not claimed", JobNotClaimed(), yerr.CodeJobNotClaimed, 409},
+		{"job cancelled", JobCancelled(), yerr.CodeJobCancelled, 409},
+		{"invalid state transition", InvalidStateTransition("deployment", "queued", "succeeded"), yerr.CodeInvalidStateTransition, 409},
+		{"idempotency conflict", IdempotencyConflict(""), yerr.CodeIdempotencyConflict, 409},
+		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeValidation, 400},
+		{"invalid", Invalid(""), yerr.CodeValidation, 400},
+		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
+		{"unsupported service type", UnsupportedServiceType("dokploy-private-redis"), yerr.CodeUnsupportedServiceType, 400},
+		{"rate limited", RateLimited("organization", 3*time.Second), yerr.CodeRateLimited, 429},
+		{"dokploy auth", DokployAuth(stderrors.New("x")), yerr.CodeDokployAuth, 502},
+		{"dokploy forbidden", DokployForbidden(stderrors.New("x")), yerr.CodeDokployForbidden, 502},
+		{"dokploy not found", DokployNotFound(stderrors.New("x")), yerr.CodeDokployNotFound, 502},
+		{"dokploy conflict", DokployConflict(stderrors.New("x")), yerr.CodeDokployConflict, 502},
+		{"dokploy rate limited", DokployRateLimited(stderrors.New("x")), yerr.CodeDokployRateLimited, 502},
+		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
+		{"dokploy bad response", DokployBadResponse(stderrors.New("x")), yerr.CodeDokployBadResponse, 502},
+		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeDBUnavailable, 503},
+		{"migration required", MigrationRequired(stderrors.New("x")), yerr.CodeMigrationRequired, 503},
+		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
+		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
+		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
+		{"secret decryption", SecretDecryption(stderrors.New("x")), yerr.CodeSecretDecryption, 500},
+		{"drift review required", DriftReviewRequired(stderrors.New("x")), yerr.CodeDriftReviewRequired, 409},
+		{"internal", Internal(stderrors.New("x")), yerr.CodeInternal, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.err.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", tc.err.Code, tc.wantCode)
+			}
+			entry, ok := Lookup(tc.err.Code)
+			if !ok {
+				t.Fatalf("%s is not catalogued", tc.err.Code)
+			}
+			if entry.HTTPStatus != tc.wantStatus {
+				t.Errorf("status = %d, want %d", entry.HTTPStatus, tc.wantStatus)
+			}
+			if tc.err.Message == "" {
+				t.Errorf("%s produced an empty message", tc.name)
+			}
+		})
+	}
+}
+
+func TestUnsupportedServiceTypeContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_unsupported_service_type_secret_token"
+	err := UnsupportedServiceType("dokploy-private-redis").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeUnsupportedServiceType {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeUnsupportedServiceType)
+	}
+	if err.Message != "service type is not supported" {
+		t.Fatalf("message = %q, want fixed unsupported-service-type message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 400 {
+			t.Errorf("HTTPStatus = %d, want 400", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_UNSUPPORTED_SERVICE_TYPE must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-unsupported-service-type", err)
+	body := rec.Body.String()
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-unsupported-service-type"`) ||
+		!strings.Contains(body, string(yerr.CodeUnsupportedServiceType)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeUnsupportedServiceType)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+	if strings.Contains(body, "yka_unsupported_service_type_secret_token") || strings.Contains(body, "Bearer") {
+		t.Fatalf("unsupported-service-type envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Fatalf("expected redaction sentinel %q in unsupported-service-type envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestInternalErrorContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "yka_internal_contract_secret_token"
+	cause := stderrors.New("failed with Authorization: Bearer " + secret)
+	err := Internal(cause)
+	if err.Code != yerr.CodeInternal {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeInternal)
+	}
+	if err.Message != "an unexpected internal error occurred" {
+		t.Fatalf("message = %q, want fixed generic internal message", err.Message)
+	}
+	if err.Hint != "" {
+		t.Fatalf("hint = %q, want empty hint", err.Hint)
+	}
+	if len(err.Details) != 0 {
+		t.Fatalf("details = %v, want none", err.Details)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("Internal must preserve the cause for server-side logging")
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_INTERNAL is not catalogued")
+	}
+	if entry.HTTPStatus != 500 {
+		t.Errorf("HTTPStatus = %d, want 500", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("E_INTERNAL must not be retryable")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-internal-contract", err)
+	body := rec.Body.String()
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-internal-contract"`) ||
+		!strings.Contains(body, string(yerr.CodeInternal)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeInternal)) {
+		t.Fatalf("envelope missing stable internal contract fields: %s", body)
+	}
+	if strings.Contains(body, secret) || strings.Contains(body, "Authorization") || strings.Contains(body, "Bearer") {
+		t.Fatalf("internal envelope leaked cause detail: %s", body)
+	}
+}
+
+func TestMigrationRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "postgres://user:pass@127.0.0.1:5432/yalla?sslmode=disable"
+	cause := stderrors.New("schema version behind on " + leaked)
+	err := MigrationRequired(cause)
+	if err.Code != yerr.CodeMigrationRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeMigrationRequired)
+	}
+	if err.Message != "database migrations must be applied before the service can continue" {
+		t.Fatalf("message = %q, want fixed generic migration-required message", err.Message)
+	}
+	if err.Hint != "run the required database migrations before retrying" {
+		t.Fatalf("hint = %q, want fixed operator-action hint", err.Hint)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 503 {
+			t.Errorf("HTTPStatus = %d, want 503", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_MIGRATION_REQUIRED must not be retryable without operator action")
+		}
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("MigrationRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-migration-required", err)
+	body := rec.Body.String()
+	if rec.Code != 503 {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-migration-required"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeMigrationRequired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "postgres://") || strings.Contains(body, "pass@") || strings.Contains(body, "127.0.0.1") {
+		t.Errorf("migration-required envelope leaked datastore details: %s", body)
+	}
+}
+
+func TestSecretDecryptionContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "sk_live_secret_decryption_should_not_leak"
+	cause := stderrors.New("open failed for key k_old: " + secret)
+	err := SecretDecryption(cause)
+	if err.Code != yerr.CodeSecretDecryption {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeSecretDecryption)
+	}
+	if err.Message != "sealed secret material could not be decrypted" {
+		t.Fatalf("message = %q", err.Message)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_SECRET_DECRYPTION is not catalogued")
+	}
+	if entry.HTTPStatus != 500 {
+		t.Errorf("HTTPStatus = %d, want 500", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("SecretDecryption must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-secret-open", err)
+	body := rec.Body.String()
+	if rec.Code != 500 {
+		t.Fatalf("status = %d, want 500 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "k_old"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-secret-open"`) ||
+		!strings.Contains(body, string(yerr.CodeSecretDecryption)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeSecretDecryption)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+}
+
+func TestDriftReviewRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "YALLA_DOKPLOY_TOKEN=yka_drift_review_secret_token"
+	cause := stderrors.New("dangerous drift for service svc_123: env var changed " + secret)
+	err := DriftReviewRequired(cause)
+	if err.Code != yerr.CodeDriftReviewRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDriftReviewRequired)
+	}
+	if err.Message != "drift reconciliation requires manual review" {
+		t.Fatalf("message = %q, want fixed drift-review-required message", err.Message)
+	}
+	if err.Hint != "review the drift finding and retry after resolving it" {
+		t.Fatalf("hint = %q, want fixed operator-action hint", err.Hint)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_DRIFT_REVIEW_REQUIRED is not catalogued")
+	}
+	if entry.HTTPStatus != 409 {
+		t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DriftReviewRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-drift-review", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "yka_drift_review_secret_token", "svc_123", "env var changed"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-drift-review"`) ||
+		!strings.Contains(body, string(yerr.CodeDriftReviewRequired)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDriftReviewRequired)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+}
+
+func TestBreakGlassRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer yka_break_glass_secret_token"
+	cause := stderrors.New("support attempted cross-tenant admin.read for org_target_123 without active session: " + secret)
+	err := BreakGlassRequired(cause)
+	if err.Code != yerr.CodeBreakGlassRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeBreakGlassRequired)
+	}
+	if err.Message != "break-glass access is required" {
+		t.Fatalf("message = %q, want fixed break-glass-required message", err.Message)
+	}
+	if err.Hint != "start an approved break-glass session before retrying" {
+		t.Fatalf("hint = %q, want fixed break-glass recovery hint", err.Hint)
+	}
+	if strings.Contains(err.Message, secret) || strings.Contains(err.Hint, secret) {
+		t.Fatalf("public fields leaked secret: message=%q hint=%q", err.Message, err.Hint)
+	}
+	entry, ok := Lookup(err.Code)
+	if !ok {
+		t.Fatal("E_BREAK_GLASS_REQUIRED is not catalogued")
+	}
+	if entry.HTTPStatus != 403 {
+		t.Errorf("HTTPStatus = %d, want 403", entry.HTTPStatus)
+	}
+	if entry.MessagePolicy != MessageGeneric {
+		t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+	}
+	if entry.Retryable {
+		t.Error("Retryable = true, want false")
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("BreakGlassRequired must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-break-glass-required", err)
+	body := rec.Body.String()
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403 body=%s", rec.Code, body)
+	}
+	for _, leak := range []string{secret, "yka_break_glass_secret_token", "org_target_123", "cross-tenant admin.read"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("envelope leaked %q: %s", leak, body)
+		}
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-break-glass-required"`) ||
+		!strings.Contains(body, string(yerr.CodeBreakGlassRequired)) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeBreakGlassRequired)) {
+		t.Fatalf("envelope missing stable contract fields: %s", body)
+	}
+}
+
+func TestJobNotClaimedContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_job_not_claimed_secret_token_value"
+	err := JobNotClaimed().WithHint("retry " + leaked)
+	if err.Code != yerr.CodeJobNotClaimed {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeJobNotClaimed)
+	}
+	if err.Message != "the provisioning job is not claimed by this worker" {
+		t.Fatalf("message = %q, want fixed lease-ownership message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_JOB_NOT_CLAIMED must not be retryable by replaying the same outcome write")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-job-not-claimed", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-job-not-claimed"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeJobNotClaimed)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_job_not_claimed_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("job-not-claimed envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in job-not-claimed envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestJobCancelledContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_job_cancelled_secret_token_value"
+	err := JobCancelled().WithHint("retry " + leaked)
+	if err.Code != yerr.CodeJobCancelled {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeJobCancelled)
+	}
+	if err.Message != "the provisioning job has been cancelled" {
+		t.Fatalf("message = %q, want fixed cancellation message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_JOB_CANCELLED must not be retryable by replaying the same job")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-job-cancelled", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-job-cancelled"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeJobCancelled)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_job_cancelled_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("job-cancelled envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in job-cancelled envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestDokployAuthContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_super_secret_token_value"
+	cause := stderrors.New("dokploy rejected token: " + leaked)
+	err := DokployAuth(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployAuth {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployAuth)
+	}
+	if err.Message != "the Dokploy provisioning backend rejected Yalla credentials" {
+		t.Fatalf("message = %q, want fixed generic upstream-auth message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_AUTH must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployAuth must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-auth", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-auth"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployAuth)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_super_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-auth envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployNotFoundContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_missing_secret_token_value"
+	cause := stderrors.New("dokploy 404 included token: " + leaked)
+	err := DokployNotFound(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployNotFound {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployNotFound)
+	}
+	if err.Message != "the Dokploy provisioning backend could not find a required resource" {
+		t.Fatalf("message = %q, want fixed generic upstream-not-found message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_NOT_FOUND must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployNotFound must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-not-found", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-not-found"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployNotFound)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_missing_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-not-found envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployForbiddenContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_forbidden_secret_token_value"
+	cause := stderrors.New("dokploy denied permission: " + leaked)
+	err := DokployForbidden(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployForbidden {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployForbidden)
+	}
+	if err.Message != "the Dokploy provisioning backend denied the requested operation" {
+		t.Fatalf("message = %q, want fixed generic upstream-forbidden message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_FORBIDDEN must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployForbidden must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-forbidden", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-forbidden"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployForbidden)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_forbidden_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-forbidden envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployRateLimitedContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_rate_limited_secret_token_value"
+	cause := stderrors.New("dokploy 429 included token: " + leaked)
+	err := DokployRateLimited(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployRateLimited {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployRateLimited)
+	}
+	if err.Message != "the Dokploy provisioning backend is rate limiting Yalla requests" {
+		t.Fatalf("message = %q, want fixed generic upstream-rate-limit message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if !entry.Retryable {
+			t.Error("E_DOKPLOY_RATE_LIMITED must be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployRateLimited must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-rate-limited", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-rate-limited"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployRateLimited)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_rate_limited_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-rate-limited envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in dokploy-rate-limited envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestDokployConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_conflict_secret_token_value"
+	cause := stderrors.New("dokploy state conflict included token: " + leaked)
+	err := DokployConflict(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployConflict)
+	}
+	if err.Message != "the Dokploy provisioning backend reported a state conflict" {
+		t.Fatalf("message = %q, want fixed generic upstream-conflict message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_CONFLICT must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployConflict must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_conflict_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-conflict envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployBadResponseContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_bad_response_secret_token_value"
+	cause := stderrors.New("dokploy malformed payload included token: " + leaked)
+	err := DokployBadResponse(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployBadResponse {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployBadResponse)
+	}
+	if err.Message != "the Dokploy provisioning backend returned an incompatible response" {
+		t.Fatalf("message = %q, want fixed generic upstream-bad-response message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_BAD_RESPONSE must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployBadResponse must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-bad-response", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-bad-response"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployBadResponse)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_bad_response_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-bad-response envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in dokploy-bad-response envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestUnauthenticatedAndForbiddenDefaults(t *testing.T) {
+	t.Parallel()
+
+	if got := Unauthenticated(""); got.Message == "" {
+		t.Error("Unauthenticated(\"\") must supply a default message")
+	}
+	if got := Unauthenticated("token expired"); got.Message != "token expired" {
+		t.Errorf("Unauthenticated message = %q, want passthrough", got.Message)
+	}
+	if got := Forbidden(""); got.Message == "" {
+		t.Error("Forbidden(\"\") must supply a default message")
+	}
+}
+
+func TestAuthInvalidContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_secret_token_value"
+	err := AuthInvalid().WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeAuthInvalid {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeAuthInvalid)
+	}
+	if err.Message != "the supplied credentials are invalid" {
+		t.Fatalf("message = %q, want fixed generic invalid-credentials message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 401 {
+			t.Errorf("HTTPStatus = %d, want 401", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-auth-invalid", err)
+	body := rec.Body.String()
+	if rec.Code != 401 {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-auth-invalid"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeAuthInvalid)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("auth invalid envelope leaked credential material: %s", body)
+	}
+}
+
+func TestAuthExpiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_expired_secret_token_value"
+	err := AuthExpired().WithHint("refresh without " + leaked)
+	if err.Code != yerr.CodeAuthExpired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeAuthExpired)
+	}
+	if err.Message != "authentication credentials have expired" {
+		t.Fatalf("message = %q, want fixed expired-credentials message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 401 {
+			t.Errorf("HTTPStatus = %d, want 401", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-auth-expired", err)
+	body := rec.Body.String()
+	if rec.Code != 401 {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-auth-expired"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeAuthExpired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_expired_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("auth expired envelope leaked credential material: %s", body)
+	}
+}
+
+func TestForbiddenContract(t *testing.T) {
+	t.Parallel()
+
+	err := Forbidden("  denied_no_capability  ").
+		WithHint("do not retry with Authorization: Bearer forbidden-secret-token")
+	if err.Code != yerr.CodeForbidden {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeForbidden)
+	}
+	if err.Message != "denied_no_capability" {
+		t.Fatalf("message = %q, want trimmed stable policy reason", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 403 {
+			t.Errorf("HTTPStatus = %d, want 403", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_FORBIDDEN must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-forbidden", err)
+	body := rec.Body.String()
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-forbidden"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeForbidden)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "forbidden-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("forbidden envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in forbidden envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestScopeRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_scope_secret_token"
+	err := ScopeRequired("  organization  ").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeScopeRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeScopeRequired)
+	}
+	if err.Message != "organization scope is required" {
+		t.Fatalf("message = %q, want stable missing-scope message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 400 {
+			t.Errorf("HTTPStatus = %d, want 400", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_SCOPE_REQUIRED must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-scope-required", err)
+	body := rec.Body.String()
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-scope-required"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeScopeRequired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_scope_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("scope-required envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in scope-required envelope: %s", output.Sentinel, body)
+	}
+}
+
+// TestNotFoundEchoesCallerIdentifierOnly proves NotFound names the resource and
+// reflects the caller-supplied id verbatim, and never invents one.
+func TestNotFoundEchoesCallerIdentifierOnly(t *testing.T) {
+	t.Parallel()
+
+	withID := NotFound("project", "proj-123")
+	if !strings.Contains(withID.Message, "project") || !strings.Contains(withID.Message, "proj-123") {
+		t.Errorf("message = %q, want it to name the resource and the caller id", withID.Message)
+	}
+	blank := NotFound("", "")
+	if blank.Message != "resource not found" {
+		t.Errorf("NotFound(\"\",\"\") message = %q, want \"resource not found\"", blank.Message)
+	}
+}
+
+func TestNotFoundContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_not_found_secret_token"
+	err := NotFound("  project  ", "  proj_missing  ").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeNotFound {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeNotFound)
+	}
+	if err.Message != `project "proj_missing" not found` {
+		t.Fatalf("message = %q, want normalized resource/id not-found message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 404 {
+			t.Errorf("HTTPStatus = %d, want 404", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_NOT_FOUND must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-not-found", err)
+	body := rec.Body.String()
+	if rec.Code != 404 {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-not-found"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeNotFound)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_not_found_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("not-found envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in not-found envelope: %s", output.Sentinel, body)
+	}
+}
+
+// TestInvalidInputSortsViolationsAndExposesFieldPaths proves validation errors
+// carry stable, deterministic field paths recoverable via ViolationsOf,
+// independent of caller argument order, and that the hint lists those paths.
+func TestInvalidInputSortsViolationsAndExposesFieldPaths(t *testing.T) {
+	t.Parallel()
+
+	err := InvalidInput(
+		FieldViolation{Field: "  spec.replicas  ", Reason: " must be >= 1 "},
+		FieldViolation{Field: "", Reason: ""}, // dropped
+		FieldViolation{Field: "metadata.name", Reason: "required"},
+	)
+	if err.Code != yerr.CodeValidation {
+		t.Fatalf("code = %q, want E_VALIDATION", err.Code)
+	}
+	violations, ok := ViolationsOf(err)
+	if !ok {
+		t.Fatal("ViolationsOf returned false for an InvalidInput error")
+	}
+	if len(violations) != 2 {
+		t.Fatalf("violations = %+v, want 2 (blank entry dropped)", violations)
+	}
+	// Sorted by field path regardless of argument order; values trimmed.
+	if violations[0].Field != "metadata.name" || violations[1].Field != "spec.replicas" {
+		t.Errorf("violations not sorted by field path: %+v", violations)
+	}
+	if violations[1].Reason != "must be >= 1" {
+		t.Errorf("reason not trimmed: %q", violations[1].Reason)
+	}
+	if !strings.Contains(err.Hint, "metadata.name") || !strings.Contains(err.Hint, "spec.replicas") {
+		t.Errorf("hint = %q, want it to list both field paths", err.Hint)
+	}
+}
+
+func TestInvalidInputWithNoUsableViolationsDegrades(t *testing.T) {
+	t.Parallel()
+
+	err := InvalidInput(FieldViolation{}, FieldViolation{Field: "  "})
+	if err.Code != yerr.CodeValidation {
+		t.Fatalf("code = %q, want E_VALIDATION", err.Code)
+	}
+	if _, ok := ViolationsOf(err); ok {
+		t.Error("ViolationsOf must be false when no usable violations were supplied")
+	}
+	if err.Message == "" {
+		t.Error("degraded InvalidInput must still carry a message")
+	}
+}
+
+func TestViolationsOfAndDependencyOfReturnFalseForUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	plain := stderrors.New("boom")
+	if _, ok := ViolationsOf(plain); ok {
+		t.Error("ViolationsOf must be false for a non-validation error")
+	}
+	if _, ok := DependencyOf(plain); ok {
+		t.Error("DependencyOf must be false for a non-dependency error")
+	}
+	if _, ok := ViolationsOf(Conflict("nope")); ok {
+		t.Error("ViolationsOf must be false for a Conflict error")
+	}
+}
+
+func TestQuotaExceeded(t *testing.T) {
+	t.Parallel()
+
+	withLimit := QuotaExceeded("services", 10)
+	if !strings.Contains(withLimit.Message, "services") {
+		t.Errorf("message = %q, want it to name the resource", withLimit.Message)
+	}
+	if !strings.Contains(withLimit.Hint, "10") {
+		t.Errorf("hint = %q, want it to surface the limit", withLimit.Hint)
+	}
+	noLimit := QuotaExceeded("projects", 0)
+	if noLimit.Hint != "" {
+		t.Errorf("hint = %q, want empty when no positive limit is supplied", noLimit.Hint)
+	}
+}
+
+func TestQuotaExceededContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_quota_secret_token"
+	err := QuotaExceeded("  services  ", 10).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeQuotaExceeded {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeQuotaExceeded)
+	}
+	if err.Message != "quota exceeded for services" {
+		t.Fatalf("message = %q, want stable quota message", err.Message)
+	}
+	if got := err.Details[DetailKeyQuotaResource]; got != "services" {
+		t.Errorf("details[%q] = %q, want services", DetailKeyQuotaResource, got)
+	}
+	if got := err.Details[DetailKeyQuotaLimit]; got != "10" {
+		t.Errorf("details[%q] = %q, want 10", DetailKeyQuotaLimit, got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 429 {
+			t.Errorf("HTTPStatus = %d, want 429", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if !entry.Retryable {
+			t.Error("E_QUOTA_EXCEEDED must be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-quota-exceeded", err)
+	body := rec.Body.String()
+	if rec.Code != 429 {
+		t.Fatalf("status = %d, want 429; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-quota-exceeded"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeQuotaExceeded)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"resource":"services"`) ||
+		!strings.Contains(body, `"limit":"10"`) {
+		t.Errorf("envelope body missing quota details: %s", body)
+	}
+	if strings.Contains(body, "yka_quota_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("quota-exceeded envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in quota-exceeded envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestStoreUnavailableContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "postgres://yalla:super-secret-db-password@db.internal:5432/yalla"
+	cause := stderrors.New("pgx: dial failed for " + leaked)
+	err := StoreUnavailable(cause)
+	if err.Code != yerr.CodeDBUnavailable {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDBUnavailable)
+	}
+	if err.Message != "the Yalla datastore is temporarily unavailable" {
+		t.Fatalf("message = %q, want fixed generic datastore message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 503 {
+			t.Errorf("HTTPStatus = %d, want 503", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if !entry.Retryable {
+			t.Error("E_DB_UNAVAILABLE must be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyStore {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyStore)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("StoreUnavailable must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-db-unavailable", err)
+	body := rec.Body.String()
+	if rec.Code != 503 {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-db-unavailable"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDBUnavailable)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "super-secret-db-password") || strings.Contains(body, "db.internal") {
+		t.Errorf("db-unavailable envelope leaked datastore material: %s", body)
+	}
+}
+
+// TestDependencyErrorsAreDistinguished proves every dependency failure is
+// machine-distinguishable via DependencyOf, with Postgres and queue failures
+// using distinct public error codes.
+func TestDependencyErrorsAreDistinguished(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		err      *yerr.Error
+		wantDep  Dependency
+		wantCode yerr.Code
+	}{
+		{"dokploy", DokployUnavailable(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployUnavailable},
+		{"dokploy auth", DokployAuth(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployAuth},
+		{"dokploy forbidden", DokployForbidden(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployForbidden},
+		{"dokploy not found", DokployNotFound(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployNotFound},
+		{"dokploy conflict", DokployConflict(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployConflict},
+		{"dokploy rate limited", DokployRateLimited(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployRateLimited},
+		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeDBUnavailable},
+		{"queue", QueueUnavailable(stderrors.New("x")), DependencyQueue, yerr.CodeUnavailable},
+		{"network", NetworkFailure(stderrors.New("x")), DependencyNetwork, yerr.CodeNetwork},
+		{"timeout", Timeout(DependencyStore, stderrors.New("x")), DependencyStore, yerr.CodeTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.err.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", tc.err.Code, tc.wantCode)
+			}
+			dep, ok := DependencyOf(tc.err)
+			if !ok {
+				t.Fatalf("DependencyOf returned false for %s", tc.name)
+			}
+			if dep != tc.wantDep {
+				t.Errorf("dependency = %q, want %q", dep, tc.wantDep)
+			}
+		})
+	}
+
+	if StoreUnavailable(stderrors.New("x")).Code == QueueUnavailable(stderrors.New("x")).Code {
+		t.Error("store and queue failures must use distinct public codes")
+	}
+
+	// Timeout with an unknown dependency wraps the cause directly.
+	if _, ok := DependencyOf(Timeout("", stderrors.New("x"))); ok {
+		t.Error("Timeout with no dependency must not report one")
+	}
+}
+
+// TestGenericMessageCodesNeverEchoCause proves MessageGeneric constructors keep
+// the cause out of the user-facing Message and Hint while still preserving it
+// in the error chain for server-side logging.
+func TestGenericMessageCodesNeverEchoCause(t *testing.T) {
+	t.Parallel()
+
+	const secret = "super-secret-token-9f3a2b1c"
+	cause := stderrors.New("connect failed: Authorization: Bearer " + secret)
+
+	cases := []struct {
+		name string
+		err  *yerr.Error
+	}{
+		{"internal", Internal(cause)},
+		{"dokploy auth", DokployAuth(cause)},
+		{"dokploy forbidden", DokployForbidden(cause)},
+		{"dokploy", DokployUnavailable(cause)},
+		{"store", StoreUnavailable(cause)},
+		{"queue", QueueUnavailable(cause)},
+		{"network", NetworkFailure(cause)},
+		{"timeout", Timeout(DependencyDokploy, cause)},
+		{"secret decryption", SecretDecryption(cause)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			entry, ok := Lookup(tc.err.Code)
+			if !ok || entry.MessagePolicy != MessageGeneric {
+				t.Fatalf("%s expected a MessageGeneric code, got %+v ok=%v", tc.name, entry, ok)
+			}
+			if strings.Contains(tc.err.Message, secret) {
+				t.Errorf("%s leaked the cause into Message: %q", tc.name, tc.err.Message)
+			}
+			if strings.Contains(tc.err.Hint, secret) {
+				t.Errorf("%s leaked the cause into Hint: %q", tc.name, tc.err.Hint)
+			}
+			// The cause must still be reachable for server-side logging.
+			if !stderrors.Is(tc.err, cause) {
+				t.Errorf("%s dropped the cause from the error chain", tc.name)
+			}
+		})
+	}
+}
+
+// TestEnvelopeRedactsSecretsFromSpecificMessages proves the apienvelope
+// redaction backstop scrubs secrets even from a MessageSpecific error whose
+// caller-supplied text accidentally carried a token.
+func TestEnvelopeRedactsSecretsFromSpecificMessages(t *testing.T) {
+	t.Parallel()
+
+	const secret = "leaked-token-value-abc123"
+	err := Conflict("rejected request carrying Authorization: Bearer " + secret)
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-redact", err)
+	body := rec.Body.String()
+
+	if strings.Contains(body, secret) {
+		t.Errorf("envelope leaked a secret: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
+func TestConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer conflict-secret-token"
+	err := Conflict("  resource already exists; retry without " + secret + "  ")
+	if err.Code != yerr.CodeConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeConflict)
+	}
+	if strings.HasPrefix(err.Message, " ") || strings.HasSuffix(err.Message, " ") {
+		t.Fatalf("message = %q, want trimmed stable message text", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_CONFLICT must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "conflict-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("conflict envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
+func TestInvalidStateTransitionContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer transition-secret-token"
+	err := InvalidStateTransition(" deployment ", " queued "+secret, " succeeded ")
+	if err.Code != yerr.CodeInvalidStateTransition {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeInvalidStateTransition)
+	}
+	if err.Message != "deployment cannot transition from queued "+secret+" to succeeded" {
+		t.Fatalf("message = %q, want stable resource/from/to message", err.Message)
+	}
+	if err.Hint != "refresh the resource state and choose a supported lifecycle transition" {
+		t.Fatalf("hint = %q, want fixed lifecycle remediation hint", err.Hint)
+	}
+	if got := err.Details["resource"]; got != "deployment" {
+		t.Errorf("details.resource = %q, want deployment", got)
+	}
+	if got := err.Details["previous_state"]; got != "queued "+secret {
+		t.Errorf("details.previous_state = %q, want queued state", got)
+	}
+	if got := err.Details["next_state"]; got != "succeeded" {
+		t.Errorf("details.next_state = %q, want succeeded", got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_INVALID_STATE_TRANSITION must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-invalid-transition", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-invalid-transition"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeInvalidStateTransition)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"code":"E_INVALID_STATE_TRANSITION"`) ||
+		!strings.Contains(body, `"resource":"deployment"`) ||
+		!strings.Contains(body, `"previous_state":"queued Authorization: `+output.Sentinel+`"`) ||
+		!strings.Contains(body, `"next_state":"succeeded"`) {
+		t.Errorf("envelope body missing invalid-transition fields/details: %s", body)
+	}
+	if strings.Contains(body, "transition-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("invalid-state-transition envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
+func TestIdempotencyConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer idempotency-secret-token"
+	err := IdempotencyConflict("  idempotency key reused; retry without " + secret + "  ")
+	if err.Code != yerr.CodeIdempotencyConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeIdempotencyConflict)
+	}
+	if strings.HasPrefix(err.Message, " ") || strings.HasSuffix(err.Message, " ") {
+		t.Fatalf("message = %q, want trimmed stable message text", err.Message)
+	}
+	if err.Hint != "replay the original request unchanged, or retry with a new Idempotency-Key" {
+		t.Fatalf("hint = %q, want fixed idempotency remediation hint", err.Hint)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_IDEMPOTENCY_CONFLICT must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-idempotency-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-idempotency-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeIdempotencyConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "idempotency-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("idempotency-conflict envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"quota", QuotaExceeded("x", 1), true},
+		{"dokploy", DokployUnavailable(stderrors.New("x")), true},
+		{"store", StoreUnavailable(stderrors.New("x")), true},
+		{"network", NetworkFailure(stderrors.New("x")), true},
+		{"timeout", Timeout(DependencyStore, stderrors.New("x")), true},
+		{"invalid", Invalid("bad"), false},
+		{"forbidden", Forbidden(""), false},
+		{"not found", NotFound("x", "y"), false},
+		{"conflict", Conflict(""), false},
+		{"internal", Internal(stderrors.New("x")), false},
+		{"non-typed", stderrors.New("plain"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Retryable(tc.err); got != tc.want {
+				t.Errorf("Retryable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFieldViolationString(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		v    FieldViolation
+		want string
+	}{
+		{FieldViolation{Field: "spec.replicas", Reason: "must be >= 1"}, "spec.replicas: must be >= 1"},
+		{FieldViolation{Field: "spec.replicas"}, "spec.replicas: invalid"},
+		{FieldViolation{Reason: "request is malformed"}, "request is malformed"},
+		{FieldViolation{}, "invalid field"},
+	}
+	for _, tc := range cases {
+		if got := tc.v.String(); got != tc.want {
+			t.Errorf("FieldViolation%+v.String() = %q, want %q", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestConflictStaleAttachesCurrentVersion proves ConflictStale renders an
+// E_CONFLICT carrying the resource's authoritative version under the stable
+// DetailKeyCurrentVersion key, recoverable round-trip via CurrentVersionOf.
+// The Hint stays a fixed, non-secret remediation string so a leaked log line
+// can never reflect business state.
+func TestConflictStaleAttachesCurrentVersion(t *testing.T) {
+	t.Parallel()
+
+	err := ConflictStale(7)
+	if err.Code != yerr.CodeConflict {
+		t.Errorf("Code = %q, want E_CONFLICT", err.Code)
+	}
+	if err.Hint == "" {
+		t.Error("Hint is empty, want a non-empty remediation string")
+	}
+	if got := err.Details[DetailKeyCurrentVersion]; got != "7" {
+		t.Errorf("Details[%s] = %q, want \"7\"", DetailKeyCurrentVersion, got)
+	}
+
+	got, ok := CurrentVersionOf(err)
+	if !ok {
+		t.Fatal("CurrentVersionOf returned false for a ConflictStale error")
+	}
+	if got != 7 {
+		t.Errorf("CurrentVersionOf = %d, want 7", got)
+	}
+}
+
+// TestConflictStaleOmitsNonPositiveVersion proves a non-positive version is
+// treated as "unknown" and the detail is omitted entirely — the schema CHECK
+// guarantees a positive version, so a zero or negative value can only arise
+// from a programming error and must not pretend to carry information.
+func TestConflictStaleOmitsNonPositiveVersion(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []int64{0, -1, -42} {
+		err := ConflictStale(v)
+		if err.Code != yerr.CodeConflict {
+			t.Errorf("ConflictStale(%d).Code = %q, want E_CONFLICT", v, err.Code)
+		}
+		if _, ok := err.Details[DetailKeyCurrentVersion]; ok {
+			t.Errorf("ConflictStale(%d) attached a current_version detail; want it omitted", v)
+		}
+		if _, ok := CurrentVersionOf(err); ok {
+			t.Errorf("CurrentVersionOf(ConflictStale(%d)) returned true; want false", v)
+		}
+	}
+}
+
+// TestCurrentVersionOfHandlesUnrelatedErrors proves the recovery helper
+// returns false (and not, say, zero) for a plain Conflict, a non-typed
+// error, and a nil receiver — so callers can switch on it safely.
+func TestCurrentVersionOfHandlesUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := CurrentVersionOf(Conflict("plain")); ok {
+		t.Error("CurrentVersionOf must be false for a plain Conflict error")
+	}
+	if _, ok := CurrentVersionOf(stderrors.New("boom")); ok {
+		t.Error("CurrentVersionOf must be false for a non-typed error")
+	}
+	if _, ok := CurrentVersionOf(nil); ok {
+		t.Error("CurrentVersionOf must be false for nil")
+	}
+}
+
+// TestRateLimitedAttachesScopeAndRetryAfter proves the rate-limit error
+// carries the bucket name and a positive whole-second retry hint via both
+// the structured details map and a human hint. The bucket name is the only
+// identity-related value that may reach the wire; the bucket identity (a
+// specific org id, key id, or IP) never appears.
+func TestRateLimitedAttachesScopeAndRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	err := RateLimited("organization", 2500*time.Millisecond)
+	if err.Code != yerr.CodeRateLimited {
+		t.Fatalf("Code = %q, want E_RATE_LIMITED", err.Code)
+	}
+	if !strings.Contains(err.Message, "organization") {
+		t.Errorf("Message = %q, want it to name the bucket scope", err.Message)
+	}
+	if got := err.Details[DetailKeyRateLimitScope]; got != "organization" {
+		t.Errorf("scope detail = %q, want organization", got)
+	}
+	// 2.5s rounds up to 3 whole seconds so a client never sees a sub-second
+	// instruction it cannot act on through an integer Retry-After header.
+	if got := err.Details[DetailKeyRetryAfter]; got != "3" {
+		t.Errorf("retry_after detail = %q, want 3", got)
+	}
+	if v, ok := RetryAfterOf(err); !ok || v != 3 {
+		t.Errorf("RetryAfterOf = (%d, %v), want (3, true)", v, ok)
+	}
+}
+
+// TestRateLimitedClampsNonPositiveRetryAfter proves a zero or negative
+// retry-after collapses to one second so the wire always carries an
+// actionable instruction. A blank scope falls back to a generic label.
+func TestRateLimitedClampsNonPositiveRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range []time.Duration{0, -time.Second, -100 * time.Millisecond} {
+		err := RateLimited("", d)
+		if got := err.Details[DetailKeyRetryAfter]; got != "1" {
+			t.Errorf("RateLimited(%s) retry_after = %q, want 1", d, got)
+		}
+		if got := err.Details[DetailKeyRateLimitScope]; got != "caller" {
+			t.Errorf("RateLimited(empty scope) = %q, want caller", got)
+		}
+		if !strings.Contains(err.Message, "caller") {
+			t.Errorf("Message = %q, want it to name the generic fallback scope", err.Message)
+		}
+	}
+}
+
+// TestRateLimitedDoesNotEchoSecretScope proves the scope label is the only
+// identity-related value on the wire. The constructor strips whitespace
+// but otherwise places scope into the message verbatim, so the call site
+// is responsible for passing a bucket dimension ("organization", "api_key",
+// "ip") rather than a tenant id, an API key id, or an IP address. The
+// envelope's regex-based redaction still scrubs any header-style secret if
+// it ever reaches this layer.
+func TestRateLimitedDoesNotEchoSecretScope(t *testing.T) {
+	t.Parallel()
+
+	err := RateLimited("  api_key  ", time.Second)
+	if got := err.Details[DetailKeyRateLimitScope]; got != "api_key" {
+		t.Errorf("scope detail = %q, want trimmed api_key", got)
+	}
+	body := strings.Join([]string{
+		err.Message,
+		err.Hint,
+		err.Details[DetailKeyRateLimitScope],
+		err.Details[DetailKeyRetryAfter],
+	}, "|")
+	for _, leak := range []string{"Bearer", "Authorization:", "yk_"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("RateLimited rendering leaked a credential-shaped token %q in %q", leak, body)
+		}
+	}
+}
+
+func TestRateLimitedContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_rate_limit_secret_token"
+	err := RateLimited("  organization  ", 1500*time.Millisecond).
+		WithHint("retry later without " + leaked)
+	if err.Code != yerr.CodeRateLimited {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeRateLimited)
+	}
+	if err.Message != "rate limit exceeded for organization" {
+		t.Fatalf("message = %q, want stable rate-limit message", err.Message)
+	}
+	if got := err.Details[DetailKeyRateLimitScope]; got != "organization" {
+		t.Errorf("details[%q] = %q, want organization", DetailKeyRateLimitScope, got)
+	}
+	if got := err.Details[DetailKeyRetryAfter]; got != "2" {
+		t.Errorf("details[%q] = %q, want 2", DetailKeyRetryAfter, got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 429 {
+			t.Errorf("HTTPStatus = %d, want 429", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if !entry.Retryable {
+			t.Error("E_RATE_LIMITED must be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-rate-limited", err)
+	body := rec.Body.String()
+	if rec.Code != 429 {
+		t.Fatalf("status = %d, want 429; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-rate-limited"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeRateLimited)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"scope":"organization"`) ||
+		!strings.Contains(body, `"retry_after":"2"`) {
+		t.Errorf("envelope body missing rate-limit details: %s", body)
+	}
+	if strings.Contains(body, "yka_rate_limit_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("rate-limited envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in rate-limited envelope: %s", output.Sentinel, body)
+	}
+}
+
+// TestRetryAfterOfHandlesUnrelatedErrors proves the recovery helper returns
+// false for a non-typed error, a typed error of a different code, and a
+// nil receiver — so callers can switch on it safely.
+func TestRetryAfterOfHandlesUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := RetryAfterOf(Conflict("plain")); ok {
+		t.Error("RetryAfterOf must be false for a non-rate-limited error")
+	}
+	if _, ok := RetryAfterOf(stderrors.New("boom")); ok {
+		t.Error("RetryAfterOf must be false for a non-typed error")
+	}
+	if _, ok := RetryAfterOf(nil); ok {
+		t.Error("RetryAfterOf must be false for nil")
+	}
+}
