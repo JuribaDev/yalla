@@ -45,8 +45,8 @@ import (
 //     Code=yerr.CodeTimeout, (b) report apierr.DependencyDokploy via
 //     apierr.DependencyOf, (c) carry no Dokploy bearer token literal at
 //     any level of the wrapped cause chain, (d) record exactly
-//     scenario.expectedAttempts requests against the fake (so a regression
-//     that quietly retries a POST or stops retrying a GET trips here),
+//     scenario.expectedAttempts client attempts (so a regression that
+//     quietly retries a POST or stops retrying a GET trips here),
 //     (e) propagate the caller's telemetry.HeaderRequestID into every
 //     recorded request so an operator can correlate the gate failure
 //     with the offending request_id, and (f) leave the Authorization
@@ -118,8 +118,8 @@ const chaosTimeoutMaxRetries = 2
 // reliably observes the context cancellation before it fires. Keep this
 // comfortably above scheduler stalls seen under `go test -race`: if the
 // deadline expires before the httptest handler records the request, the
-// idempotency assertion observes a false missing attempt instead of a
-// client retry-policy regression.
+// fake's recorded-request log under-reports attempts even though the
+// client did schedule them.
 const chaosTimeoutPerAttemptTimeout = 250 * time.Millisecond
 
 // chaosTimeoutFaultDelay is the sleep every queued TimeoutFault uses
@@ -321,7 +321,10 @@ func TestChaosDokployTimeoutsCoversCallSites(t *testing.T) {
 // goroutine-unsafe testing.T calls (race-detector hostile and
 // stdlib-discouraged) and lets the diagnostic carry the offending
 // scenario name AND the observed request_id so an operator can
-// correlate.
+// correlate. attemptN is read from the client's per-attempt dependency
+// metrics, not the fake server's request log, because a short timeout
+// under the race detector can expire before httptest schedules the
+// handler that records the request.
 type chaosObservation struct {
 	scenario  string
 	requestID string
@@ -340,6 +343,7 @@ type chaosObservation struct {
 // returned error is a typed *yerr.Error with Code=yerr.CodeTimeout
 // attributed to apierr.DependencyDokploy, with the bearer token
 // redacted from every level of the wrapped cause chain, with every
+// client-attempt metric carrying the expected retry count, with every
 // recorded request carrying the caller's request_id, and with every
 // recorded Authorization header redacted to output.Sentinel.
 //
@@ -427,7 +431,7 @@ func TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope(t *testing.T) {
 		}
 
 		if obs.attemptN != sc.expectedAttempts {
-			t.Errorf("scenario %q (request_id=%q) recorded %d attempts against the fake, want %d; idempotency rule mismatch — POST MUST attempt exactly once, GET and DELETE MUST attempt 1 + MaxRetries",
+			t.Errorf("scenario %q (request_id=%q) recorded %d client attempts, want %d; idempotency rule mismatch — POST MUST attempt exactly once, GET and DELETE MUST attempt 1 + MaxRetries",
 				obs.scenario, obs.requestID, obs.attemptN, sc.expectedAttempts)
 		}
 
@@ -463,9 +467,10 @@ func TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope(t *testing.T) {
 // runChaosIteration runs one chaos-timeout iteration in isolation. It
 // constructs a fresh fake-Dokploy server (so the FIFO fault queue
 // stays per-iteration), constructs a fresh client wired to that fake
-// with deterministic short timings, queues expectedAttempts
-// TimeoutFaults, fires the scenario's call under a context carrying a
-// SafeID request_id, and packages the outcome as a chaosObservation.
+// with deterministic short timings and an isolated per-attempt metrics
+// collector, queues expectedAttempts TimeoutFaults, fires the scenario's
+// call under a context carrying a SafeID request_id, and packages the
+// outcome as a chaosObservation.
 // All testing.T-free so it can be invoked from worker goroutines
 // without race-hostile assertions.
 func runChaosIteration(sc chaosTimeoutScenario, worker, iter int) chaosObservation {
@@ -474,6 +479,7 @@ func runChaosIteration(sc chaosTimeoutScenario, worker, iter int) chaosObservati
 	fake := dokployfake.New()
 	defer fake.Close()
 
+	metrics := telemetry.NewDokployDependencyMetrics()
 	cfg := dokploy.Config{
 		BaseURL:        fake.URL(),
 		Token:          fake.Token(),
@@ -481,6 +487,7 @@ func runChaosIteration(sc chaosTimeoutScenario, worker, iter int) chaosObservati
 		Timeout:        chaosTimeoutPerAttemptTimeout,
 		RetryBaseDelay: chaosTimeoutRetryBaseDelay,
 		RetryMaxDelay:  chaosTimeoutRetryMaxDelay,
+		Metrics:        metrics,
 	}
 	c, err := dokploy.New(cfg)
 	if err != nil {
@@ -507,8 +514,10 @@ func runChaosIteration(sc chaosTimeoutScenario, worker, iter int) chaosObservati
 
 	obs.err = sc.call(ctx, c)
 
-	// Capture the per-fake attempt count for assertion.
-	obs.attemptN = fake.RequestCount()
+	// Capture the client-observed attempt count for assertion. The fake's
+	// request log can legitimately be lower on slow race-detector runners
+	// when an attempt times out before httptest schedules its handler.
+	obs.attemptN = int(metrics.Snapshot().TotalCalls)
 
 	// Inspect every recorded request for the propagation invariants.
 	for _, rec := range fake.Requests() {

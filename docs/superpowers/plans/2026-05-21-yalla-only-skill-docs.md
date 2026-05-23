@@ -1,5 +1,10 @@
 # Yalla-Only Skill Docs Implementation Plan
 
+> Historical implementation plan snapshot. It is kept for rationale and task
+> history, not as the current CLI or API reference. Use `README.md`,
+> `docs/development/cli-backend-command-parity.md`, and `yalla --json manifest`
+> for the authoritative command surface.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rename and rewrite the deploy skills so the agent-facing skill surface shows only Yalla concepts and commands, while keeping general repo docs accurate about Yalla's private runtime integrations.

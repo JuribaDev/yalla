@@ -1,5 +1,10 @@
 # Yalla Production Readiness Hardening Implementation Plan
 
+> Historical implementation plan snapshot. It is kept for rationale and task
+> history, not as the current CLI or API reference. Use `README.md`,
+> `docs/development/cli-backend-command-parity.md`, and `yalla --json manifest`
+> for the authoritative command surface.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the production-readiness blockers found in the control-plane review: build determinism, release gates, HTTP timeout hardening, trusted proxy handling, distributed rate limiting, service-layer authorization, and deploy/install operator readiness.
@@ -1293,4 +1298,3 @@ Only mark production ready when all are true:
 - Production config requires Redis-backed rate limiting or explicitly disables the limiter for an approved incident.
 - NetworkPolicy blocks direct pod-to-API access except ingress controller and trusted Yalla internal pods.
 - Full local and CI verification artifacts are attached to the release notes.
-

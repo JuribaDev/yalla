@@ -7,12 +7,14 @@ files.
 ## Create a database service
 
 ```sh
-yalla database create postgres --environment-id env_app_prod --service-id svc_app_db --name app-db --database-name app --database-user app --database-password "$DATABASE_PASSWORD" --deploy --json
+yalla database create --environment-id env_app_prod --service-id svc_app_db --name app-db --engine postgres --deploy --json
 ```
 
-Use a secret source for `DATABASE_PASSWORD`. If the app points at an externally
-managed database, do not create a Yalla database service; pass the existing
-connection value through the service environment configuration.
+The current CLI creates the database service record and queues provisioning
+through the backend. It does not accept raw database passwords on the command
+line. If the app points at an externally managed database, do not create a
+Yalla database service; pass the existing connection value through the service
+environment configuration.
 
 ## Backup schedule and manual run
 

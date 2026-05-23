@@ -27,6 +27,68 @@ URLs or Dokploy tokens.
 | Manual   | Download from [Releases](https://github.com/JuribaDev/yalla/releases) |
 | Go       | `go install github.com/JuribaDev/yalla/cmd/yalla@latest` (contributor fallback) |
 
+## Run the project
+
+Prerequisites for local development:
+
+- Go matching `go.mod`
+- Docker with the Compose plugin
+- A shell that can export environment variables
+
+Run the CLI from source:
+
+```sh
+go run ./cmd/yalla --help
+go run ./cmd/yalla --version
+go run ./cmd/yalla --json manifest
+```
+
+Start only the local Postgres dependency for integration tests:
+
+```sh
+export YALLA_POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+docker compose up -d postgres
+export YALLA_TEST_DATABASE_URL="postgres://yalla:${YALLA_POSTGRES_PASSWORD}@127.0.0.1:5432/yalla?sslmode=disable"
+go test ./...
+```
+
+Start the full local control-plane stack:
+
+```sh
+export YALLA_POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+export YALLA_SIGNING_KEYS="$(openssl rand -base64 32)"
+export YALLA_SECRET_KEYS="$(openssl rand -hex 32)"
+export YALLA_DOKPLOY_BASE_URL="https://dokploy.internal.example"
+export YALLA_DOKPLOY_TOKEN="$(openssl rand -base64 32)"
+export YALLA_INTERNAL_WORKER_TOKEN="$(openssl rand -base64 48)"
+
+docker compose --profile control-plane up --build
+```
+
+In another shell, probe the API:
+
+```sh
+curl -fsS http://localhost:8080/healthz
+curl -fsS http://localhost:8080/readyz
+curl -fsS http://localhost:8080/version
+```
+
+Follow local service logs with:
+
+```sh
+docker compose logs -f yalla-api yalla-worker
+```
+
+For the full local verification gate, run:
+
+```sh
+scripts/verify.sh
+```
+
+See [`docs/development/local-development.md`](./docs/development/local-development.md)
+for Postgres-backed tests, optional tools, failure recovery, and external smoke
+test rules.
+
 ## Usage
 
 ```sh
@@ -49,7 +111,7 @@ yalla teardown project --project-id proj_123 --json
 yalla wait url --url https://example.com --status-class 2xx --timeout 10s --json
 ```
 
-`yalla api call <dokployOperation>` is no longer a normal-user escape hatch.
+`yalla api call <operationId>` is no longer a normal-user escape hatch.
 Every mutating operation must be represented as a Yalla backend product route
 that persists desired state and durable jobs before the worker reconciles
 Dokploy.
@@ -74,6 +136,23 @@ For automation, avoid putting tokens in shell history:
 ```sh
 printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://api.yalla.example --token-stdin --json
 ```
+
+## Documentation
+
+- [`docs/development/cli-backend-command-parity.md`](./docs/development/cli-backend-command-parity.md)
+  tracks the active CLI-to-backend route contract.
+- [`docs/development/environment-variable-reference.md`](./docs/development/environment-variable-reference.md)
+  documents backend process configuration for developers.
+- [`docs/operations/production-config-reference.md`](./docs/operations/production-config-reference.md)
+  is the operator-facing production configuration reference.
+- [`docs/development/frontend-handoff-api-guide.md`](./docs/development/frontend-handoff-api-guide.md)
+  describes the public `/v1` API contract for frontend and external clients.
+- [`skills/README.md`](./skills/README.md) explains the agent skill trees that
+  guide natural-language deployment work through first-class `yalla` commands.
+
+Historical implementation plans under `docs/superpowers/plans/` are retained
+for rationale only. Use this README, the current docs above, and
+`yalla --json manifest` as the authoritative command surface.
 
 ## Releases
 
