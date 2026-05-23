@@ -115,10 +115,12 @@ const chaosTimeoutMaxRetries = 2
 // client uses inside the runtime member. It MUST be small enough that
 // 1 + MaxRetries attempts complete well under one second per
 // goroutine, and large enough that the fake's TimeoutFault scheduler
-// reliably observes the context cancellation before fires. 20ms is the
-// value the pre-existing TestClientTimeout has used since BE-0386 and
-// is known to be stable on both CI and developer machines.
-const chaosTimeoutPerAttemptTimeout = 20 * time.Millisecond
+// reliably observes the context cancellation before it fires. Keep this
+// comfortably above scheduler stalls seen under `go test -race`: if the
+// deadline expires before the httptest handler records the request, the
+// idempotency assertion observes a false missing attempt instead of a
+// client retry-policy regression.
+const chaosTimeoutPerAttemptTimeout = 250 * time.Millisecond
 
 // chaosTimeoutFaultDelay is the sleep every queued TimeoutFault uses
 // inside the runtime member. It MUST be substantially larger than

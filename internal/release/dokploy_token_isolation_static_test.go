@@ -844,7 +844,7 @@ func findClientTokenSelectorSites(fset *token.FileSet, file *ast.File, rel strin
 			return true
 		}
 		pos := fset.Position(sel.Pos())
-		out = append(out, rel+":"+strconv.Itoa(pos.Line)+":"+strconv.Itoa(pos.Column))
+		out = append(out, filepath.ToSlash(rel)+":"+strconv.Itoa(pos.Line)+":"+strconv.Itoa(pos.Column))
 		return true
 	})
 	sort.Strings(out)

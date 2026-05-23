@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -647,15 +648,16 @@ func TestBackupConfigParsesAbsolutePathAndDuration(t *testing.T) {
 	t.Parallel()
 
 	env := strictEnv()
-	env[EnvBackupStatusFile] = "/var/lib/yalla/backup.status"
+	backupStatusFile := filepath.Join(t.TempDir(), "backup.status")
+	env[EnvBackupStatusFile] = backupStatusFile
 	env[EnvBackupMaxAge] = "26h"
 
 	cfg, err := Load(MapLookup(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.BackupStatusFile != "/var/lib/yalla/backup.status" {
-		t.Errorf("BackupStatusFile = %q, want /var/lib/yalla/backup.status", cfg.BackupStatusFile)
+	if cfg.BackupStatusFile != backupStatusFile {
+		t.Errorf("BackupStatusFile = %q, want %q", cfg.BackupStatusFile, backupStatusFile)
 	}
 	if cfg.BackupMaxAge != 26*time.Hour {
 		t.Errorf("BackupMaxAge = %v, want 26h", cfg.BackupMaxAge)
@@ -714,7 +716,8 @@ func TestBackupRedactedConfigSurfacesNonSecretFields(t *testing.T) {
 	t.Parallel()
 
 	env := strictEnv()
-	env[EnvBackupStatusFile] = "/var/lib/yalla/backup.status"
+	backupStatusFile := filepath.Join(t.TempDir(), "backup.status")
+	env[EnvBackupStatusFile] = backupStatusFile
 	env[EnvBackupMaxAge] = "26h"
 
 	cfg, err := Load(MapLookup(env))
@@ -723,9 +726,9 @@ func TestBackupRedactedConfigSurfacesNonSecretFields(t *testing.T) {
 	}
 
 	r := cfg.Redacted()
-	if r.BackupStatusFile != "/var/lib/yalla/backup.status" {
-		t.Errorf("BackupStatusFile = %q, want /var/lib/yalla/backup.status (a non-secret operational path)",
-			r.BackupStatusFile)
+	if r.BackupStatusFile != backupStatusFile {
+		t.Errorf("BackupStatusFile = %q, want %q (a non-secret operational path)",
+			r.BackupStatusFile, backupStatusFile)
 	}
 	if r.BackupMaxAge != "26h0m0s" {
 		t.Errorf("BackupMaxAge = %q, want 26h0m0s", r.BackupMaxAge)
