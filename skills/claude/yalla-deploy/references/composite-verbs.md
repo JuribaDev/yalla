@@ -7,13 +7,16 @@ not replace the resource model.
 ## Compose deploy
 
 ```sh
-yalla deploy compose --project-id proj_app --environment-id env_app_prod \
-  --service-id svc_app_stack --compose-file docker-compose.yml --wait --json
+yalla service create --service-id svc_app_stack --environment-id env_app_prod \
+  --name app-stack --kind compose --build-type compose \
+  --compose-file docker-compose.yml --deploy --wait --json
 ```
 
 If the command is unavailable in the current manifest, use the first-class
 sequence from `lifecycle.md`: project, environment, service with `--kind compose
---build-type compose`, then `yalla service deploy --wait`.
+--build-type compose`, then `yalla service deploy --wait`. If the service
+already exists, `yalla deploy compose --service-id <id> --wait --json` is an
+available wrapper over the same backend deployment route.
 
 ## Teardown
 
@@ -33,7 +36,7 @@ yalla teardown project --project-id proj_app --wait --json
 ## Waiting
 
 ```sh
-yalla wait deployment --service-id svc_app_web --timeout 10m --json
+yalla wait deployment --deployment-id dep_123 --timeout 10m --json
 yalla wait job --job-id job_123 --timeout 10m --json
 yalla wait url --url https://app.example.com/healthz --timeout 2m --json
 ```

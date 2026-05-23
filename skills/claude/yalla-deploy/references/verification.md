@@ -10,10 +10,10 @@ yalla wait job --job-id job_123 --json
 curl -fsS https://app.example.com/healthz
 ```
 
-This CLI build exposes `yalla wait job`, not `yalla job get`. Use wait-enabled
-commands for job completion. If a workflow lacks direct job inspection in the
-current manifest, document that limitation and rely on the wait-enabled command
-that queued the work.
+This CLI build exposes `yalla wait job` and `yalla wait deployment`; it has no
+standalone job-inspection command. Use wait-enabled commands for completion. If
+a workflow lacks direct inspection in the current manifest, document that
+limitation and rely on the wait-enabled command that queued the work.
 
 ## HTTP probe
 

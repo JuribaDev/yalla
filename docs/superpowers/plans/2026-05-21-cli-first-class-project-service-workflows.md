@@ -1,5 +1,10 @@
 # CLI First-Class Project And Service Workflows Implementation Plan
 
+> Historical implementation plan snapshot. It is kept for rationale and task
+> history, not as the current CLI or API reference. Use `README.md`,
+> `docs/development/cli-backend-command-parity.md`, and `yalla --json manifest`
+> for the authoritative command surface.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `yalla` CLI a first-class Yalla Control Plane client for creating projects, environments, services, build configurations, deployments, and backups, with the same product contract the frontend portal uses.
@@ -516,4 +521,3 @@ Live-environment checks:
 - Every mutating command is policy-checked, audited, quota/idempotency-aware where applicable, and backed by durable jobs for side effects.
 - `yalla manifest` is useful enough for AI agents to choose and execute the correct command without guessing hidden flags.
 - Full automated verification and manual testing pass before the work is declared complete.
-

@@ -1,24 +1,28 @@
 # internal/api
 
-Owns the runtime registry of Dokploy OpenAPI operations and the schema
-extraction surface used by `yalla api`, `yalla schema`, and (US-0007)
-`yalla manifest`.
+Owns the generic HTTP/OpenAPI registry helpers used by the CLI. The current
+backend-only CLI loads the Yalla Control Plane `/openapi.json` document at
+runtime for `yalla api`, `yalla schema`, and manifest API coverage. The
+checked-in `data/openapi.json` remains a legacy Dokploy fixture for registry
+and compatibility tests; it is not the public normal-user CLI contract.
 
 ## Conventions
 
-- The registry source-of-truth is `data/openapi.json`, embedded into the
-  binary via `//go:embed`. Updating the spec is a public-API change: bump
-  `EmbeddedSpecSHA256`, the matching pin in `ralph/prd.json`, and let
-  `registry_test.go` lock the new digest plus operation count + IDs.
+- `data/openapi.json` is embedded via `//go:embed` for local registry tests
+  and legacy compatibility seams. Updating it is still a public compatibility
+  change for that fixture: bump `EmbeddedSpecSHA256`, the matching pin in
+  `ralph/prd.json`, and let `registry_test.go` lock the new digest plus
+  operation count + IDs.
 - Schemas are preserved as `json.RawMessage`. Do **not** re-model OpenAPI
   schema fragments into Go structs — yalla's contract is to surface the
   schema verbatim so agents can feed it into their own validators.
 - `Operation` is an immutable value type. Methods on `*Registry` return
   copies (`Operations()`, `Get()`) so callers cannot mutate the registry
   in place. Concurrent reads are safe.
-- `Default()` is the production accessor — it parses `EmbeddedSpec` once
-  and panics on parse failure (a panic here is a build-time bug, not a
-  runtime one). Tests that exercise alternate specs use `Load()` directly.
+- `Default()` parses `EmbeddedSpec` once and panics on parse failure (a panic
+  here is a build-time bug, not a runtime one). Production backend-only CLI
+  discovery should prefer `Load()` on the live `/openapi.json` bytes fetched by
+  `internal/cli/yalla_backend_client.go`.
 - Status keys in `Response.Status` are kept as strings so OpenAPI's
   `"default"` survives alongside numeric codes; sorting is numeric-aware
   via `statusLess`.
@@ -33,9 +37,10 @@ extraction surface used by `yalla api`, `yalla schema`, and (US-0007)
   than one). Lifting that restriction requires a `Tags []string` field
   and updating every consumer at once.
 
-## HTTP client (US-0006)
+## HTTP client
 
-- `client.go` is the single execution surface for Dokploy HTTP calls.
+- `client.go` is the generic execution surface for Yalla backend calls and
+  legacy Dokploy fixture tests.
   Construct via `NewClient(ClientConfig)` once per command invocation;
   the returned `*Client` is immutable and safe for concurrent reads.
 - The client never imports `internal/config` or `internal/cli`. Keep it
@@ -53,11 +58,10 @@ extraction surface used by `yalla api`, `yalla schema`, and (US-0007)
   `ClientConfig.MaxRetries > 0`. The retry triggers are conservative:
   network/timeout errors and HTTP 502/503/504. 500 is treated as
   deterministic and never retried automatically.
-- The bearer token is forwarded as `Authorization: Bearer <token>` and
-  never appears in any error message we construct. A caller-supplied
-  `Authorization` header on `Request.Headers` always wins over the
-  token-derived default — that is how curated commands hit non-Dokploy
-  endpoints with a different scheme without instantiating a second client.
+- For Yalla backend calls, use `AuthSchemeBearer` so the token is forwarded as
+  `Authorization: Bearer <token>` and never appears in any error message this
+  package constructs. `AuthSchemeAPIKeyHeader` remains available for legacy
+  Dokploy fixture coverage that expects `x-api-key`.
 - Observability headers (`X-Request-Id`, `X-Trace-Id`, `X-Correlation-Id`,
   `Traceparent`) are captured into `Result.RequestID` / `Result.TraceID`
   using the first non-empty value. Adding new header aliases means
@@ -72,14 +76,10 @@ extraction surface used by `yalla api`, `yalla schema`, and (US-0007)
 ## Multipart bodies (`multipart.go`)
 
 - `Request.Body` is contractually pre-serialised bytes — `internal/api`
-  never reaches into the file system, never spawns a multipart writer on
-  the wire side. All multipart encoding happens in the CLI layer (under
-  `internal/cli/api_call_cmd.go`) via `BuildMultipart(fields, files,
-  boundary)` and lands here as plain `[]byte` + the full
-  `multipart/form-data; boundary=...` Content-Type. Keeping the api
-  package media-type-agnostic on the request side preserves the existing
-  test patterns (`httptest.Server` handler reads `r.Body` verbatim) for
-  every JSON operation.
+  never reaches into the file system and never spawns a multipart writer on
+  the wire side. Multipart encoding helpers are retained for compatibility and
+  deterministic tests; normal backend-only product commands send JSON through
+  `yallaJSONRequest`.
 - `IsMultipartFormData(ct)` is the canonical detector. Use it instead of
   hand-rolling a `strings.HasPrefix("multipart/form-data")` check so the
   case/whitespace/parameter handling stays in one place.

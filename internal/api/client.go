@@ -1,11 +1,10 @@
 package api
 
-// HTTP client for the Dokploy API.
+// HTTP client for JSON APIs used by yalla.
 //
-// The client is the single execution surface used by every yalla command
-// that has to actually talk to Dokploy: the raw API executor (US-0005), the
-// future curated commands (US-0012), and any contract test that prefers a
-// real HTTP round-trip over a mocked registry.
+// The client is the shared execution surface used by backend-only yalla
+// commands to talk to the Yalla Control Plane API and by legacy Dokploy
+// registry/client tests that still exercise x-api-key compatibility.
 //
 // The package boundary is deliberate:
 //
@@ -46,9 +45,9 @@ import (
 // numbers.
 const (
 	// DefaultTimeout caps a single HTTP attempt (connect + headers + body).
-	// Dokploy's slowest deploy operations stream progress on stderr from the
-	// server side; the request itself returns quickly. 30s is generous for
-	// any single round trip while still failing fast for unreachable hosts.
+	// Backend deploy operations queue durable work and return quickly. 30s is
+	// generous for any single round trip while still failing fast for
+	// unreachable hosts.
 	DefaultTimeout = 30 * time.Second
 
 	// DefaultMaxRetries is the number of retries (NOT total attempts) used
@@ -76,24 +75,23 @@ const (
 	HeaderTraceID       = "X-Trace-Id"
 	HeaderCorrelationID = "X-Correlation-Id"
 
-	// ContentTypeJSON is the canonical media type for Dokploy request and
-	// response bodies. Other media types are accepted on the response path
+	// ContentTypeJSON is the canonical media type for Yalla backend request
+	// and response bodies. Other media types are accepted on the response path
 	// (the body is captured verbatim) but never produced by the client.
 	ContentTypeJSON = "application/json"
 
 	// DefaultAPIKeyHeader is the wire header used by [AuthSchemeAPIKeyHeader]
-	// when [ClientConfig.AuthHeaderName] is empty. Dokploy's OpenAPI spec
-	// declares this exact casing (`x-api-key`) and the production server
-	// rejects requests that use Bearer in its place, so the constant is
-	// part of the public contract.
+	// when [ClientConfig.AuthHeaderName] is empty. It remains for legacy
+	// Dokploy compatibility tests. Normal Yalla backend calls use
+	// [AuthSchemeBearer].
 	DefaultAPIKeyHeader = "x-api-key"
 )
 
 // AuthScheme controls how [ClientConfig.Token] is attached to outgoing
 // requests. The value is meant to be derived from the OpenAPI security
-// scheme so a future spec drop that switches Dokploy to a different
-// transport (Basic, OAuth2, signed headers) can be supported by adding a
-// constant here without touching every CLI call site.
+// scheme so a future backend contract that switches transport (Basic, OAuth2,
+// signed headers) can be supported by adding a constant here without touching
+// every CLI call site.
 //
 // String forms are part of the public contract — tests may match on
 // them. New schemes should be added as additional constants rather than

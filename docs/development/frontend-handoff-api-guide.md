@@ -256,7 +256,7 @@ curl -s http://localhost:8080/v1/healthz | jq .
 Expected probe output:
 
 ```json
-{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_...","data":{"status":"healthy"}}
+{"schema_version":"yalla.output.v1","ok":true,"request_id":"req_...","data":{"status":"ok"}}
 ```
 
 ## Verification commands

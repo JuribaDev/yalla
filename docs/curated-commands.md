@@ -21,9 +21,12 @@ yalla exposes the Yalla backend API through two discovery surfaces:
    <operationId>` inspects request/response schemas. `yalla api call
    <operationId>` is unsupported for normal users; mutations use product
    commands instead.
-2. **Curated commands.** A future set of opinionated named verbs under
-   stable groups. Each curated command must map to one or more Yalla
-   backend operationIds and must never bypass the backend.
+2. **Curated commands.** A future manifest catalogue of opinionated named
+   verbs under stable groups. Each curated command must map to one or more
+   Yalla backend operationIds and must never bypass the backend. The current
+   Cobra command tree does not expose `yalla app ...`; use the active
+   backend-mediated commands listed below until a curated command is present in
+   `yalla manifest --json`.
 
 The current backend-only release intentionally ships an empty default
 curated catalogue until backend-native curated entries are added.
@@ -47,7 +50,7 @@ and this document together.
 
 A curated command path always takes the form:
 
-```sh
+```text
 yalla <domain> <verb> [more ...]
 ```
 
@@ -98,17 +101,18 @@ Rescue diagnostics remain disabled until backend admin routes exist.
 - `curated_commands` — an always-present array. In the current
   backend-only release this array is empty by default.
 
-Future entries must use backend operationIds, for example:
+Future manifest entries must use backend operationIds. This example is a
+curated-catalogue entry, not an active Cobra command in the current release:
 
 ```json
 {
-  "path": "yalla app deploy",
+  "path": "<future curated application deploy path>",
   "domain": "app",
   "verb": "deploy",
   "summary": "Deploy an application service",
   "operation_ids": ["createServiceDeployment"],
-  "human_example": "yalla app deploy --service-id svc_123",
-  "json_example": "yalla --json app deploy --service-id svc_123"
+  "human_example": "yalla service deploy --service-id svc_123",
+  "json_example": "yalla --json service deploy --service-id svc_123"
 }
 ```
 
