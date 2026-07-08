@@ -65,16 +65,16 @@ func readJSON(t *testing.T, path string, into any) {
 // distribution contract; everything else is opaque YAML that
 // `KnownFields(false)` lets through.
 type goreleaserConfig struct {
-	Version     int                 `yaml:"version"`
-	ProjectName string              `yaml:"project_name"`
-	Builds      []goreleaserBuild   `yaml:"builds"`
-	Archives    []goreleaserArchive `yaml:"archives"`
-	Checksum    goreleaserChecksum  `yaml:"checksum"`
-	Brews       []map[string]any    `yaml:"brews"`
-	Scoops      []map[string]any    `yaml:"scoops"`
-	Winget      []map[string]any    `yaml:"winget"`
-	Release     map[string]any      `yaml:"release"`
-	Snapshot    map[string]any      `yaml:"snapshot"`
+	Version       int                 `yaml:"version"`
+	ProjectName   string              `yaml:"project_name"`
+	Builds        []goreleaserBuild   `yaml:"builds"`
+	Archives      []goreleaserArchive `yaml:"archives"`
+	Checksum      goreleaserChecksum  `yaml:"checksum"`
+	HomebrewCasks []map[string]any    `yaml:"homebrew_casks"`
+	Scoops        []map[string]any    `yaml:"scoops"`
+	Winget        []map[string]any    `yaml:"winget"`
+	Release       map[string]any      `yaml:"release"`
+	Snapshot      map[string]any      `yaml:"snapshot"`
 }
 
 type goreleaserBuild struct {
@@ -207,8 +207,8 @@ func TestGoReleaserConfig_PackageManagerChannels(t *testing.T) {
 	var cfg goreleaserConfig
 	readYAML(t, filepath.Join(root, ".goreleaser.yaml"), &cfg)
 
-	if len(cfg.Brews) == 0 {
-		t.Error("brews: at least one tap entry required")
+	if len(cfg.HomebrewCasks) == 0 {
+		t.Error("homebrew_casks: at least one tap entry required")
 	}
 	if len(cfg.Scoops) == 0 {
 		t.Error("scoops: at least one bucket entry required")
