@@ -129,7 +129,7 @@ func TestRegistry_VerifyAgainstSpec_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	if err := r.VerifyAgainstSpec(newFakeLookup("createServiceDeployment")); err != nil {
+	if err := r.VerifyAgainstSpec(newFakeLookup("application-deploy")); err != nil {
 		t.Errorf("VerifyAgainstSpec: %v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestRegistry_VerifyAgainstSpec_FlagsUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected unknown operationId error")
 	}
-	if !strings.Contains(err.Error(), "createServiceDeployment") {
+	if !strings.Contains(err.Error(), "application-deploy") {
 		t.Errorf("error %q missing operation id", err.Error())
 	}
 }
@@ -193,15 +193,56 @@ func TestDefaultRegistry_VerifiesAgainstSpec(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistry_DoesNotExposeLegacyDokployCommands(t *testing.T) {
+func TestDefaultRegistry_IncludesDatabaseCommands(t *testing.T) {
 	cmds := Default().Commands()
+	byPath := make(map[string]Command, len(cmds))
 	for _, cmd := range cmds {
-		for _, item := range append(cmd.OperationIDs, cmd.Summary, cmd.HumanExample, cmd.JSONExample) {
-			for _, legacy := range []string{"project-create", "compose-create", "postgres-create", "backup-create", "Dokploy"} {
-				if strings.Contains(item, legacy) {
-					t.Fatalf("default curated registry exposes legacy Dokploy term %q in %#v", legacy, cmd)
-				}
-			}
+		byPath[cmd.Path] = cmd
+	}
+	for _, path := range []string{
+		"yalla database backup create",
+		"yalla database backup delete",
+		"yalla database backup get",
+		"yalla database backup list-files",
+		"yalla database backup run",
+		"yalla database backup update",
+		"yalla database create",
+		"yalla database deploy",
+		"yalla database update",
+	} {
+		cmd, ok := byPath[path]
+		if !ok {
+			t.Fatalf("missing curated command %q", path)
+		}
+		if cmd.Domain != DomainDatabase {
+			t.Errorf("%s domain = %q, want %q", path, cmd.Domain, DomainDatabase)
+		}
+		if len(cmd.OperationIDs) == 0 {
+			t.Errorf("%s has no operation IDs", path)
+		}
+		if !strings.Contains(cmd.JSONExample, "--json") {
+			t.Errorf("%s JSONExample must contain --json: %q", path, cmd.JSONExample)
 		}
 	}
+	update := byPath["yalla database update"]
+	for _, want := range []string{"postgres-one", "postgres-update", "redis-one", "redis-update"} {
+		if !containsString(update.OperationIDs, want) {
+			t.Errorf("database update operation IDs missing %q: %v", want, update.OperationIDs)
+		}
+	}
+	backupRun := byPath["yalla database backup run"]
+	for _, want := range []string{"backup-manualBackupPostgres", "backup-manualBackupMySql", "backup-manualBackupMariadb", "backup-manualBackupMongo"} {
+		if !containsString(backupRun.OperationIDs, want) {
+			t.Errorf("database backup run operation IDs missing %q: %v", want, backupRun.OperationIDs)
+		}
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

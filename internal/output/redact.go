@@ -56,15 +56,6 @@ var bearerHeader = regexp.MustCompile(`(?i)(authorization|x-api-key|x-auth-token
 // queryToken matches token-bearing query parameters in URLs.
 var queryToken = regexp.MustCompile(`(?i)([?&](?:token|api[_-]?key|access[_-]?token|x[_-]?auth[_-]?token))=([^&\s"']+)`)
 
-// keyedSecret matches common key=value secret transports that show up in audit
-// reasons, error summaries, and provider diagnostics.
-var keyedSecret = regexp.MustCompile(`(?i)\b(token|secret|password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|private[_-]?key|credential|database[_-]?url|connection[_-]?(?:string|uri)|dsn)\s*=\s*([^,\s;"']+)`)
-
-// credentialLiteral matches well-known bare secret token prefixes used by
-// providers and Yalla credentials. These frequently appear in prose reasons
-// without a key=value wrapper.
-var credentialLiteral = regexp.MustCompile(`(?i)\b(?:sk_(?:live|test)_[a-z0-9][a-z0-9_-]*|yalla[a-z0-9]{20,})\b`)
-
 // Redact returns s with every known secret pattern replaced by Sentinel. The
 // transformation is idempotent and safe to apply to already-redacted text.
 func (r *Redactor) Redact(s string) string {
@@ -84,7 +75,5 @@ func (r *Redactor) Redact(s string) string {
 		return match[:idx] + ": " + Sentinel
 	})
 	s = queryToken.ReplaceAllString(s, "$1="+Sentinel)
-	s = keyedSecret.ReplaceAllString(s, "$1="+Sentinel)
-	s = credentialLiteral.ReplaceAllString(s, Sentinel)
 	return s
 }

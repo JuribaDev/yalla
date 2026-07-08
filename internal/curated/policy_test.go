@@ -13,9 +13,9 @@ func validCommand() Command {
 		Path:         "yalla app deploy",
 		Domain:       DomainApp,
 		Verb:         "deploy",
-		Summary:      "Deploy an application service",
-		OperationIDs: []string{"createServiceDeployment"},
-		HumanExample: "yalla app deploy --service-id svc_123",
+		Summary:      "Deploy a Dokploy application",
+		OperationIDs: []string{"application-deploy"},
+		HumanExample: "yalla app deploy --id app_123",
 		JSONExample:  "yalla --json app deploy --id app_123",
 	}
 }
@@ -80,7 +80,7 @@ func TestCommand_Validate_RejectsBadInputs(t *testing.T) {
 		{"no operationIds", func(c *Command) { c.OperationIDs = nil }, "OperationIDs"},
 		{"empty operationId entry", func(c *Command) { c.OperationIDs = []string{""} }, "empty OperationID"},
 		{"duplicate operationId", func(c *Command) {
-			c.OperationIDs = []string{"createServiceDeployment", "createServiceDeployment"}
+			c.OperationIDs = []string{"application-deploy", "application-deploy"}
 		}, "twice"},
 		{"missing summary", func(c *Command) { c.Summary = "" }, "Summary"},
 		{"summary trailing period", func(c *Command) { c.Summary = "Deploys an app." }, "must not end with a period"},

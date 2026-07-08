@@ -154,12 +154,12 @@ func buildRoot(streams IOStreams, build BuildInfo) (*cobra.Command, *GlobalFlags
 
 	cmd := &cobra.Command{
 		Use:   "yalla",
-		Short: "Agent-first CLI for the Yalla Control Plane.",
-		Long: `Yalla is a production-grade Control Plane CLI built for AI agents and humans.
+		Short: "Agent-first CLI for Dokploy.",
+		Long: `Yalla is a production-grade Dokploy CLI built for AI agents and humans.
 
-It talks to the Yalla backend API with bearer credentials, ships as native
-cross-platform binaries, and keeps stdout reserved for data while logs,
-prompts, warnings, and errors are written to stderr.`,
+It covers every Dokploy OpenAPI operation through stable JSON contracts,
+ships as native cross-platform binaries, and keeps stdout reserved for data
+while logs, prompts, warnings, and errors are written to stderr.`,
 		Version:       build.Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -213,8 +213,8 @@ prompts, warnings, and errors are written to stderr.`,
 	pf.BoolVar(&flags.JSON, "json", false, "emit machine-readable JSON output to stdout")
 	pf.BoolVar(&flags.NoInput, "no-input", false, "never prompt; fail with a stable error code if input is required")
 	pf.StringVar(&flags.Config, "config", "", "path to a yalla config file (overrides the default search path)")
-	pf.StringVar(&flags.BaseURL, "base-url", "", "Yalla API URL (e.g. https://api.yalla.example)")
-	pf.StringVar(&flags.Token, "token", "", "Yalla API token; redacted in all logs and output")
+	pf.StringVar(&flags.BaseURL, "base-url", "", "API URL (e.g. https://deploy.example.com)")
+	pf.StringVar(&flags.Token, "token", "", "API token; redacted in all logs and output")
 	pf.BoolVarP(&flags.Verbose, "verbose", "v", false, "enable verbose diagnostic logging on stderr")
 
 	// Subcommands are registered after the persistent flags are wired so the
@@ -225,9 +225,6 @@ prompts, warnings, and errors are written to stderr.`,
 	cmd.AddCommand(newAPICommand())
 	cmd.AddCommand(newDatabaseCommand())
 	cmd.AddCommand(newDeployCommand())
-	cmd.AddCommand(newProjectCommand())
-	cmd.AddCommand(newEnvironmentCommand())
-	cmd.AddCommand(newServiceCommand())
 	cmd.AddCommand(newTeardownCommand())
 	cmd.AddCommand(newRescueCommand())
 	cmd.AddCommand(newWaitCommand())

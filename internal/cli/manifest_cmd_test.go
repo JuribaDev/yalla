@@ -6,16 +6,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JuribaDev/yalla/internal/api"
 	"github.com/JuribaDev/yalla/internal/curated"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
-// TestManifest_JSONDoesNotExposeEmbeddedDokployOperations locks the backend-only
-// CLI contract: the local manifest describes the command tree and points users
-// at runtime backend discovery, but it does not publish the embedded Dokploy
-// OpenAPI operation catalogue as a callable command contract.
-func TestManifest_JSONDoesNotExposeEmbeddedDokployOperations(t *testing.T) {
+// TestManifest_JSONIncludesEveryAPIOperation locks the central acceptance
+// criterion of US-0007: every Dokploy API operation in the registry must
+// appear in the manifest's operations.ids list, and the count must equal
+// the registry size. A regression in either the registry parser or the
+// manifest collector fails this test before it can ship.
+func TestManifest_JSONIncludesEveryAPIOperation(t *testing.T) {
 	stdout, stderr, err := runRootArgs(t, "--json", "manifest")
 	if err != nil {
 		t.Fatalf("Execute: %v (stderr=%q)", err, stderr)
@@ -43,14 +45,29 @@ func TestManifest_JSONDoesNotExposeEmbeddedDokployOperations(t *testing.T) {
 	if env.Data.ErrorSchemaVersion != yerr.SchemaVersion {
 		t.Errorf("error_schema_version = %q", env.Data.ErrorSchemaVersion)
 	}
-	if env.Data.Spec.Title != "Yalla Control Plane API" {
-		t.Errorf("spec.title = %q, want Yalla Control Plane API", env.Data.Spec.Title)
+	if env.Data.Spec.SHA256 != api.EmbeddedSpecSHA256 {
+		t.Errorf("spec.sha256 = %q, want %q", env.Data.Spec.SHA256, api.EmbeddedSpecSHA256)
 	}
-	if env.Data.Operations.Total != 0 {
-		t.Errorf("operations.total = %d, want 0", env.Data.Operations.Total)
+	if env.Data.Operations.Total != expectedOpCount {
+		t.Errorf("operations.total = %d, want %d", env.Data.Operations.Total, expectedOpCount)
 	}
-	if len(env.Data.Operations.IDs) != 0 {
-		t.Errorf("operations.ids = %v, want empty", env.Data.Operations.IDs)
+	if len(env.Data.Operations.IDs) != expectedOpCount {
+		t.Errorf("operations.ids length = %d, want %d", len(env.Data.Operations.IDs), expectedOpCount)
+	}
+
+	// IDs must be the exact set the registry exposes — no missing, no
+	// extras, no duplicates.
+	want := api.Default().IDs()
+	got := append([]string(nil), env.Data.Operations.IDs...)
+	sort.Strings(want)
+	sort.Strings(got)
+	if len(got) != len(want) {
+		t.Fatalf("ids set size mismatch: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ids[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
@@ -75,7 +92,7 @@ func TestManifest_JSONListsAllSubcommands(t *testing.T) {
 	}
 
 	wantTopLevel := []string{
-		"api", "audit", "auth", "completion", "config", "database", "deploy", "docs", "environment", "manifest", "project", "rescue", "schema", "service", "teardown", "upgrade", "wait",
+		"api", "audit", "auth", "completion", "config", "database", "deploy", "docs", "manifest", "rescue", "schema", "teardown", "upgrade", "wait",
 	}
 	gotTop := make([]string, 0, len(env.Data.Commands))
 	for _, c := range env.Data.Commands {
@@ -269,9 +286,9 @@ func TestManifest_RendersCuratedCommandPayload(t *testing.T) {
 		Path:         "yalla app deploy",
 		Domain:       curated.DomainApp,
 		Verb:         "deploy",
-		Summary:      "Deploy an application service",
-		OperationIDs: []string{"createServiceDeployment"},
-		HumanExample: "yalla app deploy --service-id svc_123",
+		Summary:      "Deploy a Dokploy application",
+		OperationIDs: []string{"application-deploy"},
+		HumanExample: "yalla app deploy --id app_123",
 		JSONExample:  "yalla --json app deploy --id app_123",
 	}
 	reg, err := curated.NewRegistry(cmd)
@@ -295,8 +312,8 @@ func TestManifest_RendersCuratedCommandPayload(t *testing.T) {
 	if got[0].Summary != cmd.Summary {
 		t.Errorf("summary = %q, want %q", got[0].Summary, cmd.Summary)
 	}
-	if len(got[0].OperationIDs) != 1 || got[0].OperationIDs[0] != "createServiceDeployment" {
-		t.Errorf("operation_ids = %v, want [createServiceDeployment]", got[0].OperationIDs)
+	if len(got[0].OperationIDs) != 1 || got[0].OperationIDs[0] != "application-deploy" {
+		t.Errorf("operation_ids = %v, want [application-deploy]", got[0].OperationIDs)
 	}
 	if got[0].HumanExample != cmd.HumanExample {
 		t.Errorf("human_example = %q, want %q", got[0].HumanExample, cmd.HumanExample)
@@ -311,4 +328,25 @@ func TestManifest_RendersCuratedCommandPayload(t *testing.T) {
 	if reg.Commands()[0].OperationIDs[0] == "mutated" {
 		t.Errorf("manifest projection shares storage with curated registry")
 	}
+}
+
+// TestManifest_DefaultCuratedRegistryMatchesAPISpec is the live
+// regression net for the static curated registry: every operationId
+// referenced by a default curated command must resolve in the embedded
+// OpenAPI spec. The same check runs in internal/curated/registry_test.go;
+// duplicating it here keeps the manifest contract self-contained for
+// CI failure triage.
+func TestManifest_DefaultCuratedRegistryMatchesAPISpec(t *testing.T) {
+	if err := curated.Default().VerifyAgainstSpec(curatedSpecLookup{r: api.Default()}); err != nil {
+		t.Fatalf("default curated registry out of sync with embedded spec: %v", err)
+	}
+}
+
+// curatedSpecLookup adapts *api.Registry to curated.OperationLookup
+// without exporting the adapter from internal/api.
+type curatedSpecLookup struct{ r *api.Registry }
+
+func (a curatedSpecLookup) Has(id string) bool {
+	_, ok := a.r.Get(id)
+	return ok
 }

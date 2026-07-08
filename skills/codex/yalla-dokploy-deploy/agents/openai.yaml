@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yalla Dokploy Deploy"
+  short_description: "Deploy and manage Dokploy apps with yalla"
+  default_prompt: "Use $yalla-dokploy-deploy to deploy, redeploy, promote, roll back, operate, scale, back up, or verify a Dokploy app with yalla."

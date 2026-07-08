@@ -15,13 +15,14 @@ import (
 )
 
 // newSchemaCommand builds the `yalla schema` subtree. Schema commands are
-// the agent-facing way to discover the input/output shape of the Yalla
-// backend contract without consulting the OpenAPI document directly.
+// the agent-facing way to discover the input/output shape of every
+// Dokploy operation without consulting the upstream OpenAPI document
+// directly.
 func newSchemaCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schema",
-		Short: "Inspect Yalla backend operation input/output schemas",
-		Long: `Inspect the Yalla backend operation schemas served by the API.
+		Short: "Inspect Dokploy operation input/output schemas",
+		Long: `Inspect the Dokploy operation schemas yalla embeds at build time.
 
 The schema commands are the agent-friendly view of the OpenAPI document:
 ` + "`schema list`" + ` enumerates every operationId and ` + "`schema get`" + `
@@ -80,11 +81,7 @@ exactly — every registered operation has a schema entry.`,
 		RunE: func(c *cobra.Command, _ []string) error {
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
-			reg, err := yallaBackendRegistry(c.Context(), configFromCommand(c), BuildInfoFromContext(c.Context()))
-			if err != nil {
-				return err
-			}
-			return runSchemaList(r, reg)
+			return runSchemaList(r, api.Default())
 		},
 	}
 	return cmd
@@ -148,23 +145,19 @@ func newSchemaGetCommand() *cobra.Command {
 		Short: "Print the input + output schemas for a single operation",
 		Long: `Print the full input + output schema set for a single operation.
 
-Schemas are emitted verbatim from the Yalla backend OpenAPI document, so JSON
+Schemas are emitted verbatim from Dokploy's OpenAPI document, so JSON
 Schema validators (Ajv, JSON Schema Validator, jsonschema in Python, etc.)
 can consume them as-is. Use ` + "`yalla schema list`" + ` to discover
 operationIds.`,
-		Example: `  yalla schema get createServiceDeployment
-  yalla --json schema get restoreServiceBackup`,
+		Example: `  yalla schema get application-deploy
+  yalla --json schema get application-create`,
 		Args:          cobra.ExactArgs(1),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(c *cobra.Command, args []string) error {
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
-			reg, err := yallaBackendRegistry(c.Context(), configFromCommand(c), BuildInfoFromContext(c.Context()))
-			if err != nil {
-				return err
-			}
-			return runSchemaGet(r, reg, args[0])
+			return runSchemaGet(r, api.Default(), args[0])
 		},
 	}
 	return cmd

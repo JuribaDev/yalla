@@ -1,4 +1,4 @@
-// Package curated defines the policy that turns Yalla backend OpenAPI
+// Package curated defines the policy that turns raw Dokploy OpenAPI
 // operations into stable, agent-friendly yalla commands.
 //
 // The package is intentionally narrow. It does not register Cobra
@@ -9,15 +9,15 @@
 //     short aliases — so curated commands stay predictable across
 //     yalla versions.
 //  2. Provide a [Command] descriptor that maps every curated command
-//     to one or more backend OpenAPI operationIds and validates the mapping.
+//     to one or more OpenAPI operationIds and validates the mapping.
 //  3. Provide a [Registry] that aggregates the curated descriptors and
 //     can be projected into the manifest payload (see
 //     internal/cli.manifestCuratedCommand).
 //
-// Backend schema discovery (`yalla api operations`,
-// `yalla schema get <operationId>`) remains available for backend
-// operations. Curated commands are an additional, opinionated surface;
-// they never bypass the Yalla backend.
+// Raw API coverage (`yalla api call <operationId>`,
+// `yalla schema get <operationId>`) remains available for every
+// operation. Curated commands are an additional, opinionated surface;
+// they never remove or shadow the raw access path.
 package curated
 
 import (
@@ -34,18 +34,20 @@ import (
 type Domain string
 
 const (
-	// DomainProject groups commands operating on Yalla projects.
+	// DomainProject groups commands operating on Dokploy projects (the
+	// top-level grouping of applications/composes/databases).
 	DomainProject Domain = "project"
-	// DomainApp groups application service commands.
+	// DomainApp groups Dokploy "application" commands — single-image
+	// services, deploys, lifecycle.
 	DomainApp Domain = "app"
-	// DomainCompose groups compose-backed service commands.
+	// DomainCompose groups Dokploy compose-stack commands.
 	DomainCompose Domain = "compose"
 	// DomainDatabase groups managed-database commands across the
 	// supported engines (postgres, mysql, mariadb, mongo, redis).
 	DomainDatabase Domain = "database"
-	// DomainServer groups server / cluster commands.
+	// DomainServer groups Dokploy server / cluster commands.
 	DomainServer Domain = "server"
-	// DomainSettings groups instance settings, certificates,
+	// DomainSettings groups Dokploy instance settings, certificates,
 	// notifications, and other tenant-level configuration.
 	DomainSettings Domain = "settings"
 	// DomainProvider groups external provider integrations (git
@@ -160,7 +162,7 @@ type Command struct {
 	// required to be unique across curated commands — the same
 	// operation can be reached through multiple curated entry points
 	// (e.g. `app deploy` and `app redeploy` may both invoke
-	// `createServiceDeployment` with different inputs).
+	// `application-deploy` with different inputs).
 	OperationIDs []string
 
 	// HumanExample is the human-mode invocation snippet shown in

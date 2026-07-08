@@ -15,135 +15,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  preflight:
-    name: Release preflight
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Verify go mod tidy is clean
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-
-      - name: gofmt
-        run: |
-          test -z "$(gofmt -l .)"
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: Go tests
-        run: go test ./...
-
-      - name: Race detector
-        run: go test -race ./...
-
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-
-      - name: staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.12.2
-          args: --timeout=5m
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: npm tests
-        working-directory: npm
-        run: npm test
-
-      - name: npm audit
-        working-directory: npm
-        run: npm audit --omit=dev
-
-  containers:
-    name: Build and sign containers
-    runs-on: ubuntu-latest
-    needs: preflight
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    outputs:
-      api-digest: ${{ steps.api.outputs.digest }}
-      worker-digest: ${{ steps.worker.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: |
-            ghcr.io/juribadev/yalla-api:${{ github.ref_name }}
-            ghcr.io/juribadev/yalla-api:${{ github.sha }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            DATE=${{ github.event.head_commit.timestamp }}
-          provenance: true
-          sbom: true
-
-      - id: worker
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.worker
-          push: true
-          tags: |
-            ghcr.io/juribadev/yalla-worker:${{ github.ref_name }}
-            ghcr.io/juribadev/yalla-worker:${{ github.sha }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            DATE=${{ github.event.head_commit.timestamp }}
-          provenance: true
-          sbom: true
-
-      - uses: sigstore/cosign-installer@v3
-
-      - name: Sign images
-        run: |
-          cosign sign --yes "ghcr.io/juribadev/yalla-api@${{ steps.api.outputs.digest }}"
-          cosign sign --yes "ghcr.io/juribadev/yalla-worker@${{ steps.worker.outputs.digest }}"
-
   release:
     name: GoReleaser
     runs-on: ubuntu-latest
-    needs:
-      - preflight
-      - containers
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -165,13 +39,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Render Kubernetes manifest
-        run: |
-          mkdir -p dist
-          cp deploy/kubernetes/yalla-control-plane.yaml dist/yalla-control-plane-${GITHUB_REF_NAME}.yaml
-          sed -i "s#ghcr.io/juribadev/yalla-api:0.0.0-dev#ghcr.io/juribadev/yalla-api@${{ needs.containers.outputs.api-digest }}#g" dist/yalla-control-plane-${GITHUB_REF_NAME}.yaml
-          sed -i "s#ghcr.io/juribadev/yalla-worker:0.0.0-dev#ghcr.io/juribadev/yalla-worker@${{ needs.containers.outputs.worker-digest }}#g" dist/yalla-control-plane-${GITHUB_REF_NAME}.yaml
-
       - name: Upload public release artifacts to RustFS
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.RUSTFS_ACCESS_KEY_ID }}
@@ -192,7 +59,6 @@ jobs:
             --include "*.tar.gz" \
             --include "*.zip" \
             --include "*checksums.txt" \
-            --include "yalla-control-plane-*.yaml" \
             --endpoint-url "${RUSTFS_ENDPOINT}"
 
   npm-publish:

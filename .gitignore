@@ -14,9 +14,6 @@ coverage.txt
 /npm/node_modules/
 /npm/yalla-cli-*.tgz
 
-# Local Yalla deploy notes
-.yalla.yaml.local
-
 # Editor / OS
 .DS_Store
 .idea/

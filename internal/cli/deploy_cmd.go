@@ -1,75 +1,55 @@
 package cli
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"strings"
 	"time"
 
-	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/spf13/cobra"
+
+	"github.com/JuribaDev/yalla/internal/dokploy"
 )
 
 func newDeployCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "deploy", Short: "Deploy services through the Yalla backend", SilenceErrors: true, SilenceUsage: true}
+	cmd := &cobra.Command{Use: "deploy", Short: "Deploy composite Dokploy resources", SilenceErrors: true, SilenceUsage: true}
 	cmd.AddCommand(newDeployComposeCommand())
 	return cmd
 }
 
-type deployComposeOptions struct {
-	ServiceID      string
-	Source         string
-	SourceRef      string
-	IdempotencyKey string
-	Wait           bool
-	PollInterval   time.Duration
-	Timeout        time.Duration
-}
-
 func newDeployComposeCommand() *cobra.Command {
-	var opts deployComposeOptions
+	var opts dokploy.DeployComposeOptions
 	cmd := &cobra.Command{Use: "compose", Short: "Deploy a Docker Compose stack", Args: cobra.NoArgs, SilenceErrors: true, SilenceUsage: true, RunE: func(c *cobra.Command, _ []string) error {
 		r := rendererFromContext(c, IOStreamsFromContext(c.Context()))
-		if strings.TrimSpace(opts.ServiceID) == "" {
-			return yerr.New(yerr.CodeInvalidInput, "service ID is required").WithHint("pass --service-id")
+		if opts.DryRun {
+			res, err := dokploy.DeployCompose(c.Context(), nil, opts)
+			if err != nil {
+				return err
+			}
+			if r.JSON() {
+				return r.Data(res)
+			}
+			r.Human("DRY RUN")
+			return nil
 		}
-		if strings.TrimSpace(opts.Source) == "" {
-			opts.Source = "manual"
-		}
-		if strings.TrimSpace(opts.IdempotencyKey) == "" {
-			opts.IdempotencyKey = generatedIdempotencyKey()
-		}
-		data, err := deployService(c, opts.ServiceID, opts.Source, opts.SourceRef, opts.IdempotencyKey, opts.Timeout)
+		runner, err := newDokployRunner(configFromCommand(c), BuildInfoFromContext(c.Context()), opts.Timeout)
 		if err != nil {
 			return err
 		}
-		if opts.Wait {
-			if waited, waitErr := waitOnBackendJobFromData(c, data, opts.Timeout, opts.PollInterval); waitErr != nil {
-				return waitErr
-			} else if waited != nil {
-				data = waited
-			}
+		res, err := dokploy.DeployCompose(c.Context(), runner, opts)
+		if err != nil {
+			return err
 		}
 		if r.JSON() {
-			return r.Data(data)
+			return r.Data(res)
 		}
-		r.Human("deployment accepted")
+		r.Human(res.Status)
 		return nil
 	}}
-	cmd.Flags().StringVar(&opts.ServiceID, "service-id", "", "Yalla service ID")
-	cmd.Flags().StringVar(&opts.Source, "source", "manual", "deployment source: manual, git, or image")
-	cmd.Flags().StringVar(&opts.SourceRef, "source-ref", "", "source ref, commit, image, or label")
-	cmd.Flags().StringVar(&opts.IdempotencyKey, "idempotency-key", "", "idempotency key for safe retries")
-	cmd.Flags().BoolVar(&opts.Wait, "wait", false, "wait for deployment job to complete")
-	cmd.Flags().DurationVar(&opts.PollInterval, "poll-interval", time.Second, "wait polling interval")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "project name")
+	cmd.Flags().StringVar(&opts.Environment, "env", "", "environment name")
+	cmd.Flags().StringVar(&opts.ComposeFile, "compose-file", "", "docker compose file")
+	cmd.Flags().StringVar(&opts.EnvFile, "env-file", "", "env file")
+	cmd.Flags().StringArrayVar(&opts.Domains, "domain", nil, "domain binding host:service:port")
+	cmd.Flags().BoolVar(&opts.GetOrCreate, "get-or-create", false, "reuse existing exact-name resources")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "print planned operations without mutating Dokploy")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 5*time.Minute, "deployment timeout")
 	return cmd
-}
-
-func generatedIdempotencyKey() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return time.Now().UTC().Format("20060102T150405.000000000Z")
-	}
-	return hex.EncodeToString(b[:])
 }

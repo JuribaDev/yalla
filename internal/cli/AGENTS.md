@@ -62,10 +62,9 @@ Conventions for the Cobra command tree.
 ## API & schema commands (US-0004)
 
 - `yalla api` and `yalla schema` are read-only inspection trees backed by
-  the Yalla Control Plane `/openapi.json` endpoint. They must fetch the
-  backend OpenAPI document with `Authorization: Bearer <token>` and must
-  never fall back to the embedded Dokploy OpenAPI registry as the public CLI
-  command contract.
+  `internal/api.Default()` (the singleton parsed from the embedded
+  OpenAPI document). Never instantiate a fresh `api.Registry` inside a
+  `RunE`; reuse `api.Default()` so the parse cost is paid once.
 - Operations and schemas are emitted in **operationId-sorted** order. Any
   command that needs a different order (e.g. group-by-tag) must build its
   own slice from `Registry.Operations()` rather than mutate the registry.
@@ -75,32 +74,52 @@ Conventions for the Cobra command tree.
   2) from "operation removed upstream" (exit 5).
 - The JSON envelope for `api operations`, `schema list`, and `schema get`
   always includes `spec_title`, `spec_version`, and `spec_sha256` so an
-  agent can verify which backend API document was used without a separate
-  `--version` round trip.
+  agent can verify which Dokploy revision yalla was built against without
+  a separate `--version` round trip.
 - Schema bodies (`json.RawMessage`) are emitted verbatim. Do **not**
   re-serialize through `interface{}` — that breaks the canonical key order
   and silently reflows numeric precision.
 
 ## Raw API executor (US-0005)
 
-- `yalla api call <operationId>` is no longer a normal-user raw Dokploy
-  executor. It must return `E_UNSUPPORTED` unless a future backend-mediated,
-  admin-only, audited diagnostic route is explicitly added.
-- Normal commands must call product routes on the Yalla backend through
-  `newYallaAPIClient` / `yallaJSONRequest`, using bearer auth and backend
-  envelopes. They must not send `x-api-key` or construct Dokploy operation
-  requests in `internal/cli`.
-- HTTP status mapping for backend calls flows through `yallaResultError`
-  after unwrapping backend error envelopes. Keep stdout for successful data
-  and stderr for typed errors.
+- `yalla api call <operationId>` is the universal escape hatch and the
+  ONLY place that performs a live Dokploy HTTP transaction inside the
+  `cli` package. The executor lives in `api_call_cmd.go` and is the sole
+  consumer of `apiCallClientFactory`.
+- The `--input` file is decoded via `json.Decoder.DisallowUnknownFields`
+  so `{"bdoy": ...}` fails fast as `E_INVALID_INPUT` instead of silently
+  dropping the body. The schema is closed and public:
+  `path_params`, `query`, `headers`, `body`. Adding a top-level key is a
+  public-API change.
+- `apiCallClientFactory` is the test seam for swapping the HTTP client.
+  Tests override it to inject a stub `http.RoundTripper` (for the
+  CodeNetwork path) or a tighter `Timeout` (for the CodeTimeout path)
+  without touching env vars. Always restore the original via
+  `t.Cleanup`.
+- Retries default to **zero** in the factory because Dokploy's POST
+  surface is mutating. Only GET/HEAD are flagged `Idempotent: true` on
+  the `api.Request`; non-idempotent verbs are never retried even on a
+  network timeout.
+- HTTP status mapping flows through `api.Result.AsError()` (canonical
+  table: 400/422→`InvalidInput`, 401→`Auth`, 403→`Forbidden`,
+  404→`NotFound`, 409/412→`Conflict`, 429→`RateLimited`,
+  5xx→`Server`). Do **not** translate status codes inside the cli
+  package — the `internal/api` package owns the table.
+- `--dry-run` resolves the request without sending it. The
+  `Authorization` header is rewritten to `Bearer [REDACTED]` (the
+  output package's `Sentinel`) so the dry-run envelope is safe to log
+  or paste into a ticket.
+- Pre-flight checks: missing base URL surfaces `E_CONFIG`; missing
+  token on an auth-required op surfaces `E_AUTH` — both BEFORE
+  constructing the HTTP client so `--no-input` workflows fail
+  deterministically without a wire call. Both checks are skipped in
+  `--dry-run` so an agent can validate request construction offline.
 
 ## Manifest, docs, and completion (US-0007)
 
 - `yalla manifest`, `yalla docs`, and `yalla completion` are introspection
-  commands: they read the live `*cobra.Command` tree. The manifest
-  deliberately does not expose the embedded Dokploy operation registry; use
-  `yalla api operations` and `yalla schema get` for runtime backend OpenAPI
-  discovery.
+  commands: they read the live `*cobra.Command` tree and the embedded
+  `api.Default()` registry; none of them touches the network.
 - The manifest's inner payload carries its own `manifest_schema`
   (`yalla.manifest.v1`) **inside** the standard `yalla.output.v1`
   envelope. Bumping either constant is a public-API change.
@@ -147,9 +166,10 @@ Conventions for the Cobra command tree.
   flag.
 - The HTTP test seams — `upgradeCheckBaseURL`,
   `upgradeApplyArchiveURL`, `upgradeApplyChecksums`,
-  `upgradeProbeFactory`, and the two `*ClientFactory` vars — are
-  upgrade-specific. Tests override them via `t.Cleanup` so production
-  code stays free of branch-on-tests conditionals.
+  `upgradeProbeFactory`, and the two `*ClientFactory` vars — mirror
+  US-0005's `apiCallClientFactory`. Tests override them via
+  `t.Cleanup` so production code stays free of branch-on-tests
+  conditionals.
 - `--yes` is gated to `ChannelManual`. Every other channel returns
   `*errors.Error{Code: CodeUnsupported}` (exit 10) with a hint that
   names the package-manager command. Loosening the gate would violate
@@ -167,8 +187,7 @@ Conventions for the Cobra command tree.
   `curated.Default()`; `runManifest` takes the registry as a parameter
   so tests can drive a custom catalogue without touching the global.
   Curated commands never replace raw API coverage — `yalla api call`
-  is unsupported for normal users, while `yalla schema get` stays available
-  for backend operations discovered from `/openapi.json`.
+  and `yalla schema get` stay available for every operation.
 
 ## Tests
 
@@ -181,12 +200,49 @@ Conventions for the Cobra command tree.
   `buildRoot` + `cmd.Execute()` + `renderTerminalError` so the captured
   stderr matches what the binary prints in production.
 
-## Backend-Only Coverage
+## Per-operation API coverage (API-XXXX stories)
 
-- `backend_only_contract_test.go` is the guardrail for the normal CLI
-  surface. Add cases there when a command is migrated to a backend route, and
-  assert exact method/path/body plus bearer auth with no `x-api-key`.
-- `backend_api_worker_integration_test.go` is the Postgres-backed
-  CLI → API → durable job → worker/fake-Dokploy regression. Extend it when a
-  new command needs end-to-end proof that the CLI only talks to the backend
-  while Dokploy mutation is executed by the worker path.
+- Each `API-XXXX` story in `ralph/prd.json` ships its acceptance criteria
+  through `api_coverage_test.go`'s `coveredAPIOperations` slice — append
+  one `apiCoverageCase` literal per story, never duplicate the
+  boilerplate test logic. The harness asserts five invariants per
+  operation: registry presence (id/method/path/tag), `yalla schema get`
+  works, `yalla manifest` lists it, an `httptest`-driven success
+  round-trip with body/query/path forwarding, and a representative
+  failure (default 401 → `E_AUTH`).
+- A case's `SampleBody` must be a JSON document whose required-field
+  shape mirrors the OpenAPI request body. The bytes go on the wire
+  verbatim, so a malformed fixture fails the success leg's body-equality
+  check.
+- For OpenAPI fields declared as `anyOf [string, null]` (a recurring
+  Dokploy idiom on `*-create` / `*-update` bodies), supply the **string**
+  branch in `SampleBody`. The string variant satisfies both schema
+  branches, exercises real serialisation, and keeps fixtures
+  grep-friendly. A `null` fixture would skip body-forwarding on the
+  field and weaken the success-leg round-trip.
+- For OpenAPI fields declared as `anyOf [number, null]` (the
+  `*-saveExternalPort` family across the database tags — mariadb, mongo,
+  mysql, postgres, redis), supply the **number** branch in `SampleBody`
+  as an unquoted integer with the storyID embedded in the low digits
+  (e.g. `25169` for API-0169 mariadb, `25183` for API-0183 mongo). The
+  populated branch exercises the JSON-encoding pipeline and keeps the
+  byte-for-byte body-comparison leg meaningful; the value must stay in
+  the valid TCP-port range (1..65535). A pure string-suffix token does
+  not apply because the populated branch is `type: number`, not
+  `type: string`.
+- Per-tag fixture-namespace slug style is locked in by the FIRST
+  multi-camel-segment slug landed on each tag and must stay consistent
+  within that tag thereafter. The mongo/* tag preserves the operationId's
+  camelCase suffix verbatim (`mongo-cov-saveEnvironment-0182`,
+  `mongo-cov-saveExternalPort-0183`); the mariadb/* tag kebab-cases the
+  same family (`mariadb-cov-save-environment-0168`,
+  `mariadb-cov-save-external-port-0169`). When opening a new tag, decide
+  the slug style on the first multi-segment fixture and document the
+  choice in the entry's comment block so subsequent peers re-apply it.
+- Override `FailureStatus` / `FailureCode` when an operation's
+  representative failure is not authentication (e.g. quota → 429,
+  conflict → 409). The default is intentional: every Dokploy operation
+  today requires a bearer token and the agent contract treats 401 as
+  the canonical failure surface.
+- Keep `coveredAPIOperations` sorted by `StoryID` so a story's diff
+  shows up as a single contiguous insert.

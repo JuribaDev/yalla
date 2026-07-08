@@ -23,8 +23,8 @@ const ManifestSchema = "yalla.manifest.v1"
 
 // manifestDoc is the agent-facing description of the entire CLI surface.
 // It bundles binary metadata, the full command tree (with persistent +
-// local flags), the canonical error-code table, and the runtime API
-// discovery metadata so an agent can introspect what the binary can do
+// local flags), the canonical error-code table, and the OpenAPI
+// operation coverage so an agent can introspect what the binary can do
 // without invoking individual help subcommands.
 //
 // Field order follows the JSON tag order so the marshalled document
@@ -83,26 +83,7 @@ type manifestCommand struct {
 	Runnable       bool              `json:"runnable"`
 	HasSubcommands bool              `json:"has_subcommands"`
 	Flags          []manifestFlag    `json:"flags"`
-	OperationID    string            `json:"operation_id,omitempty"`
-	Method         string            `json:"method,omitempty"`
-	BackendPath    string            `json:"path_template,omitempty"`
-	Idempotent     bool              `json:"idempotent"`
-	SupportsWait   bool              `json:"supports_wait"`
-	RequiredFlags  []string          `json:"required_flags,omitempty"`
-	SensitiveFlags []string          `json:"sensitive_flags,omitempty"`
-	OutputSchema   map[string]string `json:"json_output_schema,omitempty"`
 	Subcommands    []manifestCommand `json:"subcommands,omitempty"`
-}
-
-type manifestCommandMetadata struct {
-	OperationID    string
-	Method         string
-	BackendPath    string
-	Idempotent     bool
-	SupportsWait   bool
-	RequiredFlags  []string
-	SensitiveFlags []string
-	OutputSchema   map[string]string
 }
 
 // manifestCuratedCommand projects one curated.Command into the manifest
@@ -124,10 +105,10 @@ type manifestCuratedCommand struct {
 	JSONExample  string   `json:"json_example,omitempty"`
 }
 
-// manifestOperations summarises local operation coverage. Backend API
-// operations are discovered at runtime through `yalla api operations` and
-// `yalla schema get`; the manifest deliberately does not embed the old
-// Dokploy OpenAPI operation catalogue.
+// manifestOperations summarises the embedded OpenAPI registry coverage.
+// The full operation catalogue is reachable through `yalla api operations`
+// and `yalla schema get`, but a flat ID list lives here so the manifest
+// alone is sufficient to verify "every API operation is covered".
 type manifestOperations struct {
 	Total int      `json:"total"`
 	Tags  []string `json:"tags"`
@@ -147,7 +128,8 @@ func newManifestCommand() *cobra.Command {
 The manifest is the single artefact agents inspect to discover what
 this binary can do. It includes the full command tree (with each
 command's flags, examples, and visibility), the canonical error-code
-	table (with stable exit codes), and the backend API discovery surface.
+table (with stable exit codes), and the embedded OpenAPI operation
+catalogue (count, tags, and operationIds).
 
 The payload is wrapped in the standard ` + "`yalla.output.v1`" + `
 envelope when ` + "`--json`" + ` is set; the inner payload carries its
@@ -162,20 +144,10 @@ can branch on the manifest shape independently of the envelope.`,
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
 			build := BuildInfoFromContext(c.Context())
-			reg, err := backendManifestRegistry()
-			if err != nil {
-				return yerr.Newf(yerr.CodeInternal, "could not build backend manifest registry: %v", err)
-			}
-			return runManifest(c, r, build, reg, curated.Default())
+			return runManifest(c, r, build, api.Default(), curated.Default())
 		},
 	}
 	return cmd
-}
-
-const backendManifestOpenAPI = `{"openapi":"3.1.0","info":{"title":"Yalla Control Plane API","version":"runtime-discovered"},"paths":{}}`
-
-func backendManifestRegistry() (*api.Registry, error) {
-	return api.Load([]byte(backendManifestOpenAPI))
 }
 
 // runManifest assembles the manifest from the live root command and
@@ -289,16 +261,6 @@ func collectCommandTree(cmd *cobra.Command, parentPath string) []manifestCommand
 			HasSubcommands: child.HasSubCommands(),
 			Flags:          collectFlagSet(child.LocalFlags()),
 		}
-		if meta, ok := commandMetadata(path); ok {
-			entry.OperationID = meta.OperationID
-			entry.Method = meta.Method
-			entry.BackendPath = meta.BackendPath
-			entry.Idempotent = meta.Idempotent
-			entry.SupportsWait = meta.SupportsWait
-			entry.RequiredFlags = meta.RequiredFlags
-			entry.SensitiveFlags = meta.SensitiveFlags
-			entry.OutputSchema = meta.OutputSchema
-		}
 		if child.HasSubCommands() {
 			entry.Subcommands = collectCommandTree(child, path)
 		}
@@ -306,46 +268,6 @@ func collectCommandTree(cmd *cobra.Command, parentPath string) []manifestCommand
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
-}
-
-func commandMetadata(path string) (manifestCommandMetadata, bool) {
-	payload := func(name string) map[string]string { return map[string]string{"data": name} }
-	meta := map[string]manifestCommandMetadata{
-		"yalla project list":            {OperationID: "listProjects", Method: "GET", BackendPath: "/v1/projects", Idempotent: true, OutputSchema: payload("projects")},
-		"yalla project get":             {OperationID: "getProject", Method: "GET", BackendPath: "/v1/projects/{project_id}", Idempotent: true, RequiredFlags: []string{"project-id"}, OutputSchema: payload("project")},
-		"yalla project create":          {OperationID: "createProject", Method: "POST", BackendPath: "/v1/projects", Idempotent: true, RequiredFlags: []string{"name"}, OutputSchema: payload("project")},
-		"yalla project update":          {OperationID: "updateProject", Method: "PATCH", BackendPath: "/v1/projects/{project_id}", RequiredFlags: []string{"project-id"}, OutputSchema: payload("project")},
-		"yalla project delete":          {OperationID: "deleteProject", Method: "DELETE", BackendPath: "/v1/projects/{project_id}", SupportsWait: true, RequiredFlags: []string{"project-id"}, OutputSchema: payload("project")},
-		"yalla project restore":         {OperationID: "restoreProject", Method: "POST", BackendPath: "/v1/projects/{project_id}/restore", SupportsWait: true, RequiredFlags: []string{"project-id"}, OutputSchema: payload("project")},
-		"yalla environment list":        {OperationID: "listProjectEnvironments", Method: "GET", BackendPath: "/v1/projects/{project_id}/environments", Idempotent: true, RequiredFlags: []string{"project-id"}, OutputSchema: payload("environments")},
-		"yalla environment get":         {OperationID: "getEnvironment", Method: "GET", BackendPath: "/v1/environments/{environment_id}", Idempotent: true, RequiredFlags: []string{"environment-id"}, OutputSchema: payload("environment")},
-		"yalla environment create":      {OperationID: "createProjectEnvironment", Method: "POST", BackendPath: "/v1/projects/{project_id}/environments", Idempotent: true, RequiredFlags: []string{"project-id", "name"}, OutputSchema: payload("environment")},
-		"yalla environment update":      {OperationID: "updateEnvironment", Method: "PATCH", BackendPath: "/v1/environments/{environment_id}", RequiredFlags: []string{"environment-id"}, OutputSchema: payload("environment")},
-		"yalla environment delete":      {OperationID: "deleteEnvironment", Method: "DELETE", BackendPath: "/v1/environments/{environment_id}", SupportsWait: true, RequiredFlags: []string{"environment-id"}, OutputSchema: payload("environment")},
-		"yalla environment clone":       {OperationID: "cloneEnvironment", Method: "POST", BackendPath: "/v1/environments/{environment_id}/clone", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"environment-id", "name"}, OutputSchema: payload("environment")},
-		"yalla service list":            {OperationID: "listEnvironmentServices", Method: "GET", BackendPath: "/v1/environments/{environment_id}/services", Idempotent: true, RequiredFlags: []string{"environment-id"}, OutputSchema: payload("services")},
-		"yalla service get":             {OperationID: "getService", Method: "GET", BackendPath: "/v1/services/{service_id}", Idempotent: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("service")},
-		"yalla service create":          {OperationID: "createEnvironmentService", Method: "POST", BackendPath: "/v1/environments/{environment_id}/services", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"environment-id", "name"}, SensitiveFlags: []string{"registry-secret-ref"}, OutputSchema: payload("service")},
-		"yalla service update":          {OperationID: "updateService", Method: "PATCH", BackendPath: "/v1/services/{service_id}", RequiredFlags: []string{"service-id"}, OutputSchema: payload("service")},
-		"yalla service delete":          {OperationID: "deleteService", Method: "DELETE", BackendPath: "/v1/services/{service_id}", SupportsWait: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("service")},
-		"yalla service restore":         {OperationID: "restoreService", Method: "POST", BackendPath: "/v1/services/{service_id}/restore", SupportsWait: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("service")},
-		"yalla service deploy":          {OperationID: "createServiceDeployment", Method: "POST", BackendPath: "/v1/services/{service_id}/deployments", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("deployment")},
-		"yalla service build get":       {OperationID: "getServiceBuildConfig", Method: "GET", BackendPath: "/v1/services/{service_id}/build-config", Idempotent: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("build_config")},
-		"yalla service build set":       {OperationID: "setServiceBuildConfig", Method: "PUT", BackendPath: "/v1/services/{service_id}/build-config", Idempotent: true, RequiredFlags: []string{"service-id", "build-type"}, SensitiveFlags: []string{"registry-secret-ref"}, OutputSchema: payload("build_config")},
-		"yalla deploy compose":          {OperationID: "createServiceDeployment", Method: "POST", BackendPath: "/v1/services/{service_id}/deployments", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("deployment")},
-		"yalla database list":           {OperationID: "listEnvironmentServices", Method: "GET", BackendPath: "/v1/environments/{environment_id}/services", Idempotent: true, RequiredFlags: []string{"environment-id"}, OutputSchema: payload("services")},
-		"yalla database create":         {OperationID: "createEnvironmentService", Method: "POST", BackendPath: "/v1/environments/{environment_id}/services", Idempotent: true, RequiredFlags: []string{"environment-id", "name"}, OutputSchema: payload("service")},
-		"yalla database deploy":         {OperationID: "createServiceDeployment", Method: "POST", BackendPath: "/v1/services/{service_id}/deployments", Idempotent: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("deployment")},
-		"yalla database delete":         {OperationID: "deleteService", Method: "DELETE", BackendPath: "/v1/services/{service_id}", RequiredFlags: []string{"service-id"}, OutputSchema: payload("service")},
-		"yalla database backup list":    {OperationID: "listServiceBackups", Method: "GET", BackendPath: "/v1/services/{service_id}/backups", Idempotent: true, RequiredFlags: []string{"service-id"}, OutputSchema: payload("backups")},
-		"yalla database backup create":  {OperationID: "createServiceBackup", Method: "POST", BackendPath: "/v1/services/{service_id}/backups", Idempotent: true, RequiredFlags: []string{"service-id", "display-name", "schedule"}, OutputSchema: payload("backup")},
-		"yalla database backup update":  {OperationID: "updateServiceBackup", Method: "PATCH", BackendPath: "/v1/services/{service_id}/backups/{backup_id}", RequiredFlags: []string{"service-id", "backup-id"}, OutputSchema: payload("backup")},
-		"yalla database backup run":     {OperationID: "runServiceBackup", Method: "POST", BackendPath: "/v1/services/{service_id}/backups/{backup_id}/run", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"service-id", "backup-id"}, OutputSchema: payload("backup")},
-		"yalla database backup restore": {OperationID: "restoreServiceBackup", Method: "POST", BackendPath: "/v1/services/{service_id}/backups/{backup_id}/restore", Idempotent: true, SupportsWait: true, RequiredFlags: []string{"service-id", "backup-id"}, OutputSchema: payload("backup")},
-		"yalla database backup delete":  {OperationID: "deleteServiceBackup", Method: "DELETE", BackendPath: "/v1/services/{service_id}/backups/{backup_id}", RequiredFlags: []string{"service-id", "backup-id"}, OutputSchema: payload("backup")},
-	}
-	got, ok := meta[path]
-	return got, ok
 }
 
 // isInternalCobraCmd returns true when cmd is a synthetic helper Cobra
