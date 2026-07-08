@@ -105,8 +105,12 @@ release:
 # `contents:write` on the relevant repository before these jobs do anything
 # more than a dry-run.
 
-brews:
+homebrew_casks:
   - name: yalla
+    binaries:
+      - yalla
+    url:
+      verified: github.com/JuribaDev/yalla
     repository:
       owner: JuribaDev
       name: homebrew-yalla
@@ -114,14 +118,6 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/JuribaDev/yalla"
     description: "Production-grade, AI-agent-first CLI for Dokploy."
-    license: MIT
-    commit_author:
-      name: yalla-release-bot
-      email: release-bot@juriba.dev
-    install: |
-      bin.install "yalla"
-    test: |
-      system "#{bin}/yalla --version"
     skip_upload: auto
 
 scoops:
