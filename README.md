@@ -18,13 +18,9 @@ commands so AI agents and humans can drive Dokploy with the same tooling.
 
 | Channel  | Command                                                      |
 |----------|--------------------------------------------------------------|
-| Homebrew | `brew install JuribaDev/yalla/yalla`                         |
-| Scoop    | `scoop bucket add yalla https://github.com/JuribaDev/scoop-yalla && scoop install yalla` |
-| WinGet   | `winget install --id JuribaDev.yalla`                        |
 | npm      | `npm install -g @juriba/yalla-cli`                           |
-| npx      | `npx @juriba/yalla-cli --version`                            |
 | Manual   | Download from [Releases](https://github.com/JuribaDev/yalla/releases) |
-| Go       | `go install github.com/JuribaDev/yalla/cmd/yalla@latest` (contributor fallback) |
+
 
 ## Usage
 
